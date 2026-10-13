@@ -1,0 +1,19 @@
+# Optional: Postgres 16 + pgvector instead of the default SQLite file.
+#   docker compose up -d
+#   uv sync --extra postgres
+#   DATABASE_URL=postgresql+psycopg://aecom:aecom@localhost:5432/aecom uv run aecom init --demo
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: aecom
+      POSTGRES_PASSWORD: aecom   # local development only
+      POSTGRES_DB: aecom
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aecom"]
+      interval: 5s
+      retries: 10
+volumes:
+  pgdata:

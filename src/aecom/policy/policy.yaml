@@ -1,0 +1,138 @@
+# Escalation matrix — the in-line execution gate.
+#
+# Every tool call goes through aecom.policy.gate before it runs.
+#   T0  read-only                → allow
+#   T1  low-risk, reversible     → allow + audit
+#   T2  bounded risk             → allow inside limits, otherwise escalate to a human
+#   T3  high stakes / public     → always escalate to a human
+#   T4  forbidden for agents     → deny
+#
+# Rule keys:
+#   tier:        T0..T4
+#   agents:      optional list; anyone else is denied
+#   limits:      {arg_name: max_value}; exceeding any → escalate
+#   price_change_pct_max: escalate if a price moves more than this % vs. current
+#   monthly_budget_setting: escalate if this spend pushes the month past ops_settings[<key>]
+#   reason:      shown to the human in the approvals dashboard
+
+defaults:
+  unknown_tool_tier: T3          # MCP tools nobody classified yet are treated as high-stakes
+  sandboxed_tool_tier: T3        # anything from a sandboxed MCP server needs a human
+
+budgets:                         # € of LLM spend per agent per day (checked before each agent run)
+  ceo: 10
+  researcher: 6
+  judge: 4
+  foreman: 6
+  finance: 4
+  store_ops: 2
+  marketing: 2
+  support: 3
+  supply: 2
+
+company_settings_defaults:
+  marketing_budget_month_eur: 1500
+  vendor_budget_month_eur: 400
+
+rules:
+  # ---------------------------------------------------------------- read-only
+  list_products: {tier: T0}
+  get_inventory: {tier: T0}
+  list_orders: {tier: T0}
+  get_order: {tier: T0}
+  get_pnl: {tier: T0}
+  get_kpis: {tier: T0}
+  list_okrs: {tier: T0}
+  list_decisions: {tier: T0}
+  list_vendors: {tier: T0}
+  list_campaigns: {tier: T0}
+  list_registry: {tier: T0}
+  recall_memory: {tier: T0}
+  read_company_doc: {tier: T0}
+  fetch_url: {tier: T0}
+  list_inbox: {tier: T0}
+  list_pending_approvals: {tier: T0}
+
+  # ---------------------------------------------------------------- terminal / structured-output tools
+  submit_plan: {tier: T0, agents: [foreman]}
+  submit_verdict: {tier: T0, agents: [judge]}
+  submit_brief: {tier: T0}
+
+  # ---------------------------------------------------------------- store
+  create_product: {tier: T1, agents: [store_ops]}
+  add_license_keys: {tier: T1, agents: [store_ops, supply]}
+  activate_product: {tier: T1, agents: [store_ops]}
+  deliver_order: {tier: T1, agents: [store_ops]}
+  update_price:
+    tier: T2
+    agents: [store_ops, finance]
+    price_change_pct_max: 20
+    reason: "Price changes above 20% affect margin and customer trust."
+  refund_order:
+    tier: T2
+    agents: [support, finance]
+    limits: {amount_eur: 50}
+    reason: "Refunds above €50 need a human."
+
+  # ---------------------------------------------------------------- communication
+  send_email:
+    tier: T1
+    agents: [support, store_ops, marketing]
+  send_newsletter:
+    tier: T3
+    agents: [marketing]
+    reason: "Bulk email to customers is public-facing and has GDPR implications."
+  publish_social_post:
+    tier: T3
+    agents: [marketing]
+    reason: "Public content under the brand."
+
+  # ---------------------------------------------------------------- marketing
+  create_campaign: {tier: T1, agents: [marketing]}
+  pause_campaign: {tier: T1, agents: [marketing, finance, ceo]}
+  launch_campaign:
+    tier: T2
+    agents: [marketing]
+    limits: {budget_eur: 150}
+    monthly_budget_setting: marketing_budget_month_eur
+    reason: "Ad spend above €150 per campaign or beyond the monthly marketing budget."
+
+  # ---------------------------------------------------------------- finance & supply
+  record_expense:
+    tier: T2
+    agents: [finance]
+    limits: {amount_eur: 200}
+  register_vendor:
+    tier: T2
+    agents: [supply, foreman]
+    limits: {monthly_cost_eur: 50}
+    monthly_budget_setting: vendor_budget_month_eur
+    reason: "New recurring vendor cost."
+
+  # ---------------------------------------------------------------- executive
+  set_okr: {tier: T1, agents: [ceo]}
+  record_decision: {tier: T1, agents: [ceo]}
+  request_provisioning:
+    tier: T3
+    agents: [ceo]
+    reason: "Creating accounts, accepting terms, and adding payment methods happen only by a human."
+
+  # ---------------------------------------------------------------- memory
+  remember: {tier: T1}
+  propose_lesson: {tier: T1}
+
+  # ---------------------------------------------------------------- self-tooling
+  propose_tool: {tier: T1, agents: [foreman, researcher]}
+  sandbox_tool: {tier: T1, agents: [foreman]}
+  approve_tool:
+    tier: T3
+    agents: [foreman]
+    reason: "Promotes a new MCP server or skill to production."
+  grant_tool:
+    tier: T3
+    agents: [foreman]
+    reason: "Changes which agent can use which capability."
+
+  # ---------------------------------------------------------------- never by an agent
+  delete_customer_data: {tier: T4}
+  change_policy: {tier: T4}

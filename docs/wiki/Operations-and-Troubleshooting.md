@@ -1,0 +1,33 @@
+# Operations and Troubleshooting
+
+## Day-to-day commands
+| Task | Command |
+|---|---|
+| Reset everything | `rm -rf data && uv run aecom init --demo` |
+| Process queued events | `uv run aecom drain` |
+| Simulate traffic | `uv run aecom simulate --days 3 --support-emails` |
+| Emergency stop | `uv run aecom kill-switch on` |
+| Review the queue | `uv run aecom approvals` |
+| Run the scheduler | `uv run aecom scheduler` (real cron) or `--demo` (compressed time) |
+| API | `uv run aecom api` → http://127.0.0.1:8000/docs |
+
+## Troubleshooting
+| Symptom | Cause / fix |
+|---|---|
+| `ANTHROPIC_API_KEY missing` | Set the key in `.env`, or run with `--offline` / `LLM_MODE=scripted` |
+| `database is locked` | Only one SQLite writer at a time. WAL and a 30 s busy timeout are on; for heavy concurrency use Postgres. Never publish events inside an open write session |
+| Agent says `DENIED by policy` | Working as intended. Check the rule in `policy.yaml` and the agent's allowlist (`list_registry`) |
+| Agent says `budget exhausted` | Daily € budget reached. Raise `budget_eur_per_day` in its `POLICY.md`, or wait until tomorrow |
+| Tool call returns `ERROR: … multiple values for keyword argument` | A tool parameter collides with a LangChain keyword (`config`). Rename it |
+| MCP tools missing | Server not `approved`+granted (or `sandboxed` for the Foreman), load timeout, or `MCP_AUTOLOAD=false`. Check the audit log for `mcp_load:<name>` |
+| Emails not arriving | `AGENTMAIL_LIVE=false` keeps them in the outbox (Dashboard → Home/Agents, table `ops_outbox_emails`) |
+| Approval shows `failed` | Underlying tool raised (for example `approve_tool` before `sandbox_tool`). The result column has the error |
+| Dashboard Agents page errors on Postgres | Replace `GROUP_CONCAT` with `string_agg(a.agent_id, ',')` in `pages/2_Agents.py` |
+
+## Security checklist
+- [ ] `.env` is never committed (it's in `.gitignore`).
+- [ ] Use a dedicated AgentMail key; rotate any key that was shared.
+- [ ] Review `policy.yaml` changes in PRs.
+- [ ] Keep `AGENTMAIL_LIVE=false` with seed or demo data (fake addresses).
+- [ ] External MCP clients only get read access unless policy explicitly opens a tool to `mcp_client`.
+- [ ] Untrusted content (emails, web pages) is always wrapped in `<untrusted>` via `fence()`.

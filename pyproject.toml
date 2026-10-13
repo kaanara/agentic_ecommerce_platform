@@ -1,0 +1,44 @@
+[project]
+name = "aecom"
+version = "0.1.0"
+description = "Agentic e-commerce company for digital products (PoC) — LangGraph multi-agent system"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "langgraph>=0.6",
+    "langgraph-checkpoint-sqlite>=2.0",
+    "langchain-core>=0.3",
+    "langchain-anthropic>=0.3",
+    "langchain-mcp-adapters>=0.1",
+    "mcp>=1.9",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "apscheduler>=3.10,<4",
+    "streamlit>=1.38",
+    "pandas>=2.2",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2", "langgraph-checkpoint-postgres>=2.0", "pgvector>=0.3"]
+
+[project.scripts]
+aecom = "aecom.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aecom"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
