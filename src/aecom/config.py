@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     usd_to_eur: float = 0.92
     # Anthropic server-side web search for agents whose TOOLS.md lists it under server_tools
     web_search_tool_type: str = "web_search_20250305"
+    # Anthropic server-side web fetch: pages are fetched on Anthropic's side, never from this host (no beta header)
+    web_fetch_tool_type: str = "web_fetch_20260209"
+    web_fetch_max_uses: int = 5
 
     # --- Data ----------------------------------------------------------------
     # SQLite by default so the PoC runs anywhere; set to postgresql+psycopg://... for docker-compose.

@@ -89,4 +89,7 @@ def server_tool_specs(names: list[str]) -> list[dict[str, Any]]:
     specs = []
     if "web_search" in names:
         specs.append({"type": settings.web_search_tool_type, "name": "web_search", "max_uses": 5})
+    if "web_fetch" in names:
+        specs.append({"type": settings.web_fetch_tool_type, "name": "web_fetch",
+                      "max_uses": settings.web_fetch_max_uses})
     return specs
