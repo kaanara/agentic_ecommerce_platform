@@ -8,13 +8,32 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from aecom.money import vat_split
+
 # EU B2C digital goods are taxed at the *customer's* VAT rate (OSS scheme). Prices are VAT-inclusive.
-VAT_RATES = {"DE": 0.19, "FR": 0.20, "NL": 0.21, "IT": 0.22, "ES": 0.21, "AT": 0.20, "PL": 0.23, "SE": 0.25, "US": 0.0, "GB": 0.20}
+# Standard rates of all 27 EU member states as of 2026.
+VAT_RATES = {
+    "AT": 0.20, "BE": 0.21, "BG": 0.20, "HR": 0.25, "CY": 0.19, "CZ": 0.21, "DK": 0.25, "EE": 0.24, "FI": 0.255,
+    "FR": 0.20, "DE": 0.19, "GR": 0.24, "HU": 0.27, "IE": 0.23, "IT": 0.22, "LV": 0.21, "LT": 0.21, "LU": 0.17,
+    "MT": 0.18, "NL": 0.21, "PL": 0.23, "PT": 0.23, "RO": 0.21, "SK": 0.23, "SI": 0.22, "ES": 0.21, "SE": 0.25,
+    # non-EU markets the simulator sells to
+    "US": 0.0,   # no VAT; US sales tax is out of scope for the PoC
+    "GB": 0.20,  # UK VAT is outside OSS and needs a separate HMRC registration
+}
+VAT_RATES["EL"] = VAT_RATES["GR"]  # Greece's code in EU VAT systems
+
+
+def vat_rate(country: str) -> float:
+    """Standard VAT rate for a customer country; unknown countries raise instead of defaulting to 0%."""
+    try:
+        return VAT_RATES[country.upper()]
+    except KeyError:
+        raise ValueError(f"no VAT rate for country {country}") from None
 
 
 def vat_included(gross: float, country: str) -> float:
-    rate = VAT_RATES.get(country.upper(), 0.0)
-    return round(gross * rate / (1 + rate), 2)
+    """VAT contained in a VAT-inclusive price, rounded to cents."""
+    return float(vat_split(gross, vat_rate(country))[1])
 
 
 class StoreAdapter(Protocol):

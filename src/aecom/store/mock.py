@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from aecom import ledger
 from aecom.bus.events import publish
 from aecom.db import Customer, LicenseKey, Order, Product, Refund, session
-from aecom.store.adapter import vat_included
+from aecom.store.adapter import vat_included, vat_rate
 
 
 def _p(p: Product) -> dict[str, Any]:
@@ -83,16 +83,21 @@ class MockStore:
             if p.status != "active":
                 raise ValueError(f"{sku} is not active")
             c = s.scalars(select(Customer).where(Customer.email == customer_email)).first()
+            # tax at the customer's country; resolve it before writing so an unknown country leaves no rows
+            tax_country = (c.country if c else country).upper()
+            rate = vat_rate(tax_country)
+            vat = vat_included(p.price_eur, tax_country)
             if c is None:
                 c = Customer(email=customer_email, country=country, acquisition_channel=campaign_id)
                 s.add(c)
                 s.flush()
             o = Order(customer_id=c.id, product_id=p.id, amount_eur=p.price_eur,
-                      vat_eur=vat_included(p.price_eur, c.country), campaign_id=campaign_id, status="paid")
+                      vat_eur=vat, campaign_id=campaign_id, status="paid")
             s.add(o)
             s.flush()
             result, unit_cost = _o(o), p.unit_cost_eur
-        ledger.record_sale(result["id"], result["amount_eur"], result["vat_eur"], unit_cost)
+        ledger.record_sale(result["id"], result["amount_eur"], result["vat_eur"], unit_cost,
+                           country=tax_country, vat_rate=rate)
         publish("order.paid", {"order_id": result["id"], "sku": sku, "email": customer_email}, source="store")
         return result
 
