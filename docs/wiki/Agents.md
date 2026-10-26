@@ -12,6 +12,26 @@
 | `support` | 💬 Iris | Haiku | foreman | Customer email, access issues, refunds within limits |
 | `supply` | 🔗 Relay | Haiku | foreman | Vendors, key pools, third-party APIs, continuity |
 
+## Enabling and disabling agents
+Each agent has an on/off flag in `ops_settings` under `agent_enabled:<id>` (`on`/`off`, **default on**, so existing
+installs behave as before). Toggle it on the dashboard (**Agents → Enabled agents**) or in code with
+`company_settings.set_agent_enabled(id, on)`; read it with `agent_enabled(id)`.
+
+What "disabled" means:
+- `run_agent` returns `status="disabled"` without calling the model and without an `ops_agent_runs` row; the attempt is
+  audited (`system` / `agent_run` / `deny`, reason `agent disabled`).
+- **Reflexes are unaffected.** Event handlers that call a tool directly (`handlers.invoke_as` → policy gate), such as
+  delivering a paid order (`store_ops`) or restocking keys (`supply`), keep working.
+- Agent-task events (e.g. `email.received` for Support) are marked processed, not retried: the reason is in the audit log.
+  Re-enable the agent and handle the backlog by hand, or re-publish the events.
+- Company runs: the Foreman is told which departments are disabled; tasks still planned for one are skipped and
+  recorded (`state["skipped"]`, a `SKIPPED:` result, and a "Skipped (agent disabled)" section appended to the CEO
+  summary). With the Judge disabled the verdict is passed through as *unreviewed* (no rework loop).
+
+Recommended launch profile: keep `support`, `finance`, `store_ops`, `ceo` (weekly review) and `researcher` (on demand)
+on; switch `marketing`, `supply` and `judge` off until there is work for them. Keep `foreman` on if you run company
+directives (`aecom run`, the weekly review): without it no work gets planned. Supply's restock reflex still runs while it is off.
+
 ## The five persona files
 Each agent is a folder `agents/<id>/`:
 

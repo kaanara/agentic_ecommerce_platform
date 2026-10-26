@@ -27,3 +27,15 @@ def kill_switch_on() -> bool:
 def agents_paused_on() -> bool:
     """Softer than the kill switch: agents stop, but customer deliveries keep running."""
     return get_setting("agents_paused", "off") == "on"
+
+
+def agent_enabled(agent_id: str) -> bool:
+    """Per-agent switch (setting ``agent_enabled:<id>``), default on. Off = the agent's LLM runs are skipped.
+
+    Reflexes (handlers.invoke_as → gate, e.g. delivery and restock) don't run the agent and are not affected.
+    """
+    return get_setting(f"agent_enabled:{agent_id}", "on") != "off"
+
+
+def set_agent_enabled(agent_id: str, on: bool) -> None:
+    set_setting(f"agent_enabled:{agent_id}", "on" if on else "off")

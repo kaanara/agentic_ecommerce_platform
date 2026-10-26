@@ -17,6 +17,7 @@ from typing import Annotated, Any, AsyncIterator, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from aecom.audit import audit
+from aecom.company_settings import agent_enabled
 from aecom.config import get_settings
 from aecom.db import new_id
 from aecom.graph.agents import run_agent
@@ -36,6 +37,12 @@ class CompanyState(TypedDict, total=False):
     iterations: int
     summary: str
     escalations: Annotated[list[str], operator.add]
+    skipped: Annotated[list[str], operator.add]  # "<task_id>: <agent> disabled" for work not run (agent_enabled off)
+
+
+def _skip_note(state: CompanyState) -> str:
+    skipped = sorted(set(state.get("skipped", [])))
+    return ("\n\n# Skipped (agent disabled)\n" + "\n".join(f"- {x}" for x in skipped)) if skipped else ""
 
 
 async def ceo_direct(state: CompanyState) -> CompanyState:
@@ -53,9 +60,12 @@ async def foreman_plan(state: CompanyState) -> CompanyState:
         prior = "\n".join(f"- [{x['agent']}] {x['output'][:600]}" for x in state.get("results", []))
         feedback = (f"\n\n# The Judge rejected the previous attempt\n{state['verdict'].get('feedback')}\n"
                     f"Issues: {state['verdict'].get('issues')}\n# Previous results\n{prior}\nPlan only the rework.")
+    enabled = sorted(d for d in DEPARTMENTS if agent_enabled(d))
+    off = sorted(DEPARTMENTS - set(enabled))
+    off_note = f" Disabled, do not assign: {', '.join(off)}." if off else ""
     r = await run_agent("foreman", (
         f"# CEO brief\n{state['ceo_brief']}{feedback}\n\n"
-        f"Decompose into tasks for: {', '.join(sorted(DEPARTMENTS))}. Use depends_on for ordering; independent tasks run "
+        f"Decompose into tasks for: {', '.join(enabled) or '(no department is enabled)'}.{off_note} Use depends_on for ordering; independent tasks run "
         "in parallel. Each instruction must be self-contained (SKUs, amounts, channels). Finish with submit_plan."),
         run_id=state["run_id"])
     tasks = (r.structured or {}).get("tasks", [])
@@ -84,8 +94,15 @@ async def execute(state: CompanyState) -> CompanyState:
     outputs: dict[str, str] = {}
     results: list[dict[str, Any]] = []
     escalations: list[str] = []
+    skipped: list[str] = []
     for wave in _waves(state.get("plan", [])):
         async def run(task: dict[str, Any]) -> dict[str, Any]:
+            if not agent_enabled(task["agent"]):  # switched off: record the skip instead of running it
+                audit("system", "plan", "info", {"skipped": task["id"], "agent": task["agent"], "reason": "agent disabled"},
+                      state["run_id"])
+                return {"task_id": task["id"], "agent": task["agent"], "instruction": task["instruction"],
+                        "output": f"SKIPPED: {task['agent']} is disabled; task not run.", "status": "disabled",
+                        "escalations": []}
             deps = "\n\n".join(f"## Output of {d}\n{outputs.get(d, '')[:3000]}" for d in task.get("depends_on") or [])
             r = await run_agent(task["agent"], task["instruction"],
                                 context=f"## CEO brief\n{state['ceo_brief']}\n\n{deps}".strip(), run_id=state["run_id"])
@@ -96,13 +113,19 @@ async def execute(state: CompanyState) -> CompanyState:
             outputs[res["task_id"]] = res["output"]
             escalations += res["escalations"]
             results.append(res)
-    return {"results": results, "escalations": escalations}
+            if res["status"] == "disabled":
+                skipped.append(f"{res['task_id']}: {res['agent']} disabled")
+    return {"results": results, "escalations": escalations, "skipped": skipped}
 
 
 async def judge(state: CompanyState) -> CompanyState:
     latest = state.get("results", [])[-len(state.get("plan", [])) or None:]
     work = "\n\n".join(f"### {x['task_id']} — {x['agent']} ({x['status']})\nTask: {x['instruction']}\nResult:\n{x['output'][:2500]}"
                        for x in latest)
+    if not agent_enabled("judge"):  # no reviewer: don't loop into rework, pass through and say so
+        audit("system", "judge", "info", {"reason": "agent disabled", "verdict": "unreviewed"}, state["run_id"])
+        return {"verdict": {"approved": True, "score": None, "feedback": "Judge is disabled: work was not reviewed.",
+                            "issues": [], "unreviewed": True}}
     r = await run_agent("judge", (
         f"# CEO brief\n{state['ceo_brief']}\n\n# Delivered work\n{work or '(nothing delivered)'}\n\n"
         "Score against your rubric. Pending human approvals are acceptable and not a failure by themselves. "
@@ -122,10 +145,11 @@ async def ceo_close(state: CompanyState) -> CompanyState:
     r = await run_agent("ceo", (
         f"# Your brief\n{state['ceo_brief']}\n\n# Judge verdict\n{json.dumps(state['verdict'])}\n\n"
         f"# Results\n" + "\n".join(f"- [{x['agent']}] {x['output'][:500]}" for x in state.get("results", [])) +
-        f"\n\n# Pending human approvals\n{pending or 'none'}\n\n"
-        "Close the run: a short executive summary, OKR impact, and next steps. Record a decision if you made one."),
+        f"\n\n# Pending human approvals\n{pending or 'none'}{_skip_note(state)}\n\n"
+        "Close the run: a short executive summary, OKR impact, and next steps (mention skipped work, if any). "
+        "Record a decision if you made one."),
         run_id=state["run_id"])
-    return {"summary": r.output, "escalations": r.escalations}
+    return {"summary": r.output + _skip_note(state), "escalations": r.escalations}  # skips always visible in the summary
 
 
 def build_company_graph() -> StateGraph:

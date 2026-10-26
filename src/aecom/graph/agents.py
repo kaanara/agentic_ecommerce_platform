@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 
 from aecom import ledger
 from aecom.audit import audit
-from aecom.company_settings import get_setting, set_setting
+from aecom.company_settings import agent_enabled, get_setting, set_setting
 from aecom.config import get_settings
 from aecom.context import current_agent, current_run
 from aecom.db import AgentRun, Lesson, new_id, now, session
@@ -33,7 +33,7 @@ from aecom.registry.tools import build_tools, skills_for
 class AgentResult:
     agent_id: str
     output: str
-    status: str = "ok"  # ok | error | budget_exceeded | max_steps
+    status: str = "ok"  # ok | error | budget_exceeded | max_steps | disabled
     structured: dict[str, Any] | None = None
     tool_calls: int = 0
     cost_eur: float = 0.0
@@ -90,6 +90,10 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
     t_run, t_agent = current_run.set(run_id), current_agent.set(agent_id)
     row_id: str | None = None
     try:
+        if not agent_enabled(agent_id):  # no LLM call and no AgentRun row; reflexes don't come through here
+            audit("system", "agent_run", "deny", {"reason": "agent disabled", "agent_id": agent_id, "task": task[:200]}, run_id)
+            return AgentResult(agent_id, f"{agent_id} is disabled (setting agent_enabled:{agent_id}=off); task not run.",
+                               status="disabled")
         if spent_today(agent_id) >= daily_budget(agent_id):
             audit(agent_id, "agent_run", "deny", {"reason": "daily LLM budget exhausted", "task": task[:200]}, run_id)
             return AgentResult(agent_id, f"{agent_id} daily budget exhausted; task deferred.", status="budget_exceeded")

@@ -1,10 +1,21 @@
 import streamlit as st
 
 from _common import AGENT_ORDER, colors, require_login, sql
+from aecom.company_settings import agent_enabled, set_agent_enabled
 
 st.set_page_config(page_title="Agents", page_icon="🤖", layout="wide")
 require_login()
 st.title("🤖 Agents")
+
+st.subheader("Enabled agents")
+st.caption("A disabled agent's LLM runs are skipped (audited as denied). Reflexes such as order delivery and "
+           "restocking keep running. Company runs need the Foreman.")
+toggles = st.columns(len(AGENT_ORDER))
+for col, agent_id in zip(toggles, AGENT_ORDER):
+    on = agent_enabled(agent_id)
+    if col.toggle(agent_id, value=on, key=f"agent_enabled_{agent_id}") != on:
+        set_agent_enabled(agent_id, not on)
+        st.rerun()
 
 runs = sql("""SELECT agent_id, COUNT(*) AS runs, SUM(tool_calls) AS tool_calls, SUM(input_tokens) AS input_tokens,
                      SUM(output_tokens) AS output_tokens, ROUND(SUM(cost_eur), 4) AS cost_eur,
