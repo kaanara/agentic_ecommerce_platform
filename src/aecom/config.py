@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     # Real sends only when explicitly enabled — seed/demo customers are fake addresses.
     agentmail_live: bool = False
     store_adapter: str = "mock"
+    # Where automatic restocks get licence keys: "mock" mints fake keys (demo only), "none" = manual keys only
+    license_key_source: str = "mock"
     mcp_autoload: bool = True          # load registry MCP servers into agents' toolbelts
     mcp_load_timeout_s: float = 20.0
 

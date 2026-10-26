@@ -12,10 +12,12 @@ import asyncio
 import concurrent.futures
 from typing import Any, Coroutine, TypeVar
 
-from aecom.bus.events import HandlerFailed, subscribe
+from aecom.audit import audit
+from aecom.bus.events import HandlerFailed, publish, subscribe
 from aecom.context import current_counterparty, email_address
 from aecom.integrations.agentmail import AgentMail
 from aecom.policy.gate import gate_builtin
+from aecom.store.keysource import NO_KEY_SOURCE
 
 T = TypeVar("T")
 
@@ -50,15 +52,28 @@ def deliver_paid_order(evt: dict[str, Any]) -> None:
     invoke_as("store_ops", "deliver_order", {"order_id": evt["order_id"]})
 
 
+def restock(sku: str, count: int = 50) -> bool:
+    """Add keys from the key source. Without a source, retrying can't help: report it once and return False."""
+    try:
+        invoke_as("supply", "add_license_keys", {"sku": sku, "count": count})
+        return True
+    except HandlerFailed as exc:
+        if NO_KEY_SOURCE not in str(exc):
+            raise
+        audit("supply", "restock_failed", "error", {"sku": sku, "reason": NO_KEY_SOURCE})
+        publish("inventory.restock_failed", {"sku": sku, "reason": NO_KEY_SOURCE}, source="supply")
+        return False
+
+
 @subscribe("inventory.low")
 def restock_low(evt: dict[str, Any]) -> None:
-    invoke_as("supply", "add_license_keys", {"sku": evt["sku"], "count": 50})
+    restock(evt["sku"])
 
 
 @subscribe("inventory.out_of_stock")
 def restock_and_retry(evt: dict[str, Any]) -> None:
-    invoke_as("supply", "add_license_keys", {"sku": evt["sku"], "count": 50})
-    invoke_as("store_ops", "deliver_order", {"order_id": evt["order_id"]})
+    if restock(evt["sku"]):
+        invoke_as("store_ops", "deliver_order", {"order_id": evt["order_id"]})
 
 
 # ----------------------------------------------------------------------------- agent tasks

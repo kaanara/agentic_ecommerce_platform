@@ -110,10 +110,16 @@ def update_price(sku: str, price_eur: float) -> dict:
 
 @tool("store", side_effect=True)
 def add_license_keys(sku: str, count: int = 0, keys: list[str] | None = None) -> dict:
-    """Add licence keys to a licence product. Pass explicit `keys`, or `count` to mint keys from the vendor feed (mock)."""
-    import secrets as pysecrets
+    """Add licence keys to a licence product. Pass explicit `keys` (always allowed), or `count` to fetch that many
+    from the configured key source (LICENSE_KEY_SOURCE; "mock" mints demo keys). Fails if no source is configured."""
+    from aecom.store.keysource import NO_KEY_SOURCE, get_key_source
 
-    batch = keys or [f"{sku}-{pysecrets.token_hex(4).upper()}-{pysecrets.token_hex(4).upper()}" for _ in range(count)]
+    batch = list(keys or [])
+    if not batch and count > 0:
+        source = get_key_source()
+        if source is None:
+            raise ValueError(NO_KEY_SOURCE)
+        batch = source.fetch(sku, count)
     return {"sku": sku, "added": get_store().add_license_keys(sku, batch)}
 
 
