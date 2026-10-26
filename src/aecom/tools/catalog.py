@@ -15,7 +15,7 @@ from typing import Any, Callable
 import httpx
 from sqlalchemy import func, or_, select
 
-from aecom import ledger, metrics
+from aecom import ledger, metrics, reports
 from aecom.config import get_settings
 from aecom.context import current_agent, current_counterparty, email_address
 from aecom.db import (
@@ -517,6 +517,16 @@ def submit_plan(tasks: list[dict], rationale: str) -> dict:
 def submit_verdict(approved: bool, score: float, feedback: str, issues: list[str] | None = None) -> dict:
     """JUDGE ONLY — final answer. score 0-10 against the rubric; approved=false sends work back with feedback."""
     return {"approved": approved, "score": score, "feedback": feedback, "issues": issues or []}
+
+
+@tool("finance", side_effect=True, terminal=True)
+def submit_report(kind: str, period: str, text: str) -> dict:
+    """FINANCE/CEO — final answer for a report. kind: daily_flash | weekly_review | ...; period: today | yesterday |
+    last_7_days | month_to_date | last_month | quarter_to_date. Code attaches the numbers; text is your commentary and
+    may only quote figures from get_pnl/get_kpis for the same period, otherwise you get an ERROR and must rewrite."""
+    r = reports.create_report(kind, period, text, created_by=current_agent.get())
+    return {"id": r["id"], "kind": r["kind"], "version": r["version"], "sha256": r["sha256"],
+            "period_start": r["period_start"], "period_end": r["period_end"]}
 
 
 @tool("control", terminal=True)

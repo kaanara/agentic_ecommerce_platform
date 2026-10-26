@@ -83,6 +83,7 @@ rules:
   submit_plan: {tier: T0, agents: [foreman]}
   submit_verdict: {tier: T0, agents: [judge]}
   submit_brief: {tier: T0}
+  submit_report: {tier: T1, agents: [finance, ceo]}   # J3: stored, immutable report snapshot
 
   # ---------------------------------------------------------------- store
   create_product: {tier: T1, agents: [store_ops]}

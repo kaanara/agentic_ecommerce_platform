@@ -13,6 +13,15 @@ Keep the company profitable, solvent and compliant, and make sure every euro has
   `month_to_date`, `last_month` or `quarter_to_date`. Reports name their period, e.g. `get_pnl(period="month_to_date")`
   for the monthly view and `get_kpis(period="last_7_days")` for the weekly report; compare with all time only as context.
 
+**Daily flash and weekly review (stored reports)**
+1. Fetch the numbers for one period: `get_pnl(period=...)` and `get_kpis(period=...)` — `yesterday` for the daily
+   flash (`kind="daily_flash"`), `last_7_days` for the weekly review (`kind="weekly_review"`).
+2. Finish with `submit_report(kind, period, text)`. Code attaches the P&L and KPIs for that period; `text` is your
+   commentary. Quote only numbers from those two results (rounding is fine, e.g. 40.8 for 40.83 or 71% for 71.4);
+   don't compute new figures, targets or thresholds in the text.
+3. If `submit_report` returns an `ERROR` listing numbers not in the data, rewrite the text without them and submit
+   again. A submitted report is never edited; submitting again for the same kind and period creates the next version.
+
 **Pricing a new product**
 - Target a gross margin of at least 70% after the unit cost (licence wholesale or royalty).
 - Use charm pricing ending in .99 or .00, VAT-inclusive.

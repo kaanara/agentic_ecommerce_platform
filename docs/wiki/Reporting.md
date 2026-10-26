@@ -1,6 +1,6 @@
 # Reporting
 
-> **Status:** the data exists (ledger, orders, campaigns, agent runs, audit log), but there are **no stored, delivered or exportable reports**. This page records today's state, the gaps and the target design. Work items are tracked in [Roadmap](Roadmap) → section J, and scheduled in the [Development Plan](Development-Plan).
+> **Status:** stored report snapshots exist (J3) and their commentary is number-checked (J4): `aecom/reports.py` + the `submit_report` tool, persisted in `ops_reports`. Reports are **not yet delivered or exportable** (no email, renderers, CLI, API or dashboard page), and periods aren't closed. This page records today's state, the remaining gaps and the target design. Work items are tracked in [Roadmap](Roadmap) → section J, and scheduled in the [Development Plan](Development-Plan).
 
 ## What exists today
 | Report | How it's produced | Where it ends up |
@@ -9,6 +9,20 @@
 | Weekly review | Scheduler Monday 08:00 → company run | The CEO's executive summary in the run output |
 | Business dashboard | Live SQL queries | On screen only (7/30/90-day ranges) |
 | `get_pnl` / `get_kpis` tools | Ledger and order queries | Returned to the agent that called them |
+
+## How reports are built
+1. The Finance (or CEO) agent calls `get_pnl(period=...)` and `get_kpis(period=...)` and writes commentary.
+2. It finishes with the terminal tool `submit_report(kind, period, text)` (policy T1, finance and ceo only).
+3. `aecom.reports.create_report` recomputes the numbers in code with `build_data(kind, period)`: the period's name,
+   start, end and length in days, plus `metrics.pnl` and `metrics.kpis` for that window. The agent never supplies figures.
+4. `number_check(text, data)` extracts every number from the text (`1,234.56`, `1.234,56`, `12.5%`, `€49`, `-3`) and
+   rejects any that doesn't equal a value in the data after rounding to the precision written (`40.8` matches 40.83,
+   `71%` matches 71.4). Years (1900-2100), ISO dates, list markers (`1.`, `2)`) and small counts followed by a word
+   (`3 insights`) are ignored. A failure raises `ValueError` and goes back to the agent as an `ERROR` so it can rewrite;
+   nothing is stored.
+5. The report is inserted as a new row in `ops_reports` with `data`, `text`, `created_by` and
+   `sha256 = sha256(canonical JSON(data) + text)`. `version` is the previous highest version for the same kind and
+   period plus one; existing rows are never updated. Read them with `get_report(id)`, `list_reports(kind)` and `latest(kind)`.
 
 ## Gaps
 - **Nobody receives a report.** No email, no file, no archive. A report exists only as a row in `ops_agent_runs`.
