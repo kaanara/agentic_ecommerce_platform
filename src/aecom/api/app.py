@@ -1,4 +1,4 @@
-"""HTTP API: runs, approvals (HITL), kill switch, events, AgentMail webhook.
+"""HTTP API: runs, approvals (HITL), kill switch, agent pause, events, AgentMail webhook.
 
     uv run aecom api      → http://127.0.0.1:8000/docs
 
@@ -23,7 +23,7 @@ import aecom.handlers  # noqa: F401  (registers event subscribers)
 from aecom import approvals
 from aecom.bootstrap import init
 from aecom.bus.events import drain, publish
-from aecom.company_settings import kill_switch_on, set_setting
+from aecom.company_settings import agents_paused_on, kill_switch_on, set_setting
 from aecom.db import new_id
 from aecom.secrets import secrets
 
@@ -71,7 +71,7 @@ class EventIn(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "kill_switch": kill_switch_on()}
+    return {"ok": True, "kill_switch": kill_switch_on(), "agents_paused": agents_paused_on()}
 
 
 @api.get("/approvals")
@@ -101,6 +101,12 @@ def reject(approval_id: str, body: Decision) -> dict[str, Any]:
 def kill_switch(on: bool) -> dict[str, Any]:
     set_setting("kill_switch", "on" if on else "off")
     return {"kill_switch": kill_switch_on()}
+
+
+@api.post("/agents-pause")
+def agents_pause(on: bool) -> dict[str, Any]:
+    set_setting("agents_paused", "on" if on else "off")
+    return {"agents_paused": agents_paused_on()}
 
 
 def _run_company(directive: str, run_id: str) -> None:

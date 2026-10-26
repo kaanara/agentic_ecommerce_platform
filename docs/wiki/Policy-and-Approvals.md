@@ -70,8 +70,15 @@ agent tool call ──gate: escalate──▶ ops_approvals (pending: tool, args
 | CLI | `aecom approvals`, `aecom approvals approve <id> --by kaan --note "ok"`, `aecom approvals reject <id>` |
 | API | `GET /approvals`, `POST /approvals/{id}/approve` `{"by": "...", "note": "...", "args_override": {...}}`, `POST /approvals/{id}/reject` |
 
-## Kill switch
-Dashboard Home, `aecom kill-switch on|off`, or `POST /kill-switch?on=true`. It applies to agents, reflexes and external MCP clients alike.
+## Kill switch and agent pause
+Two switches, checked first by the gate, for agents, reflexes and external MCP clients alike. Read-only tools always run.
+
+| Switch | Blocks | Still runs | How |
+|---|---|---|---|
+| **Kill switch** (`kill_switch`) | every side-effecting tool, including delivery; approvals refuse to execute | nothing with side effects | Dashboard Home, `aecom kill-switch on\|off`, `POST /kill-switch?on=true` |
+| **Pause agents** (`agents_paused`) | every side-effecting tool except `policy.yaml → defaults.continue_while_paused` | `deliver_order`, so paying customers still get their keys | Dashboard Home toggle, `POST /agents-pause?on=true` |
+
+The kill switch is checked before the pause and wins: with both on, delivery is denied too. A denied delivery is retried by the event bus and dead-lettered (re-run with `retry`) if the switch stays on, so it is not lost. `GET /health` shows both flags. Use the pause to stop agents doing new work; use the kill switch for an emergency.
 
 ## Budgets
 Each agent has a daily LLM budget in € (`POLICY.md`, falling back to `policy.yaml → budgets`). If the budget is spent, the run is refused and audited.

@@ -1,4 +1,4 @@
-"""Runtime-tunable company settings (kill switch, budgets) stored in ops_settings."""
+"""Runtime-tunable company settings (kill switch, agent pause, budgets) stored in ops_settings."""
 
 from __future__ import annotations
 
@@ -22,3 +22,8 @@ def set_setting(key: str, value: str) -> None:
 
 def kill_switch_on() -> bool:
     return get_setting("kill_switch", "off") == "on"
+
+
+def agents_paused_on() -> bool:
+    """Softer than the kill switch: agents stop, but customer deliveries keep running."""
+    return get_setting("agents_paused", "off") == "on"
