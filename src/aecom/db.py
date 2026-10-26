@@ -223,6 +223,25 @@ class Approval(Base):
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # I10: identical pending escalations share a dedup key; stale ones expire instead of executing late
+    dedup_key: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ErrorRow(Base):
+    """K1: unexpected errors with tracebacks, so humans and the Sentinel can find root causes."""
+
+    __tablename__ = "ops_errors"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+    component: Mapped[str] = mapped_column(String, index=True)  # agent | gate | event_bus | api | scheduler
+    run_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    event_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    exc_type: Mapped[str] = mapped_column(String)
+    message: Mapped[str] = mapped_column(Text)
+    traceback: Mapped[str] = mapped_column(Text, default="")
+    context: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    sentry_event_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class AuditLog(Base):
@@ -268,6 +287,7 @@ class AgentRun(Base):
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_eur: Mapped[float] = mapped_column(Float, default=0.0)
+    cost_booked: Mapped[bool] = mapped_column(Boolean, default=False)  # sub-cent costs are booked in batches
     started_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

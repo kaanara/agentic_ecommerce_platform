@@ -16,9 +16,9 @@ Target setup: runs 24/7 on a Raspberry Pi 4 (64-bit OS), dashboards opened from 
 | # | Item | Notes |
 |---|---|---|
 | A1 ✅ 2026-10-25 | Event retries + dead letter | `bus/events.py` marks events processed before the handler runs, so a failed `deliver_order` is lost. Switch to at-least-once with retry and dead letter |
-| A2 | Order reconciler job | Every 15 min: paid but undelivered orders → deliver, alert if it still fails |
+| A2 ✅ 2026-10-26 | Order reconciler job | Every 15 min: paid but undelivered orders → deliver, alert if it still fails |
 | A3 ✅ 2026-10-25 | Fix stuck `running` runs | The `except` path in `graph/agents.py` must set the `ops_agent_runs` row to `error` |
-| A4 | Split the kill switch | *Pause agents* vs. *stop selling*. Today the kill switch also stops deliveries |
+| A4 ✅ 2026-10-26 | Split the kill switch | *Pause agents* vs. *stop selling*. Today the kill switch also stops deliveries |
 | A5 | Lemon Squeezy as store (MoR) | Checkout, payment, VAT and key delivery keep working when the Pi is off; webhooks retry |
 
 ### B. Monitoring and alerting
@@ -67,8 +67,8 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 ### G. Chaos testing and gradual autonomy
 | # | Item | Notes |
 |---|---|---|
-| G1 | Invariants | Every paid order delivered; ledger balances; no key on two orders; spend ≤ budget; no side effects with the kill switch on (except delivery); no run stuck `running` |
-| G2 | Fault injectors | Delivery crash, duplicate webhook, lost webhook, Claude API down, DB locked, vendor outage, injection variants |
+| G1 ✅ 2026-10-26 | Invariants | Every paid order delivered; ledger balances; no key on two orders; spend ≤ budget; no side effects with the kill switch on (except delivery); no run stuck `running` |
+| G2 ◐ (delivery, duplicate, Claude down, DB locked) | Fault injectors | Delivery crash, duplicate webhook, lost webhook, Claude API down, DB locked, vendor outage, injection variants |
 | G3 | `aecom chaos` | Offline (scripted, CI) and live (real Claude); seeded "random bad week" |
 | G4 | Trust report | Per action: escalations, approve-unchanged rate, a "promote" button |
 | G5 | Autonomy stages | Per-action stages in `policy.yaml`, stage stored in `ops_settings` (set by humans only); allow + notify for stage 3 |
@@ -99,14 +99,14 @@ Confirmed by reading the code. The offline scenarios don't catch them because th
 | I2 | ✅ done 2026-10-25 | **Support can email anyone.** `send_email` (T1) accepts any recipient, and Support also has `list_orders` / `get_order` with customer emails. An injected email can make it send other customers' data to an attacker | `tools/catalog.py`, `agents/support/TOOLS.md`, `policy.yaml` | Restrict recipients to the customer of the current thread or order; escalate anything else |
 | I3 | ✅ done 2026-10-26 | **Approvals bypass the kill switch.** `approve()` runs the parked call directly, so approving during an emergency still executes it | `approvals.py` | Re-check the kill switch (and only the kill switch) before executing |
 | I4 | 🔴 | **Key never reaches the customer if the email fails.** `deliver_order` commits `delivered` and *then* sends the email. If AgentMail fails, a retry returns `already` and never resends | `tools/catalog.py`, `store/mock.py` | Track `email_sent` separately; resend on retry; invariant "every delivered order has a sent email" |
-| I5 | 🔴 | **Restock mints fake licence keys.** The `inventory.low` / `out_of_stock` reflexes call `add_license_keys(count=50)`, which generates random strings. With a real store, customers would get keys that don't work | `handlers.py`, `tools/catalog.py` | Restock from the vendor's key feed or the store platform only; with no feed → alert, never mint |
+| I5 | ✅ done 2026-10-26 | **Restock mints fake licence keys.** The `inventory.low` / `out_of_stock` reflexes call `add_license_keys(count=50)`, which generates random strings. With a real store, customers would get keys that don't work | `handlers.py`, `tools/catalog.py` | Restock from the vendor's key feed or the store platform only; with no feed → alert, never mint |
 | I6 | 🟠 | **Refunds don't reverse VAT.** `record_refund` debits the gross amount from `refunds` but leaves `vat_payable` unchanged, so net revenue is understated and VAT is overpaid | `ledger.py` | Split the refund into net + VAT; reverse `vat_payable` |
 | I7 | 🟠 | **Partial refund behaves like a full one.** Any amount marks the order `refunded` and revokes the key, and the remainder can never be refunded | `store/mock.py` | Track refunded amount; revoke only on a full refund |
-| I8 | 🟠 | **Missing EU VAT rates default to 0%.** `VAT_RATES` has 10 countries; BE, PT, IE, DK, FI, CZ, GR, HU, RO and others get no VAT | `store/adapter.py` | All 27 EU rates, plus an error for unknown countries instead of 0% |
+| I8 | ✅ done 2026-10-26 | **Missing EU VAT rates default to 0%.** `VAT_RATES` has 10 countries; BE, PT, IE, DK, FI, CZ, GR, HU, RO and others get no VAT | `store/adapter.py` | All 27 EU rates, plus an error for unknown countries instead of 0% |
 | I9 | 🟠 | **Monthly marketing budget can be bypassed.** The spend check counts only `live` and `ended` campaigns created this month. Pausing a campaign removes it from the total; campaigns from last month are never counted | `policy/gate.py` | Count actual spend (`spent_eur`) of all campaigns active this month, whatever their status |
 | I10 | 🟠 | **Duplicate approvals.** The same escalated call can be parked twice, and approving both executes it twice (e.g. two campaign launches). Approvals also never expire | `policy/gate.py`, `approvals.py` | Deduplicate pending approvals by tool + args; expire after N days |
 | I11 | 🟠 | **Order, ledger and event aren't one transaction.** `create_order` commits the order, then posts to the ledger, then publishes `order.paid`, each separately. A crash in between leaves an order with no ledger entry or no delivery | `store/mock.py` | Transactional outbox: write the order, ledger lines and event in one commit |
-| I12 | 🟡 | **Money stored as floats.** Rounding drift across many orders breaks the "ledger balances" invariant | `ledger.py`, `db.py` | Integer cents or `Decimal` |
+| I12 | ✅ done 2026-10-26 (Decimal at the boundary; Float columns remain) | **Money stored as floats.** Rounding drift across many orders breaks the "ledger balances" invariant | `ledger.py`, `db.py` | Integer cents or `Decimal` |
 | I13 | 🟡 | **Download links are fake.** `deliver_order` returns a random `downloads.example` URL; there is no file hosting, no signed URL, no expiry or resend | `store/mock.py` | Hosted assets with signed, expiring URLs (the store platform or object storage) |
 | I14 | 🟡 | **Newsletter ignores consent.** `send_newsletter` emails every customer; "reply STOP" isn't processed; no marketing consent is recorded | `tools/catalog.py`, `db.py` | Consent flag per customer, unsubscribe handling, suppression list |
 | I15 | 🟡 | **Shared memory can be poisoned.** Any agent can `remember(shared=True)` at T1, including right after reading an untrusted email; every agent then recalls it | `tools/catalog.py`, `policy.yaml` | Store the source with each memory; shared memories need Judge or human review |
@@ -119,13 +119,13 @@ See [Reporting](Reporting) for the report catalog and design.
 
 | # | Item | Notes |
 |---|---|---|
-| J1 | `aecom/metrics.py` | Single place for KPIs, all with `start`/`end`; money KPIs from the ledger. Today `get_kpis` (orders table) and `get_pnl` (ledger) can disagree |
-| J2 | Period parameters | `get_pnl` / `get_kpis` are all-time only |
+| J1 ✅ 2026-10-26 | `aecom/metrics.py` | Single place for KPIs, all with `start`/`end`; money KPIs from the ledger. Today `get_kpis` (orders table) and `get_pnl` (ledger) can disagree |
+| J2 ✅ (module; tool wiring in W2) | Period parameters | `get_pnl` / `get_kpis` are all-time only |
 | J3 | `ops_reports` + `submit_report` | Immutable, versioned, hashed snapshots; code attaches numbers, agents write commentary |
 | J4 | Number check | Reject report text that quotes figures not in its data |
 | J5 | Daily flash email | Replaces the log-only daily report; merged with the P3 digest; stop writing daily insights to shared memory |
 | J6 | Weekly business review | Stored and emailed; product, marketing, support and AI sections |
-| J7 | VAT detail on ledger lines | Country and rate per VAT line, needed for the OSS report |
+| J7 ✅ 2026-10-26 | VAT detail on ledger lines | Country and rate per VAT line, needed for the OSS report |
 | J8 | Period close | `ops_periods`; no postings into closed months |
 | J9 | Month-end close report | P&L, cash, VAT, budget vs actual, payout reconciliation (F4) |
 | J10 | Accountant export | General journal CSV (DATEV format for a German accountant), receipts linked to expenses |
