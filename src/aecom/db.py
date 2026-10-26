@@ -173,6 +173,9 @@ class LedgerEntry(Base):
     credit: Mapped[float] = mapped_column(Float, default=0.0)
     memo: Mapped[str] = mapped_column(Text, default="")
     ref: Mapped[str | None] = mapped_column(String, nullable=True)  # order / campaign / vendor id
+    # VAT detail (J7): set on vat_payable lines so VAT can be reported per country and rate (OSS)
+    country: Mapped[str | None] = mapped_column(String, nullable=True)
+    vat_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
