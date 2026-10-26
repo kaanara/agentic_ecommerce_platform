@@ -44,6 +44,14 @@ def poll_email() -> None:
         drain()
 
 
+def monitors() -> None:
+    from aecom.monitors import run_monitors
+
+    r = run_monitors()
+    if r["failing"] or r["monitor_errors"] or r["alerted"]:
+        log.info("monitors: %s", r)
+
+
 def daily_finance_report() -> None:
     from aecom.graph.agents import run_agent
 
@@ -72,6 +80,7 @@ def main(demo: bool = False) -> None:
     sched.add_job(drain, "interval", seconds=30, id="drain")
     sched.add_job(stock_check, "interval", minutes=60, id="stock_check")
     sched.add_job(reconcile_orders, "interval", minutes=15, id="reconcile")
+    sched.add_job(monitors, "interval", minutes=5, id="monitors")
     if secrets.has("AGENTMAIL_API_KEY"):
         sched.add_job(poll_email, "interval", seconds=60, id="poll_email")
     if demo:

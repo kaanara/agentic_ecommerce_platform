@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel
 
 import aecom.handlers  # noqa: F401  (registers event subscribers)
@@ -69,9 +69,37 @@ class EventIn(BaseModel):
     payload: dict[str, Any] = {}
 
 
+def _db_ok() -> bool:
+    try:
+        from sqlalchemy import text
+
+        from aecom.db import get_engine
+
+        with get_engine().connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
+
+
 @app.get("/health")
-def health() -> dict[str, Any]:
-    return {"ok": True, "kill_switch": kill_switch_on(), "agents_paused": agents_paused_on()}
+def health(response: Response) -> dict[str, Any]:
+    """Unauthenticated liveness and real state. HTTP 503 when the DB is unreachable or a P1 incident is active."""
+    from aecom.bus.events import status
+    from aecom.incidents import open_counts
+
+    out: dict[str, Any] = {"ok": False, "db": _db_ok(), "kill_switch": None, "agents_paused": None,
+                           "open_incidents": None, "event_bus": None}
+    if out["db"]:
+        try:
+            out.update(kill_switch=kill_switch_on(), agents_paused=agents_paused_on(),
+                       open_incidents=open_counts(), event_bus=status())
+        except Exception:
+            out["db"] = False
+    out["ok"] = bool(out["db"] and out["open_incidents"] and out["open_incidents"].get("P1", 0) == 0)
+    if not out["ok"]:
+        response.status_code = 503
+    return out
 
 
 @api.get("/approvals")
