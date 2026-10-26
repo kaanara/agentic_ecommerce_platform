@@ -20,7 +20,7 @@ from typing import Any
 from sqlalchemy import func, or_, select
 
 from aecom import alerts, incidents
-from aecom.db import AgentRun, Approval, ErrorRow, EventRow, Order, session
+from aecom.db import AgentRun, Approval, ErrorRow, EventRow, LicenseKey, Order, session
 from aecom.db import now as db_now
 from aecom.observability import record_error
 
@@ -74,7 +74,24 @@ def ledger_imbalance(now: datetime) -> list[Problem]:
 def duplicate_key(now: datetime) -> list[Problem]:
     from aecom.chaos.invariants import no_key_on_two_orders
 
-    return _violations(no_key_on_two_orders, "license_keys")
+    if not no_key_on_two_orders():
+        return []
+    # Never put the key value itself in the detail: it is a sellable secret and the detail goes to ntfy and email.
+    with session() as s:
+        shared = s.scalars(select(LicenseKey.key).where(LicenseKey.order_id.is_not(None)).group_by(LicenseKey.key)
+                           .having(func.count(func.distinct(LicenseKey.order_id)) > 1)).all()
+        rows = s.execute(select(LicenseKey.id, LicenseKey.key, LicenseKey.order_id)
+                         .where(LicenseKey.key.in_(shared)).order_by(LicenseKey.id)).all() if shared else []
+        held = s.execute(select(Order.id, Order.quantity, func.count(LicenseKey.id))
+                         .join(LicenseKey, LicenseKey.order_id == Order.id)
+                         .group_by(Order.id, Order.quantity).order_by(Order.id)).all()
+    by_key: dict[str, list[tuple[int, str]]] = {}
+    for kid, key, oid in rows:
+        by_key.setdefault(key, []).append((kid, oid))
+    parts = [f"key ids {', '.join(str(k) for k, _ in v)} share one value across orders "
+             f"{', '.join(sorted({o for _, o in v if o}))}" for v in by_key.values()]
+    parts += [f"order {o} holds {n} keys for quantity {q or 1}" for o, q, n in held if n > (q or 1)]
+    return [("license_keys", "; ".join(parts or ["licence key invariant violated"])[:2000])]
 
 
 def _dead(order_path: bool) -> list[Problem]:

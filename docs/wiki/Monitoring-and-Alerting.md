@@ -15,7 +15,7 @@
 | Kill switch state | Dashboard → Home, `/health` | ✅ on for more than 1 h (P2) |
 | Full model and tool traces | LangSmith, if `LANGSMITH_TRACING=true` | ❌ |
 | Process alive | `systemctl status` / `journalctl` on the Pi; external heartbeat | ✅ via healthchecks.io when pings stop |
-| `/health` endpoint | API (bound to `127.0.0.1`), unauthenticated | 503 when the DB is unreachable or a P1 incident is active |
+| `/health` endpoint | API (bound to `127.0.0.1`), unauthenticated; `?detail=true` adds `db`, `open_incidents`, `event_bus` | 503 when the DB is unreachable or a P1 incident is active |
 
 ## Monitors (`src/aecom/monitors.py`)
 Plain SQL checks, no LLM, so they work when Claude is down or a budget is exhausted. Each monitor reports its current problems as (subject, detail); a problem opens or refreshes the incident for (monitor, subject) and subjects that are no longer reported are **auto-resolved**. Monitors are isolated: one that raises becomes a P2 `monitor_error` incident (subject = monitor name) and the rest still run. Thresholds are module constants.
@@ -25,7 +25,7 @@ Plain SQL checks, no LLM, so they work when Claude is down or a budget is exhaus
 | P1 | `undelivered_order` | order `paid` or `failed` for more than 15 min | order id |
 | P1 | `unemailed_order` | order delivered but `email_sent` false for more than 15 min | order id |
 | P1 | `ledger_imbalance` | debits ≠ credits (overall or per transaction) | `ledger` |
-| P1 | `duplicate_key` | a licence key on two orders, or more keys than the quantity | `license_keys` |
+| P1 | `duplicate_key` | a licence key on two orders, or more keys than the quantity (detail names key ids and order ids, never the key value) | `license_keys` |
 | P1 | `order_dead_letter` | dead-lettered event with topic `order.*` or `inventory.*` | event id |
 | P1 | `restock_failed` | `inventory.restock_failed` event in the last 24 h | sku |
 | P2 | `other_dead_letter` | any other dead-lettered event | event id |

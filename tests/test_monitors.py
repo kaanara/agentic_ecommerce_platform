@@ -162,6 +162,31 @@ def test_p1_monitor_opens_and_auto_resolves(demo, make, monitor):
     assert incidents.get_incident(inc[subject]["id"])["status"] == "resolved"
 
 
+def test_duplicate_key_alert_never_contains_the_key_value(demo, config, net, mail, monkeypatch):
+    from aecom.chaos import invariants
+
+    with session() as s:
+        k = s.scalars(select(LicenseKey).where(LicenseKey.order_id == demo[0])).first()
+        value = k.key
+    monkeypatch.setattr(invariants, "no_key_on_two_orders",
+                        lambda: [{"check": "no_key_on_two_orders", "detail": f"key {value} is assigned to several orders"}])
+    config.update(NTFY_URL="https://ntfy.example/aecom", ALERT_EMAIL="ops@example.com")
+    monitors.run_monitors(now=later())
+    inc = active("duplicate_key")["license_keys"]
+    assert value not in inc["detail"] and value not in inc["subject"]
+    assert net.calls and mail
+    assert all(value not in repr(c) for c in net.calls) and all(value not in repr(m) for m in mail)
+
+
+def test_duplicate_key_detail_names_order_not_key(demo):
+    _dup_key(demo)
+    with session() as s:
+        values = s.scalars(select(LicenseKey.key).where(LicenseKey.order_id == demo[0])).all()
+    monitors.run_monitors(now=later())
+    detail = active("duplicate_key")["license_keys"]["detail"]
+    assert demo[0] in detail and not any(v in detail for v in values)
+
+
 def test_young_undelivered_order_is_not_an_incident(demo):
     with session() as s:
         s.get(Order, demo[0]).status = "paid"
@@ -303,7 +328,7 @@ def test_network_errors_never_raise_and_are_recorded(config, net, mail):
 # ------------------------------------------------------------------------------------- /health
 def test_health_200_when_healthy_and_503_with_open_p1():
     client = TestClient(api_app.app)
-    r = client.get("/health")
+    r = client.get("/health", params={"detail": True})
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True and body["db"] is True and body["kill_switch"] is False
@@ -311,15 +336,23 @@ def test_health_200_when_healthy_and_503_with_open_p1():
     assert set(body["event_bus"]) == {"waiting_for_retry", "queued", "dead_letter"}
 
     incidents.raise_incident("ledger_imbalance", "P2", "ledger")
-    assert client.get("/health").status_code == 200  # P2 is degraded, not down
+    assert client.get("/health", params={"detail": True}).status_code == 200  # P2 is degraded, not down
     p1, _ = incidents.raise_incident("undelivered_order", "P1", "ord_1")
-    r = client.get("/health")
+    r = client.get("/health", params={"detail": True})
     assert r.status_code == 503 and r.json()["ok"] is False and r.json()["open_incidents"]["P1"] == 1
     incidents.resolve(p1["id"], "kaan")
-    assert client.get("/health").status_code == 200
+    assert client.get("/health", params={"detail": True}).status_code == 200
 
 
 def test_health_503_when_db_is_down(monkeypatch):
     monkeypatch.setattr(api_app, "_db_ok", lambda: False)
-    r = TestClient(api_app.app).get("/health")
+    r = TestClient(api_app.app).get("/health", params={"detail": True})
     assert r.status_code == 503 and r.json()["db"] is False and r.json()["ok"] is False
+
+
+def test_health_default_body_keeps_its_shape_but_still_turns_503():
+    client = TestClient(api_app.app)
+    assert client.get("/health").json() == {"ok": True, "kill_switch": False, "agents_paused": False}
+    incidents.raise_incident("undelivered_order", "P1", "ord_1")
+    r = client.get("/health")
+    assert r.status_code == 503 and r.json() == {"ok": False, "kill_switch": False, "agents_paused": False}

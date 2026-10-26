@@ -83,8 +83,12 @@ def _db_ok() -> bool:
 
 
 @app.get("/health")
-def health(response: Response) -> dict[str, Any]:
-    """Unauthenticated liveness and real state. HTTP 503 when the DB is unreachable or a P1 incident is active."""
+def health(response: Response, detail: bool = False) -> dict[str, Any]:
+    """Unauthenticated liveness and real state. HTTP 503 when the DB is unreachable or a P1 incident is active.
+
+    The default body keeps its long-standing shape (ok, kill_switch, agents_paused); `?detail=true` adds
+    db, open_incidents and event_bus.
+    """
     from aecom.bus.events import status
     from aecom.incidents import open_counts
 
@@ -99,6 +103,8 @@ def health(response: Response) -> dict[str, Any]:
     out["ok"] = bool(out["db"] and out["open_incidents"] and out["open_incidents"].get("P1", 0) == 0)
     if not out["ok"]:
         response.status_code = 503
+    if not detail:
+        return {k: out[k] for k in ("ok", "kill_switch", "agents_paused")}
     return out
 
 
