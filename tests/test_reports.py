@@ -45,6 +45,18 @@ def test_number_check_rejects_invented_numbers():
     assert reports.number_check("We expect 25 orders tomorrow.", DATA) == ["25"]
 
 
+def test_number_check_checks_numbers_glued_to_letters():
+    text = "revenue €5000k, ROAS 37x, 250EUR, 12pct, 999orders, Q4 target 4500"
+    assert reports.number_check(text, {"pnl": {"net_profit": 3.0}}) == [
+        "€5000k", "37x", "250EUR", "12pct", "999orders", "4500"]
+    # A decimal with a suffix is checked as a whole and scaled, not truncated to the part before the point.
+    assert reports.number_check("Revenue €1.2k.", {"pnl": {"net_revenue": 1.0}}) == ["€1.2k"]
+    assert reports.number_check("Revenue €1.2k, 2 million, 5 percent, EUR250.", {"x": 1.0}) == [
+        "€1.2k", "2 million", "5 percent", "EUR250"]
+    assert reports.number_check("Revenue €1.2k, €1,234.56k? no: €1.23k, ROAS 40.8x, 71pct, 12orders.",
+                                {"rev": 1234.56, "roas": 40.83, "margin": 71.4, "orders": 12}) == ["€1,234.56k"]
+
+
 def test_number_check_ignores_dates_years_list_markers_and_counts():
     text = "1. Q3 2026 summary for 2026-10-25\n2) Generated 2026-10-26T07:00:00\n3 insights from 2 campaigns: 12 orders."
     assert reports.number_check(text, DATA) == []

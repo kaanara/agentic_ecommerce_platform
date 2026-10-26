@@ -18,7 +18,8 @@
 4. `number_check(text, data)` extracts every number from the text (`1,234.56`, `1.234,56`, `12.5%`, `€49`, `-3`) and
    rejects any that doesn't equal a value in the data after rounding to the precision written (`40.8` matches 40.83,
    `71%` matches 71.4). Years (1900-2100), ISO dates, list markers (`1.`, `2)`) and small counts followed by a word
-   (`3 insights`) are ignored. A failure raises `ValueError` and goes back to the agent as an `ERROR` so it can rewrite;
+   (`3 insights`) are ignored. Numbers glued to letters are still checked: scale suffixes are applied (`€1.2k` is
+   checked as 1,200, `2 million` as 2,000,000) and other suffixes (`37x`, `250EUR`, `12pct`) keep the number. A failure raises `ValueError` and goes back to the agent as an `ERROR` so it can rewrite;
    nothing is stored.
 5. The report is inserted as a new row in `ops_reports` with `data`, `text`, `created_by` and
    `sha256 = sha256(canonical JSON(data) + text)`. `version` is the previous highest version for the same kind and

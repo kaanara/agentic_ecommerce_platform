@@ -21,7 +21,14 @@ _KIND = re.compile(r"[a-z][a-z0-9_]{0,39}")
 # Stripped before extraction: ISO dates/timestamps and list markers at the start of a line ("1." / "2)").
 _DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?\b")
 _LIST_MARKER = re.compile(r"^(\s*)\d{1,3}[.)](?=\s)", re.MULTILINE)
-_NUMBER = re.compile(r"(?<![\w.,])(?P<sign>[-−])?(?P<cur>[€$£]\s?)?(?P<num>\d+(?:[.,]\d+)*)(?![\w])(?P<pct>\s?%)?")
+# A number plus whatever is glued to it. Scale suffixes (k, m, bn, "million") multiply the value; any other letters
+# ("37x", "250EUR", "999orders") still leave the number checked. Never skip a number because letters follow it.
+_NUMBER = re.compile(
+    r"(?<![\w.,])(?P<sign>[-−])?(?P<cur>(?:[€$£]|(?i:eur|usd|gbp)(?![a-z]))\s?)?(?P<num>\d+(?:[.,]\d+)*)"
+    r"(?P<scale>(?i:k|m|mn|b|bn)(?![A-Za-z])|\s?(?i:thousand|million|billion)\b)?"
+    r"(?P<pct>\s?%|\s?(?i:pct|percent)\b)?(?P<suffix>[A-Za-z]+)?"
+)
+_SCALES = {"k": 1e3, "thousand": 1e3, "m": 1e6, "mn": 1e6, "million": 1e6, "b": 1e9, "bn": 1e9, "billion": 1e9}
 _COUNT_WORD = re.compile(r"[\s-]+[A-Za-z]")
 
 
@@ -65,9 +72,9 @@ def _flatten(data: Any) -> list[float]:
     return []
 
 
-def _matches(value: float, decimals: int, known: list[float]) -> bool:
-    tolerance = 0.5 * 10 ** -decimals + 1e-9  # "40.8" matches 40.83, "71%" matches 71.4
-    return any(abs(abs(k) - value) <= tolerance for k in known)
+def _matches(value: float, decimals: int, known: list[float], scale: float = 1.0) -> bool:
+    tolerance = (0.5 * 10 ** -decimals + 1e-9) * scale  # "40.8" matches 40.83, "71%" matches 71.4, "€1.2k" 1180
+    return any(abs(abs(k) - value * scale) <= tolerance for k in known)
 
 
 def number_check(text: str, data: dict[str, Any]) -> list[str]:
@@ -76,14 +83,16 @@ def number_check(text: str, data: dict[str, Any]) -> list[str]:
     known = _flatten(data)
     unknown: list[str] = []
     for m in _NUMBER.finditer(cleaned):
-        num, plain = m["num"], not (m["cur"] or m["pct"] or m["sign"])
+        num = m["num"]
+        plain = not (m["cur"] or m["pct"] or m["sign"] or m["scale"] or m["suffix"])
+        scale = _SCALES[m["scale"].strip().lower()] if m["scale"] else 1.0
         if plain and num.isdigit():
             value = int(num)
             if len(num) == 4 and 1900 <= value <= 2100:
                 continue  # a year
             if value <= 10 and _COUNT_WORD.match(cleaned, m.end()):
                 continue  # "3 insights", "2 campaigns"
-        if not any(_matches(v, d, known) for v, d in _candidates(num)):
+        if not any(_matches(v, d, known, scale) for v, d in _candidates(num)):
             unknown.append(m.group(0).strip())
     return unknown
 
