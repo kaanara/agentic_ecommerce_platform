@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      LLM_MODE: scripted
+      AGENTMAIL_LIVE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      # uv picks up Python 3.12 from .python-version.
+      - run: uv sync
+      - run: uv run pytest -q
+      - run: uv run aecom init
+      - run: uv run aecom scenario all --offline
