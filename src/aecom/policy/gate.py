@@ -202,9 +202,12 @@ async def run_gated(agent_id: str, tool_name: str, args: dict[str, Any], execute
         if inspect.isawaitable(result):
             result = await result
     except Exception as exc:  # tool errors go back to the model so it can recover
+        from aecom.observability import mask, record_error
+
+        record_error("gate", exc, run_id=run_id, context={"agent_id": agent_id, "tool": tool_name})
         with session() as s:
             s.add(ToolCallLog(run_id=run_id, agent_id=agent_id, tool_name=tool_name, decision="error", ok=False))
-        return f"ERROR: {type(exc).__name__}: {exc}"
+        return mask(f"ERROR: {type(exc).__name__}: {exc}")
     return _to_text(result)
 
 

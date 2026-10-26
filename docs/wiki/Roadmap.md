@@ -69,7 +69,7 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 |---|---|---|
 | G1 ✅ 2026-10-26 | Invariants | Every paid order delivered; ledger balances; no key on two orders; spend ≤ budget; no side effects with the kill switch on (except delivery); no run stuck `running` |
 | G2 ◐ (delivery, duplicate, Claude down, DB locked) | Fault injectors | Delivery crash, duplicate webhook, lost webhook, Claude API down, DB locked, vendor outage, injection variants |
-| G3 | `aecom chaos` | Offline (scripted, CI) and live (real Claude); seeded "random bad week" |
+| G3 ✅ (offline; live runs in Phase 5) | `aecom chaos` | Offline (scripted, CI) and live (real Claude); seeded "random bad week" |
 | G4 | Trust report | Per action: escalations, approve-unchanged rate, a "promote" button |
 | G5 | Autonomy stages | Per-action stages in `policy.yaml`, stage stored in `ops_settings` (set by humans only); allow + notify for stage 3 |
 | G6 | Automatic demotion | Tighten limits on KPI drops, Judge scores or incidents |
@@ -100,11 +100,11 @@ Confirmed by reading the code. The offline scenarios don't catch them because th
 | I3 | ✅ done 2026-10-26 | **Approvals bypass the kill switch.** `approve()` runs the parked call directly, so approving during an emergency still executes it | `approvals.py` | Re-check the kill switch (and only the kill switch) before executing |
 | I4 | 🔴 | **Key never reaches the customer if the email fails.** `deliver_order` commits `delivered` and *then* sends the email. If AgentMail fails, a retry returns `already` and never resends | `tools/catalog.py`, `store/mock.py` | Track `email_sent` separately; resend on retry; invariant "every delivered order has a sent email" |
 | I5 | ✅ done 2026-10-26 | **Restock mints fake licence keys.** The `inventory.low` / `out_of_stock` reflexes call `add_license_keys(count=50)`, which generates random strings. With a real store, customers would get keys that don't work | `handlers.py`, `tools/catalog.py` | Restock from the vendor's key feed or the store platform only; with no feed → alert, never mint |
-| I6 | 🟠 | **Refunds don't reverse VAT.** `record_refund` debits the gross amount from `refunds` but leaves `vat_payable` unchanged, so net revenue is understated and VAT is overpaid | `ledger.py` | Split the refund into net + VAT; reverse `vat_payable` |
-| I7 | 🟠 | **Partial refund behaves like a full one.** Any amount marks the order `refunded` and revokes the key, and the remainder can never be refunded | `store/mock.py` | Track refunded amount; revoke only on a full refund |
+| I6 | ✅ done 2026-10-26 | **Refunds don't reverse VAT.** `record_refund` debits the gross amount from `refunds` but leaves `vat_payable` unchanged, so net revenue is understated and VAT is overpaid | `ledger.py` | Split the refund into net + VAT; reverse `vat_payable` |
+| I7 | ✅ done 2026-10-26 | **Partial refund behaves like a full one.** Any amount marks the order `refunded` and revokes the key, and the remainder can never be refunded | `store/mock.py` | Track refunded amount; revoke only on a full refund |
 | I8 | ✅ done 2026-10-26 | **Missing EU VAT rates default to 0%.** `VAT_RATES` has 10 countries; BE, PT, IE, DK, FI, CZ, GR, HU, RO and others get no VAT | `store/adapter.py` | All 27 EU rates, plus an error for unknown countries instead of 0% |
-| I9 | 🟠 | **Monthly marketing budget can be bypassed.** The spend check counts only `live` and `ended` campaigns created this month. Pausing a campaign removes it from the total; campaigns from last month are never counted | `policy/gate.py` | Count actual spend (`spent_eur`) of all campaigns active this month, whatever their status |
-| I10 | 🟠 | **Duplicate approvals.** The same escalated call can be parked twice, and approving both executes it twice (e.g. two campaign launches). Approvals also never expire | `policy/gate.py`, `approvals.py` | Deduplicate pending approvals by tool + args; expire after N days |
+| I9 | ✅ done 2026-10-26 | **Monthly marketing budget can be bypassed.** The spend check counts only `live` and `ended` campaigns created this month. Pausing a campaign removes it from the total; campaigns from last month are never counted | `policy/gate.py` | Count actual spend (`spent_eur`) of all campaigns active this month, whatever their status |
+| I10 | ✅ done 2026-10-26 | **Duplicate approvals.** The same escalated call can be parked twice, and approving both executes it twice (e.g. two campaign launches). Approvals also never expire | `policy/gate.py`, `approvals.py` | Deduplicate pending approvals by tool + args; expire after N days |
 | I11 | 🟠 | **Order, ledger and event aren't one transaction.** `create_order` commits the order, then posts to the ledger, then publishes `order.paid`, each separately. A crash in between leaves an order with no ledger entry or no delivery | `store/mock.py` | Transactional outbox: write the order, ledger lines and event in one commit |
 | I12 | ✅ done 2026-10-26 (Decimal at the boundary; Float columns remain) | **Money stored as floats.** Rounding drift across many orders breaks the "ledger balances" invariant | `ledger.py`, `db.py` | Integer cents or `Decimal` |
 | I13 | 🟡 | **Download links are fake.** `deliver_order` returns a random `downloads.example` URL; there is no file hosting, no signed URL, no expiry or resend | `store/mock.py` | Hosted assets with signed, expiring URLs (the store platform or object storage) |
@@ -120,7 +120,7 @@ See [Reporting](Reporting) for the report catalog and design.
 | # | Item | Notes |
 |---|---|---|
 | J1 ✅ 2026-10-26 | `aecom/metrics.py` | Single place for KPIs, all with `start`/`end`; money KPIs from the ledger. Today `get_kpis` (orders table) and `get_pnl` (ledger) can disagree |
-| J2 ✅ (module; tool wiring in W2) | Period parameters | `get_pnl` / `get_kpis` are all-time only |
+| J2 ✅ 2026-10-26 | Period parameters | `get_pnl` / `get_kpis` are all-time only |
 | J3 | `ops_reports` + `submit_report` | Immutable, versioned, hashed snapshots; code attaches numbers, agents write commentary |
 | J4 | Number check | Reject report text that quotes figures not in its data |
 | J5 | Daily flash email | Replaces the log-only daily report; merged with the P3 digest; stop writing daily insights to shared memory |
@@ -139,7 +139,7 @@ See [Incident Response](Incident-Response) for who detects, diagnoses and fixes 
 
 | # | Item | Notes |
 |---|---|---|
-| K1 | `ops_errors` with tracebacks | Today agent crashes keep only `"Type: message"`, tool errors keep only `ok=False`, and bus tracebacks live only in rotating process logs |
+| K1 ✅ 2026-10-26 | `ops_errors` with tracebacks | Today agent crashes keep only `"Type: message"`, tool errors keep only `ok=False`, and bus tracebacks live only in rotating process logs |
 | K2 | Incident lifecycle | `ops_incidents` with owner, timeline, root cause, fix, linked approvals and PRs |
 | K3 | Runbooks as skills | One per monitor; shared by the Sentinel and humans |
 | K4 | Sentinel diagnostic tools | Read-only: incidents, errors, run timeline, health, backlog, dead letter, deploys |
@@ -181,6 +181,10 @@ Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves
 | R2 | I1 | Parametrized test over every protected route; test that the AgentMail webhook stays reachable; document that changing `AECOM_API_TOKEN` needs a restart |
 | R3 | M1 | `max_content_tokens` and optional domain allow/block lists for `web_fetch`; `web_search` default type → `web_search_20260209` and configurable `max_uses`; mention `web_fetch` on the Agents wiki page |
 | R4 | M4 | For MCP tools, match forbidden patterns on the tool part only, so a server *named* e.g. `login_service` doesn't deny its read tools; Policy page: `request_provisioning` escalates only for the CEO (others are denied) |
+| R6 | W2 | Order lifecycle: `deliver_order` on a `partially_refunded` order must not assign a second key; KPI revenue filter should include `partially_refunded`; refund row/status and ledger post in one transaction (with I11) |
+| R7 | W2 | AI cost booking (`book_ai_costs`) should be atomic and also cover runs that crash after using tokens; round the `ai_cost_carry_eur` setting |
+| R8 | W2 | Approval dedup needs a uniqueness guard against concurrent escalations; a scheduled `approvals.expire_stale()` sweep; show `expired` in dashboard/API |
+| R9 | W2 | Monthly marketing budget uses lifetime `spent_eur` of campaigns spanning months (no per-month split yet) |
 | R5 ✅ | — | Replace FastAPI's deprecated `@app.on_event("startup")` with a lifespan handler |
 
 #### Decisions owned by the product owner

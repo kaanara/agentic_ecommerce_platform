@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from aecom import ledger, metrics
 from aecom.db import LedgerEntry, session
+from aecom.money import vat_split
 from aecom.simulator import _backdate
 from aecom.store.adapter import get_store, vat_included
 
@@ -81,8 +82,9 @@ def test_refunds_reduce_revenue(two_months):
     assert metrics.pnl(start, end)["net_revenue"] == pytest.approx(100.0 + net_de)
     _refund(two_months)
     p, k = metrics.pnl(start, end), metrics.kpis(start, end)
-    assert p["net_revenue"] == k["net_revenue_eur"] == pytest.approx(100.0 + net_de - 50.0)
-    assert k["orders"] == 2 and k["aov_eur"] == pytest.approx((50.0 + net_de) / 2, abs=0.01)
+    net_refund = float(vat_split(50.0, 0.19)[0])  # refunds reverse their VAT, so only the net leaves revenue
+    assert p["net_revenue"] == k["net_revenue_eur"] == pytest.approx(100.0 + net_de - net_refund)
+    assert k["orders"] == 2 and k["aov_eur"] == pytest.approx((100.0 + net_de - net_refund) / 2, abs=0.01)
     assert k["ai_cost_eur"] == 5.0 and k["ai_cost_per_order_eur"] == 2.5
     assert k["cac_eur"] is None and k["roas"] is None  # no new paid customers, no spend in October
     assert metrics.pnl(*metrics.period("last_month", TODAY))["net_revenue"] == 200.0  # refund booked in Oct only

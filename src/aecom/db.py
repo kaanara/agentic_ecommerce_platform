@@ -148,7 +148,7 @@ class Order(Base):
     amount_eur: Mapped[float] = mapped_column(Float)
     vat_eur: Mapped[float] = mapped_column(Float, default=0.0)
     campaign_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    status: Mapped[str] = mapped_column(String, default="paid")  # paid | delivered | refunded | failed
+    status: Mapped[str] = mapped_column(String, default="paid")  # paid | delivered | partially_refunded | refunded | failed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
@@ -217,7 +217,7 @@ class Approval(Base):
     reason: Mapped[str] = mapped_column(Text)
     context: Mapped[str] = mapped_column(Text, default="")
     run_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    status: Mapped[str] = mapped_column(String, default="pending")  # pending | approved | rejected | executed | failed
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending | approved | rejected | executed | failed | expired
     decided_by: Mapped[str | None] = mapped_column(String, nullable=True)
     decision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     result: Mapped[str | None] = mapped_column(Text, nullable=True)
