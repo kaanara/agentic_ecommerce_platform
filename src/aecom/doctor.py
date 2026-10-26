@@ -71,11 +71,13 @@ def check_schema() -> Check:
 
 
 def check_kill_switch() -> Check:
-    from aecom.company_settings import agents_paused_on, kill_switch_on
+    from aecom.company_settings import agents_paused_on, get_setting, kill_switch_on, safe_mode_on
 
-    kill, paused = kill_switch_on(), agents_paused_on()
-    detail = f"kill switch {'on' if kill else 'off'}, agents paused {'on' if paused else 'off'}"
-    return _c("kill_switch", WARN if kill or paused else OK, detail)
+    kill, paused, safe = kill_switch_on(), agents_paused_on(), safe_mode_on()
+    detail = f"kill switch {'on' if kill else 'off'}, agents paused {'on' if paused else 'off'}, safe mode {'on' if safe else 'off'}"
+    if safe:
+        detail += f" ({get_setting('safe_mode_reason', '')})"
+    return _c("kill_switch", WARN if kill or paused or safe else OK, detail)
 
 
 def check_event_bus() -> Check:

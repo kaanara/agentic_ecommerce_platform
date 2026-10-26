@@ -27,7 +27,7 @@ monitors    severity    safe        Sentinel     depends   monitor     postmorte
 - **Agents can fix the business, not the system.** They use their existing gated tools. Changing code, policy, ledger history or credentials is always a human decision.
 - **The Sentinel diagnoses and proposes; it doesn't act alone.** Its remediation tools go through the policy gate like any other agent's.
 - **Every fixed bug leaves a regression test.** The incident becomes a chaos test, so the same bug can't return unnoticed.
-- **If you don't respond, the system gets safer, not riskier.** A P1 that's unacknowledged after 2 hours puts the company in **safe mode**: agents paused, deliveries and support replies continue, no spending.
+- **If you don't respond, the system gets safer, not riskier.** A P1 that's unacknowledged after 2 hours puts the company in **safe mode**: only deliveries, restocking and customer replies pass the gate; all spending stops. Only a human can leave it (see Safe mode below).
 
 ## What has to be built
 ### Evidence: today errors lose their details

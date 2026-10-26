@@ -144,8 +144,11 @@ def agents_pause(on: bool) -> dict[str, Any]:
 
 
 @api.post("/safe-mode")
-def safe_mode(on: bool, by: str = "api") -> dict[str, Any]:
-    """Safe mode on (by hand) or off. The monitors only ever switch it on; leaving it is this, the CLI or the dashboard."""
+def safe_mode(on: bool, by: str = "") -> dict[str, Any]:
+    """Safe mode on (by hand) or off. The monitors only ever switch it on; leaving it is this, the CLI or the dashboard.
+    Leaving requires `by` (the person's name), so the audit trail says who trusted the system again."""
+    if not on and not by.strip():
+        raise HTTPException(400, "by (your name) is required to leave safe mode")
     if on:
         enter_safe_mode(f"switched on by hand ({by})")
     else:

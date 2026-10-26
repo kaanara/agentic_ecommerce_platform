@@ -123,7 +123,7 @@ See [Reporting](Reporting) for the report catalog and design.
 | J2 ✅ 2026-10-26 | Period parameters | `get_pnl` / `get_kpis` are all-time only |
 | J3 ✅ 2026-10-26 | `ops_reports` + `submit_report` | Immutable, versioned, hashed snapshots; code attaches numbers, agents write commentary |
 | J4 ✅ 2026-10-26 | Number check | Reject report text that quotes figures not in its data |
-| J5 | Daily flash email | Replaces the log-only daily report; merged with the P3 digest; stop writing daily insights to shared memory |
+| J5 ✅ 2026-10-26 | Daily flash email | Replaces the log-only daily report; merged with the P3 digest; stop writing daily insights to shared memory |
 | J6 | Weekly business review | Stored and emailed; product, marketing, support and AI sections |
 | J7 ✅ 2026-10-26 | VAT detail on ledger lines | Country and rate per VAT line, needed for the OSS report |
 | J8 | Period close | `ops_periods`; no postings into closed months |
@@ -141,11 +141,11 @@ See [Incident Response](Incident-Response) for who detects, diagnoses and fixes 
 |---|---|---|
 | K1 ✅ 2026-10-26 | `ops_errors` with tracebacks | Today agent crashes keep only `"Type: message"`, tool errors keep only `ok=False`, and bus tracebacks live only in rotating process logs |
 | K2 ✅ 2026-10-26 | Incident lifecycle | `ops_incidents` with owner, timeline, root cause, fix, linked approvals and PRs |
-| K3 | Runbooks as skills | One per monitor; shared by the Sentinel and humans |
+| K3 ◐ (runbooks written; as Sentinel skills in W9) | Runbooks as skills | One per monitor; shared by the Sentinel and humans |
 | K4 | Sentinel diagnostic tools | Read-only: incidents, errors, run timeline, health, backlog, dead letter, deploys |
 | K5 | Sentinel remediation tools | Gated: replay dead letter, resend delivery email, re-run reconciler, pause agents, manage incidents |
 | K6 ✅ 2026-10-26 | `aecom doctor` | One-command health and diagnostics report |
-| K7 | Safe mode | Unacknowledged P1 after 2 h → agents paused, deliveries and support continue, no spending |
+| K7 ✅ 2026-10-26 | Safe mode | Unacknowledged P1 after 2 h → agents paused, deliveries and support continue, no spending |
 | K8 | Incident → GitHub issue → PR | Engineer agent (e.g. Claude Code in GitHub Actions) opens a PR with a failing test and the fix; human merges; never deploys |
 | K9 | Correcting entries | Data fixes prepared by Sentinel as T3 approvals; ledger stays append-only |
 | K10 | Postmortems | Every P1; draft by Sentinel, finished by a human; becomes a regression test and lessons |
