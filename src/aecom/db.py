@@ -149,6 +149,9 @@ class Order(Base):
     vat_eur: Mapped[float] = mapped_column(Float, default=0.0)
     campaign_id: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="paid")  # paid | delivered | partially_refunded | refunded | failed
+    # I4: delivery (key assigned) and the access email are tracked separately, so a failed email is resent
+    email_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    email_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
