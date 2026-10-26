@@ -21,6 +21,7 @@ Every tool call is checked by `src/aecom/policy/gate.py`, using the escalation m
 | Action | Tier | Auto-allowed when | Otherwise |
 |---|---|---|---|
 | `refund_order` (support, finance) | T2 | ≤ €50 | human |
+| `send_email` (support, store_ops, marketing) | T2 | recipient is the customer of the current case | human |
 | `update_price` (store_ops, finance) | T2 | change ≤ 20% | human |
 | `launch_campaign` (marketing) | T2 | ≤ €150 **and** within monthly marketing budget | human |
 | `register_vendor` (supply, foreman) | T2 | ≤ €50/month **and** within vendor budget | human |

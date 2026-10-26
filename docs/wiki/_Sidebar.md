@@ -11,4 +11,8 @@
 - [Integrations](Integrations)
 - [Configuration](Configuration)
 - [Operations and Troubleshooting](Operations-and-Troubleshooting)
+- [Monitoring and Alerting](Monitoring-and-Alerting)
+- [Reporting](Reporting)
+- [Incident Response](Incident-Response)
 - [Roadmap](Roadmap)
+- [Development Plan](Development-Plan)

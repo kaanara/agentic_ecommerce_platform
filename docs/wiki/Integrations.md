@@ -13,7 +13,12 @@ Tools read credentials at call time via `SecretsProvider` (`src/aecom/secrets.py
 - Client: `src/aecom/integrations/agentmail.py` (`https://api.agentmail.to/v0`).
 - Org inbox: `AGENTMAIL_ORG_INBOX` (default `enrgy@agentmail.to`).
 - **Outbox-only by default.** Every send is stored in `ops_outbox_emails`. Real delivery requires `AGENTMAIL_LIVE=true` **and** `AGENTMAIL_API_KEY`.
-- Inbound: point an AgentMail `message.received` webhook at `POST /webhooks/agentmail`. It publishes `email.received`, which the Support agent picks up.
+- Inbound, two ways, both publish `email.received` for the Support agent:
+  - **Polling** (works without a public URL): the scheduler runs `poll_inbox()` every 60 s when a key is set, or run `uv run aecom agentmail poll`. It stores each new unread customer email with its event in one commit, then marks it read in AgentMail. Re-polls never create duplicates.
+  - **Webhook**: point an AgentMail `message.received` webhook at `POST /webhooks/agentmail` (signature check still to do).
+- Reading needs only a key; `AGENTMAIL_LIVE` controls sending.
+- **Recipient restriction:** Support serves the sender of the email it is handling. `send_email` to anyone else escalates; `reply_email` answers in the customer's thread and refuses other customers' emails.
+- **Key:** use an inbox-scoped key with `inbox_read, message_read, message_send, message_update` (`uv run python scripts/agentmail_inbox_key.py`). The app's admin commands then return 403 by design.
 - Admin commands (human use):
   ```bash
   uv run aecom agentmail keys              # list API keys

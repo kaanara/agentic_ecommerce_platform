@@ -14,9 +14,10 @@ Defined in `src/aecom/tools/catalog.py` with `@tool(domain, side_effect, termina
 | `add_license_keys` | store | T1 | store_ops, supply | Add or mint licence keys |
 | `deliver_order` | store | T1 | store_ops | Assign key/link + email (idempotent) |
 | `refund_order` | store | T2 | support, finance | Refund, revoke key (> €50 escalates) |
-| `send_email` | comms | T1 | support, store_ops, marketing | One email via AgentMail |
+| `send_email` | comms | T2 | support, store_ops, marketing | One email via AgentMail; only to the customer of the current case, anyone else escalates |
+| `reply_email` | comms | T1 | support | Reply in the thread of the inbound email being handled (refuses other customers' emails) |
 | `send_newsletter` | comms | T3 | marketing | Bulk email to a segment |
-| `list_inbox` | comms | T0 | any | Inbound emails (fenced) |
+| `list_inbox` | comms | T0 | any | Inbound emails (fenced), with `message_id` for replies |
 | `create_campaign` | marketing | T1 | marketing | Draft campaign |
 | `launch_campaign` | marketing | T2 | marketing | Go live (> €150 or over budget escalates) |
 | `pause_campaign` | marketing | T1 | marketing, finance, ceo | Pause |
