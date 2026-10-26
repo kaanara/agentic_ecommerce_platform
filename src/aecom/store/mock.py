@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from aecom import ledger
 from aecom.bus.events import publish
 from aecom.db import Customer, LicenseKey, Order, Product, Refund, session
+from aecom.money import cents, quantize
 from aecom.store.adapter import vat_included, vat_rate
 
 
@@ -88,7 +89,7 @@ class MockStore:
             rate = vat_rate(tax_country)
             vat = vat_included(p.price_eur, tax_country)
             if c is None:
-                c = Customer(email=customer_email, country=country, acquisition_channel=campaign_id)
+                c = Customer(email=customer_email, country=tax_country, acquisition_channel=campaign_id)
                 s.add(c)
                 s.flush()
             o = Order(customer_id=c.id, product_id=p.id, amount_eur=p.price_eur,
@@ -134,21 +135,42 @@ class MockStore:
         return delivered
 
     def refund_order(self, order_id: str, amount_eur: float, reason: str) -> dict[str, Any]:
+        """Full or partial refund; the licence key is revoked only once the whole amount is refunded."""
         with session() as s:
             o = s.get(Order, order_id)
             if o is None:
                 raise ValueError(f"order {order_id} not found")
             if o.status == "refunded":
                 return {"order_id": order_id, "status": "refunded", "already": True}
-            if amount_eur > o.amount_eur:
-                raise ValueError("refund exceeds order amount")
-            s.add(Refund(order_id=order_id, amount_eur=amount_eur, reason=reason))
-            o.status = "refunded"
-            for key in s.scalars(select(LicenseKey).where(LicenseKey.order_id == order_id)):
-                key.status = "revoked"
-        ledger.record_refund(order_id, amount_eur)
-        publish("order.refunded", {"order_id": order_id, "amount_eur": amount_eur}, source="store")
-        return {"order_id": order_id, "status": "refunded", "amount_eur": amount_eur}
+            refunded = s.scalar(select(func.coalesce(func.sum(Refund.amount_eur), 0.0))
+                                .where(Refund.order_id == order_id))
+            remaining = cents(o.amount_eur) - cents(refunded)
+            if not 0 < cents(amount_eur) <= remaining:
+                raise ValueError(f"refund exceeds remaining amount: requested {amount_eur:.2f}, "
+                                 f"remaining {remaining / 100:.2f}")
+            country, rate = self._tax(s, o)
+            s.add(Refund(order_id=order_id, amount_eur=float(quantize(amount_eur)), reason=reason))
+            full = cents(amount_eur) == remaining
+            o.status = "refunded" if full else "partially_refunded"
+            if full:
+                for key in s.scalars(select(LicenseKey).where(LicenseKey.order_id == order_id)):
+                    key.status = "revoked"
+            status = o.status
+        ledger.record_refund(order_id, amount_eur, country=country, vat_rate=rate)
+        publish("order.refunded", {"order_id": order_id, "amount_eur": amount_eur, "status": status}, source="store")
+        return {"order_id": order_id, "status": status, "amount_eur": amount_eur,
+                "remaining_eur": (remaining - cents(amount_eur)) / 100}
+
+    @staticmethod
+    def _tax(s, o: Order) -> tuple[str | None, float]:
+        """Tax country and rate of an order: the customer's country, else derived from the booked VAT."""
+        c = s.get(Customer, o.customer_id)
+        country = c.country.upper() if c and c.country else None
+        try:
+            return country, vat_rate(country or "")
+        except ValueError:
+            net = o.amount_eur - o.vat_eur
+            return country, (o.vat_eur / net if net else 0.0)
 
     def get_order(self, order_id: str) -> dict[str, Any] | None:
         with session() as s:

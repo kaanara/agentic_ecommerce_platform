@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from decimal import Decimal
 
 from sqlalchemy import select
 
 from aecom.db import LedgerEntry, new_id, session
-from aecom.money import cents, quantize
+from aecom.money import cents, quantize, to_decimal, vat_split
 
 # debit-normal accounts grow with debits; the rest grow with credits
 DEBIT_NORMAL = {"cash", "cogs", "marketing_expense", "ai_expense", "vendor_expense", "refunds"}
@@ -41,9 +42,37 @@ def record_sale(order_id: str, gross: float, vat: float, unit_cost: float,
     return post(lines, f"sale {order_id}", order_id)
 
 
-def record_refund(order_id: str, amount: float) -> str:
-    a = quantize(amount)
-    return post([("refunds", a, 0), ("cash", 0, a)], f"refund {order_id}", order_id)
+def _refund_basis(order_id: str) -> tuple[str | None, float | None, Decimal, Decimal]:
+    """(country, vat_rate) of the order's sale VAT line, plus gross and VAT already refunded on it."""
+    country = rate = None
+    gross = vat = Decimal(0)
+    with session() as s:
+        for e in s.scalars(select(LedgerEntry).where(LedgerEntry.ref == order_id)):
+            if e.memo.startswith("sale ") and e.account == "vat_payable" and e.credit:
+                country, rate = e.country, e.vat_rate
+            elif e.memo.startswith("refund "):
+                if e.account == "cash":
+                    gross += to_decimal(e.credit)
+                elif e.account == "vat_payable":
+                    vat += to_decimal(e.debit)
+    return country, rate, gross, vat
+
+
+def record_refund(order_id: str, amount: float, country: str | None = None, vat_rate: float | None = None) -> str:
+    """Reverse a (partial) sale: debit refunds (net) and vat_payable (VAT), credit cash (gross).
+
+    VAT is split on the cumulative refunded gross so partial refunds that add up to the order
+    reverse exactly the VAT booked on the sale. Without a rate the sale's VAT line supplies it.
+    """
+    sale_country, sale_rate, prior_gross, prior_vat = _refund_basis(order_id)
+    country = country or sale_country
+    rate = vat_rate if vat_rate is not None else (sale_rate or 0.0)
+    g = quantize(amount)
+    vat = vat_split(prior_gross + g, rate)[1] - prior_vat if rate else Decimal(0)
+    lines: list[tuple] = [("refunds", g - vat, 0), ("cash", 0, g)]
+    if vat:
+        lines.append(("vat_payable", vat, 0, country, rate))
+    return post(lines, f"refund {order_id}", order_id)
 
 
 def record_expense(account: str, amount: float, memo: str, ref: str | None = None) -> str:
