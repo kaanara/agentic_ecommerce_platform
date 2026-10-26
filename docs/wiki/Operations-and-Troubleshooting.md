@@ -22,6 +22,26 @@ The schema is owned by Alembic (`alembic.ini`, `migrations/versions/`). `uv run 
 
 To change a table: edit the model in `src/aecom/db.py`, then `uv run alembic revision --autogenerate -m "add foo to bar"` (it uses `DATABASE_URL`; point it at a database already at head). Review the generated file, put any data backfill in the same `upgrade()`, and run `uv run pytest tests/test_migrations.py`; it fails when models and migrations drift. Only the lead writes revisions, so the chain stays linear. Builders who need a schema change describe it in their patch notes.
 
+## Health check: aecom doctor
+`uv run aecom doctor` runs every health check and prints a report you can paste into an issue; `--json` gives the same as JSON. Exit code 1 if any check is `fail`. It runs before `init`, so it reports the database as it is and changes nothing. Each check is isolated: one that crashes shows up as `fail` ("check crashed: ...") and the others still run.
+
+| Check | ok / warn / fail |
+|---|---|
+| `database` | `SELECT 1` works; shows the SQLite path (or the URL with the password hidden) |
+| `schema` | fail if a table or column from the models is missing (run `aecom init`) |
+| `kill_switch` | warn if the kill switch or agents pause is on |
+| `event_bus` | warn if events wait for a retry; fail on any dead letter (`aecom events dead`) |
+| `invariants` | fail if a chaos invariant is violated (names and counts only) |
+| `approvals` | pending count and oldest age; warn if older than 24 h |
+| `errors` | warn with the count of `ops_errors` rows from the last 24 h |
+| `stuck_runs` | fail if an agent run is `running` for more than 30 min |
+| `credentials` | names only, never values: warn if `ANTHROPIC_API_KEY` is missing with `LLM_MODE=anthropic`, `AGENTMAIL_API_KEY` with `AGENTMAIL_LIVE=true`, or `AECOM_API_TOKEN` / `DASHBOARD_PASSWORD_HASH` |
+| `agentmail_live` | info: whether emails are really sent |
+| `disk` | free space where the SQLite file lives: warn < 1 GB, fail < 200 MB |
+| `backup` | skipped for now: backup age is not checked until hosting is decided |
+
+The header shows the version (git short sha, or the package version outside a checkout).
+
 ## Troubleshooting
 | Symptom | Cause / fix |
 |---|---|

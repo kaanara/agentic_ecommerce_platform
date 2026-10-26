@@ -12,6 +12,7 @@
     aecom reconcile [--older-than-minutes N]   re-publish order.paid for stuck paid orders, then drain
     aecom drain | scheduler [--demo] | api | dashboard | mcp <domain>
     aecom events dead | retry [ID ...]     dead-lettered events; retry some or all after fixing the cause
+    aecom doctor [--json]                  health report (paste into an issue); exit 1 if any check fails
     aecom agentmail keys|create-key NAME|inboxes   (admin, uses AGENTMAIL_API_KEY)
     aecom agentmail poll                   fetch unread inbound mail → Support (same as the scheduler job)
 """
@@ -80,6 +81,8 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("events")
     s.add_argument("action", choices=["dead", "retry"])
     s.add_argument("ids", nargs="*", type=int)
+    s = sub.add_parser("doctor")
+    s.add_argument("--json", action="store_true", help="machine-readable report")
     s = sub.add_parser("scheduler")
     s.add_argument("--demo", action="store_true")
     s = sub.add_parser("api")
@@ -109,6 +112,17 @@ def main(argv: list[str] | None = None) -> None:
         return sched_main(demo=a.demo)
     if a.cmd == "chaos":  # before init(): by default it must never touch the company DB
         return _chaos(a.name, a.seed, a.use_configured_db)
+    if a.cmd == "doctor":  # before init(): report the database as it is (e.g. missing columns), don't fix it
+        from aecom.doctor import format_report, report
+
+        rep = report()
+        if a.json:
+            _print(rep)
+        else:
+            print(format_report(rep))
+        if rep["summary"]["fail"]:
+            sys.exit(1)
+        return None
 
     import aecom.handlers  # noqa: F401
     from aecom.bootstrap import init, seed_demo
