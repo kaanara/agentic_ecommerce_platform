@@ -30,9 +30,9 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 | C1 | systemd units | `aecom-dashboard`, `aecom-scheduler`, `Restart=always` |
 | C2 | `scripts/update.sh` | Kill switch on → stop → back up `data/` → `git pull` → `uv sync` → `aecom init` (no `--demo`) → start → kill switch off |
 | C3 | Off-Pi backups | Daily copy of `data/` (both `aecom.db` and `aecom.checkpoints.db`) |
-| C4 | Alembic migrations | `create_all` never alters existing tables |
-| C5 | Re-sync `TOOLS.md` | `seed_registry` ignores tool changes for agents that are already seeded |
-| C6 | Dashboard login | No authentication today; anyone on the LAN can approve. Remote access via Tailscale or an SSH tunnel only |
+| C4 ✅ 2026-10-26 | Alembic migrations | `create_all` never alters existing tables |
+| C5 ✅ 2026-10-26 | Re-sync `TOOLS.md` | `seed_registry` ignores tool changes for agents that are already seeded |
+| C6 ✅ 2026-10-26 | Dashboard login | No authentication today; anyone on the LAN can approve. Remote access via Tailscale or an SSH tunnel only |
 
 ### D. Monitoring agents
 | # | Item | Notes |
@@ -144,7 +144,7 @@ See [Incident Response](Incident-Response) for who detects, diagnoses and fixes 
 | K3 | Runbooks as skills | One per monitor; shared by the Sentinel and humans |
 | K4 | Sentinel diagnostic tools | Read-only: incidents, errors, run timeline, health, backlog, dead letter, deploys |
 | K5 | Sentinel remediation tools | Gated: replay dead letter, resend delivery email, re-run reconciler, pause agents, manage incidents |
-| K6 | `aecom doctor` | One-command health and diagnostics report |
+| K6 ✅ 2026-10-26 | `aecom doctor` | One-command health and diagnostics report |
 | K7 | Safe mode | Unacknowledged P1 after 2 h → agents paused, deliveries and support continue, no spending |
 | K8 | Incident → GitHub issue → PR | Engineer agent (e.g. Claude Code in GitHub Actions) opens a PR with a failing test and the fix; human merges; never deploys |
 | K9 | Correcting entries | Data fixes prepared by Sentinel as T3 approvals; ledger stays append-only |
@@ -186,6 +186,7 @@ Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves
 | R8 | W2 | Approval dedup needs a uniqueness guard against concurrent escalations; a scheduled `approvals.expire_stale()` sweep; show `expired` in dashboard/API |
 | R9 | W2 | Monthly marketing budget uses lifetime `spent_eur` of campaigns spanning months (no per-month split yet) |
 | R10 | W3 | A `partially_refunded` order whose access email never went out is never emailed (delivery refuses refunded orders); pass `order_id` as an idempotency key to AgentMail so a crash between send and `mark_email_sent` can't double-send; store download URLs so a resent email carries the same link |
+| R11 | W4 | `docs/wiki/Agents.md` still says TOOLS.md seeds only on the first init (C5 changed that); ruff `known-first-party` for the dashboard; replace SQLite's deprecated default datetime adapter; init_db lock against two processes initialising an empty DB at once |
 | R5 ✅ | — | Replace FastAPI's deprecated `@app.on_event("startup")` with a lifespan handler |
 
 #### Decisions owned by the product owner

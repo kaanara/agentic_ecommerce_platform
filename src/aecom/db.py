@@ -8,6 +8,7 @@ Postgres (docker-compose) without migrations diverging.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -413,6 +414,7 @@ def init_db() -> None:
     if legacy:
         Base.metadata.create_all(engine)
         _add_missing_columns()
+        _align_legacy_schema()
     with engine.begin() as conn:
         cfg = _alembic_config(conn)
         if legacy:
@@ -429,6 +431,45 @@ _BACKFILL = {
     ("commerce_orders", "email_sent"):
         "UPDATE commerce_orders SET email_sent = 1 WHERE status IN ('delivered', 'partially_refunded', 'refunded')",
 }
+
+
+def _align_legacy_schema() -> None:
+    """Make a pre-Alembic database match the models before it is stamped: create missing indexes and make
+    columns that ``_add_missing_columns`` added as nullable NOT NULL where the model says so (NULLs get the
+    column default first). Without this the database would be stamped at head yet still differ from it."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import text
+
+    engine = get_engine()
+    for table in Base.metadata.sorted_tables:
+        for index in table.indexes:
+            index.create(engine, checkfirst=True)
+    with engine.begin() as conn:
+        ctx = MigrationContext.configure(conn, opts={"render_as_batch": True})
+        diffs = [d[0] for d in compare_metadata(ctx, Base.metadata) if isinstance(d, list)]
+        to_fix: dict[str, list[str]] = {}
+        for op_name, _schema, table_name, column_name, _info, _old, new in diffs:
+            if op_name == "modify_nullable" and new is False:
+                to_fix.setdefault(table_name, []).append(column_name)
+        ops = Operations(ctx)
+        for table_name, columns in to_fix.items():
+            table = Base.metadata.tables[table_name]
+            for name in columns:
+                default = table.c[name].default.arg if table.c[name].default is not None else None
+                if callable(default):
+                    default = default(None) if default.__code__.co_argcount else default()
+                if default is not None:
+                    conn.execute(text(f"UPDATE {table_name} SET {name} = :v WHERE {name} IS NULL"),
+                                 {"v": default if not isinstance(default, (list, dict)) else json.dumps(default)})
+            try:  # best effort: rebuilding the table must never make `aecom init` fail on real data
+                with conn.begin_nested(), ops.batch_alter_table(table_name) as batch:
+                    for name in columns:
+                        batch.alter_column(name, existing_type=table.c[name].type, nullable=False)
+            except Exception as exc:
+                logging.getLogger(__name__).warning("could not make %s.%s NOT NULL (left nullable): %s",
+                                                    table_name, columns, exc)
 
 
 def _add_missing_columns() -> None:

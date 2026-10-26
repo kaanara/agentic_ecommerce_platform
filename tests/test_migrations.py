@@ -68,3 +68,26 @@ def test_second_init_on_versioned_database_is_idempotent(tmp_path):
         assert conn.execute(text("SELECT value FROM ops_settings WHERE key = 'k'")).scalar_one() == "v"
         assert conn.execute(text("SELECT count(*) FROM alembic_version")).scalar_one() == 1
     assert _version() == _head()
+
+
+def test_legacy_database_ends_identical_to_head(tmp_path):
+    """A pre-Alembic DB is aligned (indexes, NOT NULL) before stamping, so it really is at head."""
+    from alembic.autogenerate import compare_metadata
+    from alembic.migration import MigrationContext
+    from sqlalchemy import text
+
+    from aecom import db
+
+    db.reset_engine(f"sqlite:///{tmp_path / 'legacy_full.db'}")
+    db.Base.metadata.create_all(db.get_engine())  # every table, as before C4...
+    with db.get_engine().begin() as conn:  # ...but the newest columns missing, like the user's old database
+        conn.execute(text("DROP TABLE ops_events"))
+        conn.execute(text("CREATE TABLE ops_events (id INTEGER PRIMARY KEY, ts DATETIME, topic VARCHAR NOT NULL, "
+                          "payload JSON NOT NULL, source VARCHAR NOT NULL, processed BOOLEAN NOT NULL)"))
+        conn.execute(text("CREATE INDEX ix_ops_events_topic ON ops_events (topic)"))
+        conn.execute(text("INSERT INTO ops_events (topic, payload, source, processed) VALUES ('x', '{}', 's', 0)"))
+        conn.execute(text("DROP INDEX IF EXISTS ix_ops_approvals_dedup_key"))
+    db.init_db()
+    with db.get_engine().connect() as conn:
+        assert compare_metadata(MigrationContext.configure(conn), db.Base.metadata) == []
+        assert conn.execute(text("SELECT attempts, dead FROM ops_events")).one() == (0, 0)
