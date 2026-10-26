@@ -41,7 +41,11 @@ for a in pending:
                 st.error(f"Invalid JSON: {exc}")
                 st.stop()
             override = {k: v for k, v in edited.items() if a["args"].get(k) != v} or None
-            res = approvals.approve(a["id"], reviewer, note, override)
+            try:
+                res = approvals.approve(a["id"], reviewer, note, override)
+            except ValueError as exc:  # kill switch on, or already decided elsewhere
+                st.error(str(exc))
+                st.stop()
             drain()
             (st.success if res["status"] == "executed" else st.error)(f"{res['status']}: {res['result'][:300]}")
             st.rerun()

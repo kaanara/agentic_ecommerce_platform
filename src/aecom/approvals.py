@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from aecom.audit import audit
 from aecom.bus.events import publish
+from aecom.company_settings import kill_switch_on
 from aecom.context import current_agent
 from aecom.db import Approval, now, session
 from aecom.tools.catalog import CATALOG
@@ -41,7 +42,11 @@ def _execute(tool_name: str, agent_id: str, args: dict[str, Any]) -> Any:
 
 
 def approve(approval_id: str, by: str, note: str = "", args_override: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Approve and execute the parked call. `args_override` lets the human edit before execution."""
+    """Approve and execute the parked call. `args_override` lets the human edit before execution.
+
+    Refused while the kill switch is on; the approval stays pending so it can be approved once it is off."""
+    if kill_switch_on():
+        raise ValueError("kill switch is on - the action was not executed; turn it off first")
     with session() as s:
         a = s.get(Approval, approval_id)
         if a is None or a.status != "pending":
