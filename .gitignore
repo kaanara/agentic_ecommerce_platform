@@ -7,3 +7,7 @@ data/
 outbox/
 docs/decisions/*.md
 !docs/decisions/.gitkeep
+
+# Streamlit agent skills (environment-specific symlinks into .venv)
+.agents/skills/developing-with-streamlit
+.claude/skills/developing-with-streamlit

@@ -232,6 +232,42 @@ class Approval(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class Incident(Base):
+    """K2/B: one open problem per (monitor, subject), raised by deterministic monitors; alerts are sent from here."""
+
+    __tablename__ = "ops_incidents"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("inc"))
+    monitor: Mapped[str] = mapped_column(String, index=True)  # e.g. undelivered_order, heartbeat, ledger_imbalance
+    severity: Mapped[str] = mapped_column(String)  # P1 | P2 | P3
+    subject: Mapped[str] = mapped_column(String, default="")  # what it is about (order id, agent, ...) - dedup key part
+    detail: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String, default="open", index=True)  # open | acknowledged | resolved
+    first_seen: Mapped[datetime] = mapped_column(DateTime, default=now)
+    last_seen: Mapped[datetime] = mapped_column(DateTime, default=now)
+    last_alerted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    alert_count: Mapped[int] = mapped_column(Integer, default=0)
+    acknowledged_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class Report(Base):
+    """J3: an immutable report snapshot. Corrections are new versions; numbers come from code (data), text from agents."""
+
+    __tablename__ = "ops_reports"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("rpt"))
+    kind: Mapped[str] = mapped_column(String, index=True)  # daily_flash | weekly_review | ...
+    period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    text: Mapped[str] = mapped_column(Text, default="")
+    sha256: Mapped[str] = mapped_column(String)
+    created_by: Mapped[str] = mapped_column(String, default="system")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
 class ErrorRow(Base):
     """K1: unexpected errors with tracebacks, so humans and the Sentinel can find root causes."""
 

@@ -17,8 +17,11 @@ def _version() -> str | None:
         return MigrationContext.configure(conn).get_current_revision()
 
 
-def test_baseline_is_the_single_head():
-    assert _head() == "0001_baseline"
+def test_migrations_form_one_linear_chain():
+    """Exactly one head, and the chain starts at the baseline (two revisions with the same parent = a fork)."""
+    script = ScriptDirectory.from_config(db._alembic_config())
+    assert len(script.get_heads()) == 1
+    assert [r.revision for r in script.walk_revisions()][-1] == "0001_baseline"
 
 
 def test_empty_database_is_upgraded_to_head(tmp_path):
