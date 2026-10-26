@@ -22,6 +22,9 @@ defaults:
   # Side-effecting tools that keep running while ops_settings.agents_paused is on (the kill switch still stops them).
   continue_while_paused:
     - deliver_order
+    - add_license_keys           # restocking keys so deliveries can continue
+  # Pending approvals expire after this many hours; an expired one can't be approved (the agent must re-request).
+  approval_ttl_hours: 72
   # Agents never sign up, log in or submit forms. fnmatch, case-insensitive, matched against the full
   # tool name and the bare tool part of "mcp:<server>/<tool>". A match is always a T4 deny, read-only or not.
   forbidden_patterns:
