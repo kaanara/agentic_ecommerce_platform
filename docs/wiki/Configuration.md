@@ -15,6 +15,7 @@ All settings live in `src/aecom/config.py` (pydantic-settings). They're read fro
 | `AGENTMAIL_API_KEY` | — | AgentMail key (dedicated, least privilege) |
 | `AGENTMAIL_ORG_INBOX` | `enrgy@agentmail.to` | Sender inbox |
 | `AGENTMAIL_LIVE` | `false` | Actually send email |
+| `AECOM_API_TOKEN` | — | Bearer token for the HTTP API (all routes except `/health` and `/webhooks/agentmail`). Unset → 503 (fail closed). Read via `secrets`, not `config.py` |
 | `STORE_ADAPTER` | `mock` | Storefront adapter |
 | `MCP_AUTOLOAD` | `true` | Load registry MCP servers into agents |
 | `MCP_LOAD_TIMEOUT_S` | `20` | Per-server load timeout |
