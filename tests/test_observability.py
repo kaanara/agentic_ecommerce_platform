@@ -93,6 +93,61 @@ def test_crashed_agent_run_creates_error_row(monkeypatch):
     (row,) = errors()
     assert row.component == "agent" and row.run_id == "run_crash" and row.exc_type == "RuntimeError"
     assert "boom" in row.traceback and FAKE_ANT not in row.message + row.traceback
+    assert FAKE_ANT not in result.output and "***" in result.output
+    from aecom.db import AuditLog
+
+    with session() as s:
+        audit_rows = [str(a.detail) for a in s.scalars(select(AuditLog).where(AuditLog.run_id == "run_crash"))]
+        run_outputs = [r.output for r in s.scalars(select(AgentRun).where(AgentRun.run_id == "run_crash"))]
+    assert audit_rows and run_outputs and run_outputs[0].startswith("ERROR: RuntimeError")
+    for blob in audit_rows + run_outputs:
+        assert FAKE_ANT not in blob and "***" in blob
+
+
+def test_sentry_events_are_masked_before_send(monkeypatch):
+    import sys
+    import types
+
+    from aecom.secrets import secrets
+
+    sent: list[dict] = []
+    stub = types.ModuleType("sentry_sdk")
+    hooks: dict = {}
+
+    def init(**kwargs):
+        hooks.update(kwargs)
+
+    def capture_exception(exc):
+        # mimic the shape of a real Sentry event: exception value, frame source lines, message, breadcrumbs, extra
+        event = {
+            "exception": {"values": [{"type": type(exc).__name__, "value": str(exc), "stacktrace": {"frames": [
+                {"function": "_raise", "context_line": f'    raise ValueError("{FAKE_AM}")',
+                 "pre_context": [f"token = '{FAKE_ANT}'"], "post_context": []}]}}]},
+            "message": f"failed with Bearer {FAKE_AM}",
+            "breadcrumbs": {"values": [{"message": f"GET with {FAKE_ANT}", "data": {"auth": f"Bearer {FAKE_AM}"}}]},
+            "extra": {"dsn": "https://fake-dsn-secret@sentry.example/1"},
+        }
+        event = hooks["before_send"](event, {})
+        crumb = hooks["before_breadcrumb"]({"message": f"crumb {FAKE_ANT}"}, {})
+        sent.append({"event": event, "crumb": crumb})
+        return "evt_123"
+
+    stub.init, stub.capture_exception = init, capture_exception
+    monkeypatch.setitem(sys.modules, "sentry_sdk", stub)
+    monkeypatch.setattr(secrets, "_dotenv", {})
+    monkeypatch.setenv("SENTRY_DSN", "https://fake-dsn-secret@sentry.example/1")
+    monkeypatch.setattr(observability, "_sentry_ready", None)
+    try:
+        _raise(f"auth failed key={FAKE_AM} ant={FAKE_ANT}")
+    except ValueError as exc:
+        observability.record_error("agent", exc)
+    assert hooks["before_send"] is observability._sentry_before_send
+    (row,) = errors()
+    assert row.sentry_event_id == "evt_123" and len(sent) == 1
+    blob = str(sent[0])
+    for secret in (FAKE_AM, FAKE_ANT, "https://fake-dsn-secret@sentry.example/1"):
+        assert secret not in blob
+    assert "***" in sent[0]["event"]["exception"]["values"][0]["value"]
 
 
 def test_unexpected_handler_exception_creates_error_row_but_handler_failed_does_not(monkeypatch):

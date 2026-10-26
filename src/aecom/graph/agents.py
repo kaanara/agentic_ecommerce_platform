@@ -22,7 +22,7 @@ from aecom.context import current_agent, current_run
 from aecom.db import AgentRun, Lesson, new_id, now, session
 from aecom.llm import get_model, server_tool_specs
 from aecom.money import CENT, quantize, to_decimal
-from aecom.observability import record_error
+from aecom.observability import mask, record_error
 from aecom.persona.loader import load_spec
 from aecom.persona.prompt import system_prompt
 from aecom.policy.gate import load_policy
@@ -151,7 +151,7 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
         book_ai_costs()
         return result
     except Exception as exc:
-        error = f"{type(exc).__name__}: {exc}"
+        error = mask(f"{type(exc).__name__}: {exc}")
         record_error("agent", exc, run_id=run_id, context={"agent_id": agent_id, "task": task[:200]})
         audit(agent_id, "agent_run", "error", {"error": error, "task": task[:200]}, run_id)
         if row_id is not None:  # close the run row, otherwise it shows as 'running' forever

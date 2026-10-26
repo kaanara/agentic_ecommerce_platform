@@ -52,6 +52,36 @@ def _mask_context(context: dict[str, Any] | None) -> dict[str, Any]:
     return json.loads(mask(json.dumps(context, default=str)))
 
 
+def _mask_any(value: Any) -> Any:
+    """Recursively mask every string inside a (JSON-like) structure, e.g. a Sentry event."""
+    if isinstance(value, str):
+        return mask(value)
+    if isinstance(value, dict):
+        return {k: _mask_any(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_mask_any(v) for v in value)
+    return value
+
+
+def _sentry_before_send(event: dict[str, Any], hint: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Sentry hook: mask exception values, frame source lines, messages, breadcrumbs and extra before upload.
+
+    If masking itself fails the event is dropped: better no Sentry event than an unmasked one.
+    """
+    try:
+        return _mask_any(event)
+    except Exception:
+        log.warning("could not mask sentry event; dropping it", exc_info=True)
+        return None
+
+
+def _sentry_before_breadcrumb(crumb: dict[str, Any], hint: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    try:
+        return _mask_any(crumb)
+    except Exception:
+        return None
+
+
 def _sentry_capture(exc: BaseException) -> str | None:
     global _sentry_ready
     from aecom.secrets import secrets
@@ -65,7 +95,8 @@ def _sentry_capture(exc: BaseException) -> str | None:
         return None
     if _sentry_ready is None:
         try:
-            sentry_sdk.init(dsn=dsn, send_default_pii=False, include_local_variables=False)
+            sentry_sdk.init(dsn=dsn, send_default_pii=False, include_local_variables=False,
+                            before_send=_sentry_before_send, before_breadcrumb=_sentry_before_breadcrumb)
             _sentry_ready = True
         except Exception:  # bad DSN etc.: don't retry on every error
             log.warning("sentry init failed; errors are kept in ops_errors only", exc_info=True)
