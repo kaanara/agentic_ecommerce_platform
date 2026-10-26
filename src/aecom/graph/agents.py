@@ -16,10 +16,13 @@ from sqlalchemy import func, select
 
 from aecom import ledger
 from aecom.audit import audit
+from aecom.company_settings import get_setting, set_setting
 from aecom.config import get_settings
 from aecom.context import current_agent, current_run
 from aecom.db import AgentRun, Lesson, new_id, now, session
 from aecom.llm import get_model, server_tool_specs
+from aecom.money import CENT, quantize, to_decimal
+from aecom.observability import record_error
 from aecom.persona.loader import load_spec
 from aecom.persona.prompt import system_prompt
 from aecom.policy.gate import load_policy
@@ -53,6 +56,31 @@ def spent_today(agent_id: str) -> float:
 def daily_budget(agent_id: str) -> float:
     spec = load_spec(agent_id)
     return float(spec.budget_eur_per_day or load_policy()["budgets"].get(agent_id, 2))
+
+
+AI_COST_CARRY = "ai_cost_carry_eur"
+
+
+def book_ai_costs() -> str | None:
+    """Book unbooked LLM run costs as one ai_expense entry once they add up to at least a cent.
+
+    A single run often costs < €0.01, which would round to zero in the cents ledger. The rounding remainder
+    (positive or negative) is carried in the company setting ``ai_cost_carry_eur`` so nothing is lost over time.
+    """
+    with session() as s:
+        runs = list(s.execute(select(AgentRun.id, AgentRun.cost_eur)
+                              .where(AgentRun.cost_booked.is_not(True), AgentRun.cost_eur > 0)))
+    carry = to_decimal(get_setting(AI_COST_CARRY, "0") or "0")
+    total = carry + sum((to_decimal(c) for _, c in runs), to_decimal(0))
+    if not runs or total < CENT:
+        return None
+    amount = quantize(total)
+    txn = ledger.record_expense("ai_expense", amount, f"LLM usage ({len(runs)} runs)", runs[-1][0])
+    with session() as s:
+        for row in s.scalars(select(AgentRun).where(AgentRun.id.in_([r for r, _ in runs]))):
+            row.cost_booked = True
+    set_setting(AI_COST_CARRY, str(total - amount))
+    return txn
 
 
 async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str | None = None) -> AgentResult:
@@ -120,11 +148,11 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
             row = s.get(AgentRun, row_id)
             row.output, row.status, row.steps, row.tool_calls = result.output[:8000], result.status, steps, result.tool_calls
             row.input_tokens, row.output_tokens, row.cost_eur, row.ended_at = tin, tout, result.cost_eur, now()
-        if result.cost_eur > 0:
-            ledger.record_expense("ai_expense", result.cost_eur, f"LLM {agent_id} ({spec.model_tier})", row_id)
+        book_ai_costs()
         return result
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
+        record_error("agent", exc, run_id=run_id, context={"agent_id": agent_id, "task": task[:200]})
         audit(agent_id, "agent_run", "error", {"error": error, "task": task[:200]}, run_id)
         if row_id is not None:  # close the run row, otherwise it shows as 'running' forever
             with session() as s:

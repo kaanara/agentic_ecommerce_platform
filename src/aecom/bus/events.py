@@ -17,6 +17,7 @@ from sqlalchemy import or_, select
 
 from aecom.audit import audit
 from aecom.db import EventRow, now, session
+from aecom.observability import record_error
 
 log = logging.getLogger(__name__)
 
@@ -84,6 +85,8 @@ def drain(limit: int = 10_000) -> int:
                     log.warning("event %d %s: %s failed (attempt %d): %s", event_id, topic, handler.__name__, attempt, exc)
                 else:
                     log.exception("handler %s failed for %s (attempt %d)", handler.__name__, topic, attempt)
+                    record_error("event_bus", exc, event_id=event_id,
+                                 context={"topic": topic, "handler": handler.__name__, "attempt": attempt})
                 errors[handler.__name__] = f"{type(exc).__name__}: {exc}"
         with session() as s:
             row = s.get(EventRow, event_id)

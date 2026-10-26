@@ -25,6 +25,7 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2", "langgraph-checkpoint-postgres>=2.0", "pgvector>=0.3"]
+observability = ["sentry-sdk>=2.0"]
 
 [project.scripts]
 aecom = "aecom.cli:main"
