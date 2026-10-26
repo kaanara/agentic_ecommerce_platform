@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException
@@ -36,13 +38,14 @@ def require_token(authorization: str | None = Header(default=None)) -> None:
         raise HTTPException(401, "Invalid or missing bearer token", headers={"WWW-Authenticate": "Bearer"})
 
 
-app = FastAPI(title="aecom — agentic e-commerce company", version="0.1.0")
-api = APIRouter(dependencies=[Depends(require_token)])  # protected routes; included at the bottom
-
-
-@app.on_event("startup")
-def _startup() -> None:
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init()
+    yield
+
+
+app = FastAPI(title="aecom — agentic e-commerce company", version="0.1.0", lifespan=_lifespan)
+api = APIRouter(dependencies=[Depends(require_token)])  # protected routes; included at the bottom
 
 
 class Decision(BaseModel):
