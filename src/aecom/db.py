@@ -388,6 +388,14 @@ def init_db() -> None:
     _add_missing_columns()
 
 
+# One-time data fixes for columns added to an existing table: (table, column) -> SQL run right after ADD COLUMN.
+_BACKFILL = {
+    # orders delivered before email tracking existed already got their email; don't resend to all of them
+    ("commerce_orders", "email_sent"):
+        "UPDATE commerce_orders SET email_sent = 1 WHERE status IN ('delivered', 'partially_refunded', 'refunded')",
+}
+
+
 def _add_missing_columns() -> None:
     """Stopgap until Alembic (backlog C4): create_all never alters existing tables, so add new nullable or
     defaulted columns to databases created by an older version."""
@@ -410,6 +418,8 @@ def _add_missing_columns() -> None:
                 elif isinstance(default, (int, float)):
                     ddl += f" DEFAULT {default}"
                 conn.execute(text(ddl))
+                if (backfill := _BACKFILL.get((table.name, col.name))):
+                    conn.execute(text(backfill))
 
 
 @contextmanager

@@ -151,3 +151,16 @@ def test_init_adds_new_columns_to_an_old_database(tmp_path):
     with session() as s:
         old = s.scalars(select(EventRow)).one()
     assert old.attempts == 0 and old.dead is False
+
+
+def test_new_email_sent_column_is_backfilled_for_delivered_orders(tmp_path):
+    url = f"sqlite:///{tmp_path / 'old_orders.db'}"
+    db.reset_engine(url)
+    with db.get_engine().begin() as conn:  # commerce_orders as created before email tracking (I4)
+        conn.execute(text("CREATE TABLE commerce_orders (id VARCHAR PRIMARY KEY, customer_id VARCHAR, product_id VARCHAR, "
+                          "quantity INTEGER, amount_eur FLOAT, vat_eur FLOAT, campaign_id VARCHAR, status VARCHAR, created_at DATETIME)"))
+        conn.execute(text("INSERT INTO commerce_orders (id, status, amount_eur) VALUES ('o1', 'delivered', 1), ('o2', 'paid', 1)"))
+    db.init_db()
+    with db.get_engine().begin() as conn:
+        rows = dict(conn.execute(text("SELECT id, email_sent FROM commerce_orders")).all())
+    assert rows == {"o1": 1, "o2": 0}
