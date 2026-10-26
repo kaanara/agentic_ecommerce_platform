@@ -104,3 +104,17 @@ def test_every_page_requires_login_first(page):
             assert name == "st.set_page_config", f"{page.name}: {name}() runs before require_login()"
         else:
             assert isinstance(stmt, ast.Import | ast.ImportFrom), f"{page.name}: code runs before require_login()"
+
+
+@pytest.mark.parametrize("value,expected", [("off", True), ("OFF", True), ("false", True), ("0", True), ("no", True),
+                                            (None, False), ("", False), ("on", False), ("disabled-ish", False)])
+def test_login_is_disabled_only_by_an_explicit_off(monkeypatch, value, expected):
+    monkeypatch.setattr(secrets, "get", lambda name: value if name == "DASHBOARD_AUTH" else None)
+    assert auth.disabled() is expected
+
+
+def test_disabled_login_shows_a_warning_and_skips_the_gate():
+    src = (Path(__file__).resolve().parents[1] / "dashboard" / "_common.py").read_text()
+    gate = src[src.index("def require_login"):]
+    assert gate.index("dashboard_auth.disabled()") < gate.index("is_configured()")  # explicit opt-out checked first
+    assert "st.warning" in gate[:gate.index("is_configured()")]

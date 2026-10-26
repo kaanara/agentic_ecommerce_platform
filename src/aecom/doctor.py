@@ -150,7 +150,12 @@ def check_credentials() -> Check:
         problems.append("ANTHROPIC_API_KEY (LLM_MODE=anthropic)")
     if not present["AGENTMAIL_API_KEY"] and settings.agentmail_live:
         problems.append("AGENTMAIL_API_KEY (AGENTMAIL_LIVE=true)")
-    problems += [n for n in ("AECOM_API_TOKEN", "DASHBOARD_PASSWORD_HASH") if not present[n]]
+    from aecom.dashboard_auth import disabled
+
+    problems += [n for n in ("AECOM_API_TOKEN", "DASHBOARD_PASSWORD_HASH") if not present[n]
+                 and not (n == "DASHBOARD_PASSWORD_HASH" and disabled())]
+    if disabled():
+        problems.append("DASHBOARD_AUTH=off (dashboard login disabled)")
     detail = ", ".join(f"{n} {'present' if p else 'missing'}" for n, p in present.items())
     if problems:
         return _c("credentials", WARN, f"{detail}; needed: {', '.join(problems)}")

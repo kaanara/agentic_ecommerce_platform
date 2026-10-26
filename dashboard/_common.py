@@ -18,6 +18,11 @@ AGENT_ORDER = ["ceo", "researcher", "judge", "foreman", "finance", "store_ops", 
 
 def require_login() -> None:
     """Gate every page: call right after st.set_page_config, before any query or button. Fails closed."""
+    if dashboard_auth.disabled():
+        st.warning("⚠️ Dashboard login is disabled (DASHBOARD_AUTH=off). Anyone who can reach this page can approve "
+                   "actions and use the kill switch. Keep it off your network, or remove DASHBOARD_AUTH=off from .env.")
+        _boot()
+        return
     if not dashboard_auth.is_configured():
         st.error("Dashboard login is not configured, so nothing is shown.")
         st.markdown(f"Run `uv run python -m aecom.dashboard_auth`, paste the printed `{dashboard_auth.ENV_VAR}=...` "

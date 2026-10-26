@@ -2,6 +2,7 @@
 
 The hash lives in DASHBOARD_PASSWORD_HASH as "scrypt$<salt_hex>$<hash_hex>". Generate it with
 `uv run python -m aecom.dashboard_auth` and paste the printed line into .env. Unset = fail closed.
+DASHBOARD_AUTH=off explicitly disables the login (local development only; the dashboard then shows a warning).
 """
 
 from __future__ import annotations
@@ -28,6 +29,11 @@ def _scrypt(password: str, salt: bytes) -> bytes:
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
     return f"scrypt${salt.hex()}${_scrypt(password, salt).hex()}"
+
+
+def disabled() -> bool:
+    """True only when DASHBOARD_AUTH is explicitly "off" (or false/0/no). Anything else keeps the login on."""
+    return (secrets.get("DASHBOARD_AUTH") or "").strip().lower() in {"off", "false", "0", "no"}
 
 
 def configured_hash() -> str | None:
