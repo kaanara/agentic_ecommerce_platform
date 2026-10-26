@@ -55,6 +55,25 @@ def delivery_failures(rate: float, seed: int = 0) -> Iterator[dict[str, int]]:
 
 
 @contextmanager
+def email_failures(rate: float, seed: int = 0) -> Iterator[dict[str, int]]:
+    """AgentMail.send raises RuntimeError on a seeded ``rate`` share of calls (the mail provider is flaky)."""
+    from aecom.integrations.agentmail import AgentMail
+
+    rng, stats, real = random.Random(seed), {"calls": 0, "failures": 0}, AgentMail.send
+
+    @functools.wraps(real)
+    def flaky(self: Any, to: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        stats["calls"] += 1
+        if rng.random() < rate:
+            stats["failures"] += 1
+            raise RuntimeError(f"chaos: email to {to} failed")
+        return real(self, to, *args, **kwargs)
+
+    with _swap(AgentMail, "send", flaky):
+        yield stats
+
+
+@contextmanager
 def duplicate_order_paid() -> Iterator[dict[str, int]]:
     """Every published ``order.paid`` is published twice (a payment webhook delivered twice)."""
     from aecom.bus import events

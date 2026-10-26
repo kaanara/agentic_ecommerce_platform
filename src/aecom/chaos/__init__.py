@@ -15,6 +15,7 @@ from aecom.chaos import injectors
 from aecom.chaos.invariants import check_all
 
 MAX_ROUNDS = 10
+RECONCILER_CYCLES = 2  # phase1-exit: how many reconciler runs may be needed to repair what retries could not
 COUNTRIES = ["DE", "FR", "NL", "AT", "IT", "ES", "PL", "SE", "US", "GB"]
 
 
@@ -72,6 +73,30 @@ def _duplicate_paid(rng: random.Random, seed: int, orders: int) -> dict[str, Any
     return {"orders": orders, **stats}
 
 
+def _email_failures(rng: random.Random, seed: int, orders: int) -> dict[str, Any]:
+    with injectors.email_failures(0.3, seed) as stats:
+        _place_orders(rng, orders)
+        settle()
+    return {"orders": orders, **stats}
+
+
+def _phase1_exit(rng: random.Random, seed: int, orders: int) -> dict[str, Any]:
+    """Phase 1 exit gate: deliveries and emails fail at once; bus retries plus the reconciler must repair it all."""
+    from aecom.reconciler import reconcile
+
+    with injectors.delivery_failures(0.3, seed) as delivery, \
+            injectors.email_failures(0.3, rng.randrange(2**32)) as email:
+        _place_orders(rng, orders)
+        settle()
+        cycles = 0
+        while check_all() and cycles < RECONCILER_CYCLES:  # the scheduled reconciler, simulated
+            cycles += 1
+            reconcile(older_than=timedelta(0))
+            settle()
+    return {"orders": orders, "delivery_failures": delivery["failures"], "email_failures": email["failures"],
+            "reconciler_cycles": cycles}
+
+
 def _claude_down(rng: random.Random, seed: int, orders: int) -> dict[str, Any]:
     from aecom.bus.events import publish, retry
 
@@ -89,6 +114,10 @@ def _claude_down(rng: random.Random, seed: int, orders: int) -> dict[str, Any]:
 SCENARIOS: dict[str, tuple[str, Callable[[random.Random, int, int], dict[str, Any]]]] = {
     "delivery-crash": ("30% of deliveries crash; at-least-once retries must still deliver every order", _delivery_crash),
     "duplicate-paid": ("every order.paid arrives twice; no order may get two keys", _duplicate_paid),
+    "email-failures": ("30% of access emails fail to send; retries must still email every delivered order",
+                       _email_failures),
+    "phase1-exit": ("Phase 1 exit gate: 30% delivery and 30% email failures at once; retries and up to two "
+                    "reconciler cycles must leave zero violations", _phase1_exit),
     "claude-down": ("the model API is down while a customer email arrives; it is answered after recovery", _claude_down),
 }
 

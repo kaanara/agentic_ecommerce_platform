@@ -12,10 +12,11 @@ from typing import Callable
 
 from sqlalchemy import func, select
 
-from aecom.db import AgentRun, Campaign, LedgerEntry, LicenseKey, Order, Refund, now, session
+from aecom.db import AgentRun, Campaign, EventRow, LedgerEntry, LicenseKey, Order, Refund, now, session
 
 Violation = dict[str, str]
 STUCK_AFTER = timedelta(minutes=30)
+EMAILED_STATUSES = ("delivered", "partially_refunded")  # a delivered order must have had its access email
 
 
 def _cents(x: float | None) -> int:
@@ -31,6 +32,14 @@ def every_paid_order_delivered() -> list[Violation]:
     with session() as s:
         ids = list(s.scalars(select(Order.id).where(Order.status == "paid").order_by(Order.id)))
     return [_v("every_paid_order_delivered", f"order {i} is still 'paid'") for i in ids]
+
+
+def every_delivered_order_emailed() -> list[Violation]:
+    """Every delivered order's access email went out (I4): delivery and email are tracked apart."""
+    with session() as s:
+        ids = list(s.scalars(select(Order.id).where(Order.status.in_(EMAILED_STATUSES),
+                                                    Order.email_sent.is_not(True)).order_by(Order.id)))
+    return [_v("every_delivered_order_emailed", f"order {i} was delivered but never emailed") for i in ids]
 
 
 def ledger_balanced() -> list[Violation]:
@@ -100,15 +109,27 @@ def no_run_stuck_running() -> list[Violation]:
 
 
 def no_dead_letters() -> list[Violation]:
+    """No dead-lettered event, except an ``order.paid`` the reconciler superseded (its order is delivered and emailed).
+
+    Delivery is the only ``order.paid`` handler, so once a requeued event has delivered and emailed the order the
+    dead copy has nothing left to do.
+    """
     from aecom.bus.events import dead_letters
 
+    with session() as s:
+        dead_paid = {e.id: (e.payload or {}).get("order_id") for e in s.scalars(
+            select(EventRow).where(EventRow.dead.is_(True), EventRow.topic == "order.paid"))}
+        settled = set(s.scalars(select(Order.id).where(Order.id.in_(set(dead_paid.values()) - {None}),
+                                                       Order.status.in_(EMAILED_STATUSES),
+                                                       Order.email_sent.is_(True))))
     return [_v("no_dead_letters", f"event {d['id']} {d['topic']} dead after {d['attempts']} attempts: {d['last_error']}")
-            for d in dead_letters()]
+            for d in dead_letters() if dead_paid.get(d["id"]) not in settled]
 
 
 CHECKS: dict[str, Callable[[], list[Violation]]] = {fn.__name__: fn for fn in (
-    every_paid_order_delivered, ledger_balanced, no_key_on_two_orders, refunds_not_above_order_amount,
-    no_order_without_ledger_lines, marketing_spend_within_budget, no_run_stuck_running, no_dead_letters)}
+    every_paid_order_delivered, every_delivered_order_emailed, ledger_balanced, no_key_on_two_orders,
+    refunds_not_above_order_amount, no_order_without_ledger_lines, marketing_spend_within_budget, no_run_stuck_running,
+    no_dead_letters)}
 
 
 def check_all() -> list[Violation]:

@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 
 from aecom import db, ledger
@@ -12,7 +12,7 @@ from aecom.bus import events
 from aecom.bus.events import drain, publish, subscribe
 from aecom.chaos import injectors, invariants, run_scenario
 from aecom.chaos.invariants import CHECKS, check_all
-from aecom.db import AgentRun, Campaign, EventRow, LedgerEntry, LicenseKey, Order, Refund, session
+from aecom.db import AgentRun, Campaign, EventRow, LedgerEntry, LicenseKey, Order, OutboxEmail, Refund, session
 from aecom.graph import agents
 from aecom.store.adapter import get_store
 from aecom.store.mock import MockStore
@@ -49,6 +49,27 @@ def test_paid_but_undelivered_order_is_a_violation():
     assert [v["detail"] for v in invariants.every_paid_order_delivered()] == [f"order {oid} is still 'paid'"]
 
 
+def test_delivered_but_unemailed_order_is_a_violation(demo):
+    with session() as s:
+        s.get(Order, demo[0]).email_sent = False
+        o = s.get(Order, demo[1])
+        o.status, o.email_sent = "partially_refunded", False
+    assert [v["detail"] for v in check_all()] == [f"order {i} was delivered but never emailed" for i in sorted(demo[:2])]
+
+
+def test_superseded_dead_order_paid_is_not_a_violation(demo, monkeypatch):
+    monkeypatch.setattr(events, "MAX_ATTEMPTS", 1)
+    with session() as s:
+        s.get(Order, demo[0]).email_sent = False
+    with injectors.email_failures(1.0):
+        publish("order.paid", {"order_id": demo[0]})  # the email fails, the event is dead-lettered
+        drain()
+    assert names(check_all()) == {"no_dead_letters", "every_delivered_order_emailed"}
+    publish("order.paid", {"order_id": demo[0]})  # the reconciler's requeue: now the email goes out
+    drain()
+    assert check_all() == []
+
+
 def test_unbalanced_ledger_is_a_violation(demo):
     with session() as s:
         s.add(LedgerEntry(txn_id="txn_bad", account="cash", debit=10.0, credit=0.0))
@@ -78,7 +99,7 @@ def test_order_without_ledger_lines_is_a_violation(demo):
     with session() as s:
         o = s.get(Order, demo[0])
         s.add(Order(id="ord_unbooked", customer_id=o.customer_id, product_id=o.product_id, amount_eur=49.0,
-                    status="delivered"))
+                    status="delivered", email_sent=True))
     assert [v["detail"] for v in check_all()] == ["order ord_unbooked has no ledger lines"]
 
 
@@ -114,7 +135,7 @@ def test_dead_letter_is_a_violation(no_backoff, monkeypatch):
 
 
 def test_every_check_runs_in_check_all():
-    assert len(CHECKS) == 8 and all(fn() == [] for fn in CHECKS.values())
+    assert len(CHECKS) == 9 and all(fn() == [] for fn in CHECKS.values())
 
 
 # ----------------------------------------------------------------------------- injectors
@@ -135,6 +156,27 @@ def test_delivery_failures_are_seeded_and_undone():
     a, b = outcomes(7), outcomes(7)
     assert a == b and 0 < a["failures"] < 20
     assert MockStore.deliver_order is real
+
+
+def test_email_failures_are_seeded_and_undone():
+    from aecom.integrations.agentmail import AgentMail
+
+    real = AgentMail.send
+
+    def outcomes(seed):
+        with injectors.email_failures(0.5, seed) as stats:
+            for i in range(20):
+                try:
+                    AgentMail().send(f"e{i}@example.com", "s", "t")
+                except RuntimeError:
+                    pass
+        return stats
+
+    a, b = outcomes(7), outcomes(7)
+    assert a == b and a["calls"] == 20 and 0 < a["failures"] < 20
+    assert AgentMail.send is real
+    with session() as s:  # only the sends that did not fail reached the outbox (two runs of 20)
+        assert s.scalar(select(func.count(OutboxEmail.id))) == 2 * (20 - a["failures"])
 
 
 def test_duplicate_order_paid_publishes_twice(no_backoff):
@@ -198,6 +240,24 @@ def test_claude_down_email_succeeds_after_recovery(no_backoff):
         statuses = {r.status for r in s.scalars(select(AgentRun).where(AgentRun.agent_id == "support"))}
     assert email.processed and not email.dead
     assert statuses == {"error", "ok"}
+
+
+def test_email_failures_still_email_every_order(no_backoff):
+    result = run_scenario("email-failures", seed=1, orders=20)
+    assert result["stats"]["failures"] > 0 and result["violations"] == []
+    with session() as s:
+        assert {(o.status, o.email_sent) for o in s.scalars(select(Order))} == {("delivered", True)}
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_phase1_exit_gate_ends_without_violations(no_backoff, seed):
+    result = run_scenario("phase1-exit", seed=seed, orders=20)
+    stats = result["stats"]
+    assert stats["delivery_failures"] > 0 and stats["email_failures"] > 0  # both faults really fired
+    assert 0 <= stats["reconciler_cycles"] <= 2
+    assert result["violations"] == []
+    with session() as s:
+        assert {(o.status, o.email_sent) for o in s.scalars(select(Order))} == {("delivered", True)}
 
 
 def test_unknown_scenario_is_rejected():
