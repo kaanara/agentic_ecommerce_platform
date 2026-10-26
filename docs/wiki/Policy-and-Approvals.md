@@ -13,10 +13,12 @@ Every tool call is checked by `src/aecom/policy/gate.py`, using the escalation m
 
 ## Order of checks
 1. **Kill switch**: if it's on, every side-effecting call is denied. Reads still work.
-2. **Forbidden patterns**: sign-up, login and form tools are denied as T4, read-only or not (see below).
-3. **Allowlist**: the agent only receives tools it was granted.
-4. **Rule**: tier, agent restriction (`agents:`), then the T2 checks: `limits`, `price_change_pct_max`, `monthly_budget_setting`.
-5. Unknown tools (for example from a new MCP server) are treated as T3 when they have side effects. Anything from a **sandboxed** server is at least T3.
+2. **Safe mode**: if it's on, every side-effecting call is denied except `defaults.continue_in_safe_mode` (deliveries and customer replies).
+3. **Agents paused**: if it's on, every side-effecting call is denied except `defaults.continue_while_paused` (delivery).
+4. **Forbidden patterns**: sign-up, login and form tools are denied as T4, read-only or not (see below).
+5. **Allowlist**: the agent only receives tools it was granted.
+6. **Rule**: tier, agent restriction (`agents:`), then the T2 checks: `limits`, `price_change_pct_max`, `monthly_budget_setting`.
+7. Unknown tools (for example from a new MCP server) are treated as T3 when they have side effects. Anything from a **sandboxed** server is at least T3.
 
 ## No accounts, no logins
 Agents never sign up, log in or submit forms. Creating accounts, accepting terms and entering credentials or payment
@@ -70,15 +72,18 @@ agent tool call ──gate: escalate──▶ ops_approvals (pending: tool, args
 | CLI | `aecom approvals`, `aecom approvals approve <id> --by kaan --note "ok"`, `aecom approvals reject <id>` |
 | API | `GET /approvals`, `POST /approvals/{id}/approve` `{"by": "...", "note": "...", "args_override": {...}}`, `POST /approvals/{id}/reject` |
 
-## Kill switch and agent pause
-Two switches, checked first by the gate, for agents, reflexes and external MCP clients alike. Read-only tools always run.
+## Kill switch, safe mode and agent pause
+Three switches, checked first by the gate, for agents, reflexes and external MCP clients alike. Read-only tools always run.
 
 | Switch | Blocks | Still runs | How |
 |---|---|---|---|
 | **Kill switch** (`kill_switch`) | every side-effecting tool, including delivery; approvals refuse to execute | nothing with side effects | Dashboard Home, `aecom kill-switch on\|off`, `POST /kill-switch?on=true` |
+| **Safe mode** (`safe_mode`, plus `safe_mode_since`, `safe_mode_reason`) | every side-effecting tool except `policy.yaml → defaults.continue_in_safe_mode`, so all spending (`launch_campaign`, `register_vendor`, `record_expense`, `refund_order`, `update_price`, ...) | `deliver_order`, `add_license_keys`, `reply_email`, `send_email` (still only to the customer of the case) | Switched **on by the monitors** when a P1 stays open (unacknowledged) for over 2 h; switched **off only by a human**: Dashboard Home button, `aecom safe-mode off --by NAME`, `POST /safe-mode?on=false&by=NAME` |
 | **Pause agents** (`agents_paused`) | every side-effecting tool except `policy.yaml → defaults.continue_while_paused` | `deliver_order`, so paying customers still get their keys | Dashboard Home toggle, `POST /agents-pause?on=true` |
 
-The kill switch is checked before the pause and wins: with both on, delivery is denied too. A denied delivery is retried by the event bus and dead-lettered (re-run with `retry`) if the switch stays on, so it is not lost. `GET /health` shows both flags. Use the pause to stop agents doing new work; use the kill switch for an emergency.
+The kill switch is checked first and wins: with it on, delivery is denied too, whatever the other switches say. Safe mode is checked before the pause; with both on, only what both allow (delivery) runs. A denied delivery is retried by the event bus and dead-lettered (re-run with `retry`) if the switch stays on, so it is not lost. `GET /health` shows `kill_switch`, `agents_paused` and `safe_mode`. Use the pause to stop agents doing new work; use the kill switch for an emergency.
+
+How they differ: the **kill switch** is a human's emergency stop (nothing with side effects runs, not even delivery). **Pause** is a human's "stop new agent work" (only delivery continues). **Safe mode** is automatic and in between: it exists so that a P1 nobody reacts to makes the company *safer*, not riskier. Customers keep getting their keys and answers to their emails; nothing that costs money runs. The monitors never leave safe mode by themselves, even when the incident resolves, because a human has to look first; leaving it is audited with the human's name (`aecom safe-mode` shows since when and why).
 
 ## Budgets
 Each agent has a daily LLM budget in € (`POLICY.md`, falling back to `policy.yaml → budgets`). If the budget is spent, the run is refused and audited.

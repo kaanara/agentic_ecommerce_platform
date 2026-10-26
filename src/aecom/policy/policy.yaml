@@ -23,6 +23,14 @@ defaults:
   continue_while_paused:
     - deliver_order
     - add_license_keys           # restocking keys so deliveries can continue
+  # Side-effecting tools that keep running in safe mode (ops_settings.safe_mode, switched on by the monitors when a
+  # P1 stays unacknowledged for 2 h; only a human switches it off). Everything else - all spending - is denied.
+  # The kill switch still stops these; send_email keeps its recipient_must_be_counterparty rule.
+  continue_in_safe_mode:
+    - deliver_order
+    - add_license_keys
+    - reply_email
+    - send_email
   # Pending approvals expire after this many hours; an expired one can't be approved (the agent must re-request).
   approval_ttl_hours: 72
   # Agents never sign up, log in or submit forms. fnmatch, case-insensitive, matched against the full

@@ -8,6 +8,7 @@
     aecom simulate --days N                market simulator
     aecom kill-switch on|off
     aecom agents-pause on|off              pause agent work (bookkeeping continues where policy allows)
+    aecom safe-mode [status] | off --by NAME   safe mode (set by the monitors on a stale P1); only a human leaves it
     aecom chaos <name>|all [--seed N] [--use-configured-db]   fault injection + invariant checks (throwaway DB by default)
     aecom reconcile [--older-than-minutes N]   re-publish order.paid for stuck paid orders, then drain
     aecom drain | scheduler [--demo] | api | dashboard | mcp <domain>
@@ -71,6 +72,10 @@ def main(argv: list[str] | None = None) -> None:
 
     s = sub.add_parser("agents-pause")
     s.add_argument("state", choices=["on", "off"])
+
+    s = sub.add_parser("safe-mode")
+    s.add_argument("action", nargs="?", default="status", choices=["status", "off"])
+    s.add_argument("--by", default="")
 
     s = sub.add_parser("chaos")
     s.add_argument("name")
@@ -236,6 +241,16 @@ def main(argv: list[str] | None = None) -> None:
 
         set_setting("agents_paused", a.state)
         print(f"agents paused {a.state}")
+    elif a.cmd == "safe-mode":
+        from aecom.company_settings import get_setting, leave_safe_mode, safe_mode_on
+
+        if a.action == "off":
+            if not a.by.strip():
+                sys.exit("leaving safe mode needs a human: aecom safe-mode off --by NAME")
+            print("safe mode off" if leave_safe_mode(a.by) else "safe mode was not on")
+        else:
+            _print({"safe_mode": safe_mode_on(), "since": get_setting("safe_mode_since") or None,
+                    "reason": get_setting("safe_mode_reason") or None})
     elif a.cmd == "reconcile":
         from datetime import timedelta
 

@@ -1,12 +1,22 @@
 import streamlit as st
 
 from _common import require_login, sql
-from aecom.company_settings import agents_paused_on, kill_switch_on, set_setting
+from aecom.company_settings import agents_paused_on, get_setting, kill_switch_on, leave_safe_mode, safe_mode_on, set_setting
 
 st.set_page_config(page_title="aecom — agentic company", page_icon="🧭", layout="wide")
 require_login()
 st.title("🧭 Agentic e-commerce company")
 st.caption("Digital products, operated by agents, governed by policy, approved by humans.")
+
+if safe_mode_on():
+    st.error(f"**Safe mode is ON** since {get_setting('safe_mode_since') or '?'}: "
+             f"{get_setting('safe_mode_reason') or 'no reason recorded'}. Only deliveries and customer replies "
+             "continue; nothing that spends money runs. Acknowledge the incident (Incidents / `aecom incidents ack`), "
+             "fix it, then leave safe mode here. The monitors never leave it on their own.", icon="🚨")
+    who = st.text_input("Your name (recorded in the audit log)", key="safe_mode_by")
+    if st.button("Leave safe mode", type="primary", disabled=not who.strip()):
+        leave_safe_mode(who)
+        st.rerun()
 
 pending = int(sql("SELECT COUNT(*) AS n FROM ops_approvals WHERE status = 'pending'")["n"][0])
 runs = int(sql("SELECT COUNT(*) AS n FROM ops_agent_runs")["n"][0])

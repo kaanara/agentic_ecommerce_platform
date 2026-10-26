@@ -2,11 +2,12 @@
 
 Every tool an agent can call is wrapped here. Order of checks:
   1. kill switch      → deny every side-effecting call
-  2. agents paused    → deny side-effecting calls except ``defaults.continue_while_paused`` (order delivery)
-  3. forbidden pattern → deny sign-ups, logins and form submission (T4), read-only or not
-  4. allowlist        → deny tools the agent was not granted (done when tools are built)
-  5. policy rule      → tier T0..T4, agent restriction, limits, price-change %, monthly budgets
-  6. allow → execute; escalate → write an Approval and return immediately; deny → explain
+  2. safe mode       → deny side-effecting calls except ``defaults.continue_in_safe_mode`` (deliveries, replies)
+  3. agents paused    → deny side-effecting calls except ``defaults.continue_while_paused`` (order delivery)
+  4. forbidden pattern → deny sign-ups, logins and form submission (T4), read-only or not
+  5. allowlist        → deny tools the agent was not granted (done when tools are built)
+  6. policy rule      → tier T0..T4, agent restriction, limits, price-change %, monthly budgets
+  7. allow → execute; escalate → write an Approval and return immediately; deny → explain
 
 Escalations do *not* pause the graph. The exact call (tool + args) is parked in ``ops_approvals`` and
 executed verbatim when a human approves it — the human approves what will run, not a later re-generation.
@@ -31,13 +32,15 @@ from langchain_core.tools import BaseTool, StructuredTool
 from sqlalchemy import func, or_, select
 
 from aecom.audit import audit
-from aecom.company_settings import agents_paused_on, get_setting, kill_switch_on
+from aecom.company_settings import agents_paused_on, get_setting, kill_switch_on, safe_mode_on
 from aecom.config import get_settings
 from aecom.context import current_agent, current_counterparty, current_run, email_address
 from aecom.db import Approval, Campaign, ToolCallLog, Vendor, now, session
 from aecom.money import quantize, to_decimal
 
 TIER_ORDER = ["T0", "T1", "T2", "T3", "T4"]
+SAFE_MODE_REASON = ("Safe mode: an unacknowledged P1 incident - only deliveries and customer replies continue; "
+                    "no spending.")
 
 
 @dataclass
@@ -116,6 +119,8 @@ def evaluate(agent_id: str, tool_name: str, args: dict[str, Any], *, side_effect
 
     if side_effect and kill_switch_on():
         return GateResult("deny", tier, "Kill switch is ON — all side-effecting actions are blocked.")
+    if side_effect and safe_mode_on() and tool_name not in (policy["defaults"].get("continue_in_safe_mode") or []):
+        return GateResult("deny", tier, SAFE_MODE_REASON)
     if side_effect and agents_paused_on() and tool_name not in (policy["defaults"].get("continue_while_paused") or []):
         return GateResult("deny", tier, "Agents are paused - only order delivery continues.")
     if is_forbidden(tool_name, policy):

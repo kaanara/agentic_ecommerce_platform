@@ -70,3 +70,16 @@ aecom incidents                                          # open + acknowledged (
 aecom incidents ack inc_123 --by kaan --note "looking"   # stops repeat alerts
 aecom incidents resolve inc_123 --by kaan --note "fixed"
 ```
+
+## Safe mode
+If nobody reacts to a P1, the company gets safer, not riskier (K7).
+- **When.** Each monitor run (`aecom monitors run`, scheduler every 5 min) checks for a P1 incident that has been **open** (not acknowledged) for more than 2 hours (`monitors.SAFE_MODE_AFTER`). If there is one and safe mode is off, it switches safe mode on, records why (`safe_mode_reason` names the incident) and since when, audits it and sends one extra P1 alert: "Safe mode is ON because ...". Acknowledging the P1 in time prevents it.
+- **What it does.** The policy gate denies every side-effecting tool except `policy.yaml → defaults.continue_in_safe_mode`: deliveries (`deliver_order`, `add_license_keys`) and customer replies (`reply_email`, `send_email` to the customer of the case). Campaigns, vendors, expenses, refunds and price changes are denied. The kill switch still stops everything. See [Policy and Approvals](Policy-and-Approvals).
+- **Leaving it.** Never automatic, not even when the incident resolves. A human acknowledges and fixes the incident, then leaves safe mode (audited with the name):
+
+```bash
+aecom safe-mode                     # on/off, since, reason
+aecom safe-mode off --by kaan
+```
+
+Or `POST /safe-mode?on=false&by=kaan` (bearer token), or the **Leave safe mode** button on the dashboard Home page, which shows a red banner while safe mode is on. `GET /health` reports `safe_mode`.

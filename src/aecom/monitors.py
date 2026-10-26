@@ -6,8 +6,10 @@ Each monitor returns the problems it sees now as ``(subject, detail)`` pairs. A 
 incident for (monitor, subject); subjects that are no longer reported are auto-resolved. Monitors are isolated:
 one that raises becomes its own P2 ``monitor_error`` incident and the others still run (its own incidents are
 left untouched, because nothing is known about them). After evaluating, alerts go out for incidents that need
-one (P1 repeats every 30 min until acknowledged) and the external heartbeat is pinged last, so the dead-man's
-switch only hears from us when the monitor loop really ran.
+one (P1 repeats every 30 min until acknowledged). If a P1 stays open (unacknowledged) for over 2 h, safe mode goes
+on (K7: only deliveries and customer replies continue) with one extra P1 alert; the monitors never turn it off, a
+human does. The external heartbeat is pinged last, so the dead-man's switch only hears from us when the monitor loop
+really ran.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ ERROR_WINDOW = timedelta(hours=1)
 APPROVAL_MAX_AGE = timedelta(hours=24)
 KILL_SWITCH_MAX = timedelta(hours=1)
 REPEAT_ALERT_AFTER = timedelta(minutes=30)
+SAFE_MODE_AFTER = timedelta(hours=2)  # an open (unacknowledged) P1 older than this switches safe mode on
 ORDER_TOPIC_PREFIXES = ("order.", "inventory.")
 UNDELIVERED_STATUSES = ("paid", "failed")
 UNEMAILED_STATUSES = ("delivered", "partially_refunded")
@@ -211,6 +214,28 @@ def evaluate(now: datetime | None = None) -> dict[str, Any]:
     return {"failing": failing, "monitor_errors": broken, "resolved": resolved}
 
 
+def _safe_mode_check(now: datetime) -> bool:
+    """Nobody reacted to a P1 for SAFE_MODE_AFTER → safe mode on + one extra P1 alert. Never switches it off."""
+    from aecom.company_settings import enter_safe_mode, safe_mode_on
+
+    if safe_mode_on():
+        return True
+    stale = [i for i in incidents.list_incidents(status="open", severity="P1")
+             if now - i["first_seen"] > SAFE_MODE_AFTER]
+    if not stale:
+        return False
+    inc = min(stale, key=lambda i: i["first_seen"])
+    subject = f" ({inc['subject']})" if inc.get("subject") else ""
+    hours = (now - inc["first_seen"]).total_seconds() / 3600
+    reason = f"P1 incident {inc['id']} {inc['monitor']}{subject} open and unacknowledged for {hours:.1f} h"
+    if enter_safe_mode(reason):
+        alerts.route({**inc, "monitor": "safe_mode", "subject": "ON",
+                      "detail": f"Safe mode is ON because {reason}. Only deliveries and customer replies continue; "
+                                "no spending. Acknowledge the incident, fix it, then: "
+                                "uv run aecom safe-mode off --by <you>"})
+    return True
+
+
 def run_monitors(now: datetime | None = None) -> dict[str, Any]:
     """Evaluate the monitors, alert for incidents that need it, then ping the external heartbeat."""
     t = now or db_now()
@@ -222,6 +247,7 @@ def run_monitors(now: datetime | None = None) -> dict[str, Any]:
             incidents.mark_alerted(inc["id"], now=t)
             alerted.append(inc["id"])
     summary["alerted"] = alerted
+    summary["safe_mode"] = _safe_mode_check(t)
     summary["open"] = incidents.open_counts()
     summary["heartbeat"] = alerts.heartbeat()
     return summary

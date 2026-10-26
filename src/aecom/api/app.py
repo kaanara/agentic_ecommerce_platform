@@ -1,4 +1,4 @@
-"""HTTP API: runs, approvals (HITL), kill switch, agent pause, events, AgentMail webhook.
+"""HTTP API: runs, approvals (HITL), kill switch, agent pause, safe mode, events, AgentMail webhook.
 
     uv run aecom api      → http://127.0.0.1:8000/docs
 
@@ -23,7 +23,7 @@ import aecom.handlers  # noqa: F401  (registers event subscribers)
 from aecom import approvals
 from aecom.bootstrap import init
 from aecom.bus.events import drain, publish
-from aecom.company_settings import agents_paused_on, kill_switch_on, set_setting
+from aecom.company_settings import agents_paused_on, enter_safe_mode, kill_switch_on, leave_safe_mode, safe_mode_on, set_setting
 from aecom.db import new_id
 from aecom.secrets import secrets
 
@@ -86,18 +86,18 @@ def _db_ok() -> bool:
 def health(response: Response, detail: bool = True) -> dict[str, Any]:
     """Unauthenticated liveness and real state. HTTP 503 when the DB is unreachable or a P1 incident is active.
 
-    Returns ok, db, kill_switch, agents_paused, open_incidents and event_bus; `?detail=false` returns only
-    ok, kill_switch and agents_paused (for simple uptime checkers).
+    Returns ok, db, kill_switch, agents_paused, safe_mode, open_incidents and event_bus; `?detail=false` returns
+    only ok, kill_switch and agents_paused (for simple uptime checkers).
     """
     from aecom.bus.events import status
     from aecom.incidents import open_counts
 
     out: dict[str, Any] = {"ok": False, "db": _db_ok(), "kill_switch": None, "agents_paused": None,
-                           "open_incidents": None, "event_bus": None}
+                           "safe_mode": None, "open_incidents": None, "event_bus": None}
     if out["db"]:
         try:
             out.update(kill_switch=kill_switch_on(), agents_paused=agents_paused_on(),
-                       open_incidents=open_counts(), event_bus=status())
+                       safe_mode=safe_mode_on(), open_incidents=open_counts(), event_bus=status())
         except Exception:
             out["db"] = False
     out["ok"] = bool(out["db"] and out["open_incidents"] and out["open_incidents"].get("P1", 0) == 0)
@@ -141,6 +141,16 @@ def kill_switch(on: bool) -> dict[str, Any]:
 def agents_pause(on: bool) -> dict[str, Any]:
     set_setting("agents_paused", "on" if on else "off")
     return {"agents_paused": agents_paused_on()}
+
+
+@api.post("/safe-mode")
+def safe_mode(on: bool, by: str = "api") -> dict[str, Any]:
+    """Safe mode on (by hand) or off. The monitors only ever switch it on; leaving it is this, the CLI or the dashboard."""
+    if on:
+        enter_safe_mode(f"switched on by hand ({by})")
+    else:
+        leave_safe_mode(by)
+    return {"safe_mode": safe_mode_on()}
 
 
 def _run_company(directive: str, run_id: str) -> None:
