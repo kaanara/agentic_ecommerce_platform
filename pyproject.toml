@@ -21,6 +21,7 @@ dependencies = [
     "apscheduler>=3.10,<4",
     "streamlit>=1.38",
     "pandas>=2.2",
+    "alembic>=1.13",
 ]
 
 [project.optional-dependencies]

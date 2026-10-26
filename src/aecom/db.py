@@ -383,11 +383,46 @@ def reset_engine(url: str | None = None) -> None:
     _engine, _Session = None, None
 
 
+def _alembic_config(connection: Any = None) -> Any:
+    """Alembic config located relative to the repo root; ``connection`` makes migrations run on our engine."""
+    from alembic.config import Config
+
+    from aecom.config import ROOT
+
+    cfg = Config(str(ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(ROOT / "migrations"))
+    if connection is not None:
+        cfg.attributes["connection"] = connection
+    return cfg
+
+
 def init_db() -> None:
-    Base.metadata.create_all(get_engine())
-    _add_missing_columns()
+    """Bring the database to the current schema.
+
+    * empty database -> ``alembic upgrade head``
+    * tables but no ``alembic_version`` (installs from before C4) -> create missing tables and run the old
+      ``_add_missing_columns`` stopgap once, then ``alembic stamp head``
+    * already versioned -> ``alembic upgrade head`` (no-op when current)
+    """
+    from alembic import command
+    from sqlalchemy import inspect
+
+    engine = get_engine()
+    tables = set(inspect(engine).get_table_names())
+    legacy = bool(tables) and "alembic_version" not in tables
+    if legacy:
+        Base.metadata.create_all(engine)
+        _add_missing_columns()
+    with engine.begin() as conn:
+        cfg = _alembic_config(conn)
+        if legacy:
+            command.stamp(cfg, "head")
+        else:
+            command.upgrade(cfg, "head")
 
 
+# Legacy path only (pre-Alembic databases, see init_db). New schema changes and data fixes go into Alembic
+# revisions under migrations/versions/ from now on; do not extend _BACKFILL or _add_missing_columns.
 # One-time data fixes for columns added to an existing table: (table, column) -> SQL run right after ADD COLUMN.
 _BACKFILL = {
     # orders delivered before email tracking existed already got their email; don't resend to all of them
@@ -397,8 +432,8 @@ _BACKFILL = {
 
 
 def _add_missing_columns() -> None:
-    """Stopgap until Alembic (backlog C4): create_all never alters existing tables, so add new nullable or
-    defaulted columns to databases created by an older version."""
+    """Pre-Alembic stopgap, now only run once for unversioned databases (see init_db): create_all never alters
+    existing tables, so add new nullable or defaulted columns to databases created by an older version."""
     from sqlalchemy import inspect, text
 
     engine = get_engine()

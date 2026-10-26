@@ -17,6 +17,11 @@
 | Run the scheduler | `uv run aecom scheduler` (real cron) or `--demo` (compressed time) |
 | API | `uv run aecom api` → http://127.0.0.1:8000/docs |
 
+## Schema changes
+The schema is owned by Alembic (`alembic.ini`, `migrations/versions/`). `uv run aecom init` upgrades the configured database to the latest revision; a database created before Alembic (no `alembic_version` table, for example an old `data/aecom.db`) gets the old add-missing-columns fix once and is then stamped at head.
+
+To change a table: edit the model in `src/aecom/db.py`, then `uv run alembic revision --autogenerate -m "add foo to bar"` (it uses `DATABASE_URL`; point it at a database already at head). Review the generated file, put any data backfill in the same `upgrade()`, and run `uv run pytest tests/test_migrations.py`; it fails when models and migrations drift. Only the lead writes revisions, so the chain stays linear. Builders who need a schema change describe it in their patch notes.
+
 ## Troubleshooting
 | Symptom | Cause / fix |
 |---|---|
