@@ -384,14 +384,25 @@ def list_pending_approvals() -> list[dict]:
 # =========================================================================== research
 @tool("research")
 def fetch_url(url: str, max_chars: int = 6000) -> str:
-    """Fetch a public web page as text (untrusted content)."""
-    if not re.match(r"^https?://", url):
-        return "only http(s) URLs are allowed"
+    """Fetch a public web page as text (untrusted content). Private, loopback and metadata hosts are refused."""
+    from urllib.parse import urljoin
+
+    from aecom.net_guard import UnsafeURL, check_public_url
+
     try:
-        r = httpx.get(url, timeout=15, follow_redirects=True, headers={"User-Agent": "aecom-researcher/0.1"})
+        for _ in range(6):  # initial request + max 5 redirects, each hop re-checked
+            check_public_url(url)
+            r = httpx.get(url, timeout=15, follow_redirects=False, headers={"User-Agent": "aecom-researcher/0.1"})
+            if not r.is_redirect:
+                break
+            url = urljoin(url, r.headers.get("location", ""))
+        else:
+            return "refused: too many redirects"
         text = re.sub(r"<script.*?</script>|<style.*?</style>", " ", r.text, flags=re.S | re.I)
         text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"\s+", " ", text)[:max_chars]
+    except UnsafeURL as exc:
+        return f"refused: {exc}"
     except httpx.HTTPError as exc:
         return f"fetch failed: {exc}"
     return fence(url, text)
