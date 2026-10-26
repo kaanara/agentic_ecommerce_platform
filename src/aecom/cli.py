@@ -7,6 +7,9 @@
     aecom approvals [list|approve|reject] [id] [--by NAME] [--note TEXT]
     aecom simulate --days N                market simulator
     aecom kill-switch on|off
+    aecom agents-pause on|off              pause agent work (bookkeeping continues where policy allows)
+    aecom chaos <name>|all [--seed N] [--use-configured-db]   fault injection + invariant checks (throwaway DB by default)
+    aecom reconcile [--older-than-minutes N]   re-publish order.paid for stuck paid orders, then drain
     aecom drain | scheduler [--demo] | api | dashboard | mcp <domain>
     aecom events dead | retry [ID ...]     dead-lettered events; retry some or all after fixing the cause
     aecom agentmail keys|create-key NAME|inboxes   (admin, uses AGENTMAIL_API_KEY)
@@ -61,6 +64,18 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("kill-switch")
     s.add_argument("state", choices=["on", "off"])
 
+    s = sub.add_parser("agents-pause")
+    s.add_argument("state", choices=["on", "off"])
+
+    s = sub.add_parser("chaos")
+    s.add_argument("name")
+    s.add_argument("--seed", type=int, default=0)
+    s.add_argument("--use-configured-db", action="store_true",
+                   help="run against DATABASE_URL instead of a throwaway SQLite DB (destructive)")
+
+    s = sub.add_parser("reconcile")
+    s.add_argument("--older-than-minutes", type=int, default=15)
+
     sub.add_parser("drain")
     s = sub.add_parser("events")
     s.add_argument("action", choices=["dead", "retry"])
@@ -92,6 +107,8 @@ def main(argv: list[str] | None = None) -> None:
         from aecom.scheduler import main as sched_main
 
         return sched_main(demo=a.demo)
+    if a.cmd == "chaos":  # before init(): by default it must never touch the company DB
+        return _chaos(a.name, a.seed, a.use_configured_db)
 
     import aecom.handlers  # noqa: F401
     from aecom.bootstrap import init, seed_demo
@@ -153,6 +170,19 @@ def main(argv: list[str] | None = None) -> None:
 
         set_setting("kill_switch", a.state)
         print(f"kill switch {a.state}")
+    elif a.cmd == "agents-pause":
+        from aecom.company_settings import set_setting
+
+        set_setting("agents_paused", a.state)
+        print(f"agents paused {a.state}")
+    elif a.cmd == "reconcile":
+        from datetime import timedelta
+
+        from aecom.bus.events import drain
+        from aecom.reconciler import reconcile
+
+        _print(reconcile(timedelta(minutes=a.older_than_minutes)))
+        _print_drain(drain())
     elif a.cmd == "drain":
         from aecom.bus.events import drain
 
@@ -185,6 +215,42 @@ def main(argv: list[str] | None = None) -> None:
             _print_drain(drain())
         else:
             _print(mail.create_api_key(a.name or "aecom-poc"))
+
+
+def _chaos(name: str, seed: int, use_configured_db: bool) -> None:
+    import tempfile
+
+    from aecom import db
+    from aecom.bootstrap import init
+    from aecom.chaos import SCENARIOS, run_scenario
+    from aecom.config import get_settings
+
+    names = list(SCENARIOS) if name == "all" else [name]
+    for n in names:
+        if n not in SCENARIOS:
+            sys.exit(f"unknown chaos scenario {n}; choose from: {', '.join(SCENARIOS)}")
+    settings = get_settings()
+    saved_url = settings.database_url
+    failed = False
+    with tempfile.TemporaryDirectory(prefix="aecom-chaos-") as tmp:
+        try:
+            for n in names:
+                if not use_configured_db:  # a fresh throwaway DB per scenario so they can't affect each other
+                    db.reset_engine(f"sqlite:///{tmp}/{n}.db")
+                init()
+                r = run_scenario(n, seed)
+                v = r["violations"]
+                failed |= bool(v)
+                details = "; ".join(f"{x['invariant']}: {x['detail']}" for x in v)
+                print(f"{n} (seed {seed}): {len(v)} violation(s)" + (f" - {details}" if details else ""))
+        finally:
+            if not use_configured_db:
+                if db._engine is not None:
+                    db._engine.dispose()
+                settings.database_url = saved_url
+                db.reset_engine()
+    if failed:
+        sys.exit(1)
 
 
 def _print_drain(attempted: int) -> None:

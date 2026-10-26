@@ -10,6 +10,9 @@
 | Fetch new customer email now | `uv run aecom agentmail poll` |
 | Simulate traffic | `uv run aecom simulate --days 3 --support-emails` |
 | Emergency stop | `uv run aecom kill-switch on` |
+| Pause agents (bookkeeping continues where `continue_while_paused` allows) | `uv run aecom agents-pause on` / `off` |
+| Re-deliver paid orders whose `order.paid` was lost | `uv run aecom reconcile` (default `--older-than-minutes 15`) |
+| Chaos check (fault injection, invariants) | `uv run aecom chaos all [--seed N]` (throwaway DB; `--use-configured-db` to opt out); exit 1 on any violation |
 | Review the queue | `uv run aecom approvals` |
 | Run the scheduler | `uv run aecom scheduler` (real cron) or `--demo` (compressed time) |
 | API | `uv run aecom api` → http://127.0.0.1:8000/docs |

@@ -37,6 +37,15 @@ Selection categories: `ecommerce_platform`, `payment`, `ad_platform`, `social`, 
 - **Offline** (`--offline` or `LLM_MODE=scripted`): `scenario.script(ctx)` loads per-agent queues into the `ScriptedChatModel`. A step is `{"tool_calls": [...]}`, `{"text": ...}`, or a callable that reads the conversation, for example to use an id returned by a previous tool.
 - **Live**: the same `scenario.run(ctx)`, but Claude makes every decision. Outcomes vary, and the policy gate keeps them inside the same guardrails.
 
+## Chaos scenarios (`aecom chaos <name>|all [--seed N]`)
+Each one injects a fault into a scripted run, drains the bus, then checks the business invariants in `aecom.chaos.invariants` (every paid order delivered, ledger balanced, no key on two orders, no dead letters, ...). By default each scenario runs on its own throwaway SQLite DB in a temp dir, so the company DB is never touched; pass `--use-configured-db` to run against `DATABASE_URL`. The command prints one line per scenario with the violation count and exits 1 if there are any. CI runs `aecom chaos all`.
+
+| Name | Fault | Expected outcome |
+|---|---|---|
+| `delivery-crash` | 30% of deliveries raise | At-least-once retries deliver every order |
+| `duplicate-paid` | Every `order.paid` is published twice | No order gets two keys |
+| `claude-down` | Model API down while a customer email arrives | Email dead-lettered, then answered after recovery |
+
 ## Writing a new scenario
 1. Write `setup() -> ctx` (seed data, ids), `run(ctx)` (call a workflow), and `script(ctx)` (offline steps per agent).
 2. Register it in `SCENARIOS` in `src/aecom/scenarios.py`.
