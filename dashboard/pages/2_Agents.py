@@ -1,8 +1,9 @@
 import streamlit as st
 
-from _common import AGENT_ORDER, colors, sql
+from _common import AGENT_ORDER, colors, require_login, sql
 
 st.set_page_config(page_title="Agents", page_icon="🤖", layout="wide")
+require_login()
 st.title("🤖 Agents")
 
 runs = sql("""SELECT agent_id, COUNT(*) AS runs, SUM(tool_calls) AS tool_calls, SUM(input_tokens) AS input_tokens,

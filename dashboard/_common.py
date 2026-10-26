@@ -7,12 +7,39 @@ import streamlit as st
 from sqlalchemy import text
 
 import aecom.handlers  # noqa: F401  (approvals publish events handled in-process)
+from aecom import dashboard_auth
 from aecom.bootstrap import init
 from aecom.db import get_engine
 
 # Reference categorical palette (dataviz skill), fixed order — never cycled. Slots 1-3 are safe for any chart form.
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 AGENT_ORDER = ["ceo", "researcher", "judge", "foreman", "finance", "store_ops", "marketing", "support", "supply"]
+
+
+def require_login() -> None:
+    """Gate every page: call right after st.set_page_config, before any query or button. Fails closed."""
+    if not dashboard_auth.is_configured():
+        st.error("Dashboard login is not configured, so nothing is shown.")
+        st.markdown(f"Run `uv run python -m aecom.dashboard_auth`, paste the printed `{dashboard_auth.ENV_VAR}=...` "
+                    "line into `.env`, and restart `uv run aecom dashboard`.")
+        st.stop()
+    if not st.session_state.get("authenticated"):
+        st.title("🔒 Log in")
+        wait = dashboard_auth.locked_out(st.session_state)
+        with st.form("login"):
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Log in", disabled=wait > 0)
+        if wait > 0:
+            st.warning(f"Too many wrong attempts. Try again in {wait:.0f} s.")
+        elif submitted:
+            if dashboard_auth.attempt_login(password, st.session_state):
+                st.rerun()
+            st.error("Wrong password.")
+        st.stop()
+    if st.sidebar.button("Log out"):
+        st.session_state["authenticated"] = False
+        st.rerun()
+    _boot()  # pages may call domain modules (approvals, ledger) before their first sql()
 
 
 @st.cache_resource

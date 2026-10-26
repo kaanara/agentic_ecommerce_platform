@@ -1,11 +1,12 @@
 import pandas as pd
 import streamlit as st
 
-from _common import colors, sql
+from _common import colors, require_login, sql
 from aecom import ledger
 from aecom.tools.catalog import get_kpis
 
 st.set_page_config(page_title="Business", page_icon="📊", layout="wide")
+require_login()
 st.title("📊 Business")
 
 days = st.segmented_control("Range", [7, 30, 90], default=30, format_func=lambda d: f"{d} days") or 30

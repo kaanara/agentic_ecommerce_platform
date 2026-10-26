@@ -1,9 +1,10 @@
 import streamlit as st
 
-from _common import sql
+from _common import require_login, sql
 from aecom.company_settings import agents_paused_on, kill_switch_on, set_setting
 
 st.set_page_config(page_title="aecom — agentic company", page_icon="🧭", layout="wide")
+require_login()
 st.title("🧭 Agentic e-commerce company")
 st.caption("Digital products, operated by agents, governed by policy, approved by humans.")
 

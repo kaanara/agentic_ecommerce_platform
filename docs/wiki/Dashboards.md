@@ -5,6 +5,18 @@ uv run aecom dashboard        # Streamlit on http://localhost:8501
 ```
 All pages read the company database directly. Approval buttons call `aecom.approvals` in-process, so the API doesn't need to be running.
 
+## Login
+Every page asks for a password before it shows any data or button, because the dashboard can approve spending and flip the kill switch.
+
+```bash
+uv run python -m aecom.dashboard_auth   # prompts twice (hidden), prints DASHBOARD_PASSWORD_HASH=scrypt$...
+```
+Paste the printed line into `.env` and restart the dashboard. Only the scrypt hash is stored; the password is never printed or saved.
+- **Fails closed**: if `DASHBOARD_PASSWORD_HASH` is unset, the dashboard only explains how to set it.
+- After 5 wrong attempts in a browser session, logins are refused for 60 s.
+- **Log out** is in the sidebar. To change the password, generate a new line and restart.
+- The login is a second line of defence, not a reason to expose the port. Streamlit serves plain HTTP, so keep it bound to localhost/the private network and reach it remotely only through Tailscale or an SSH tunnel (`ssh -L 8501:localhost:8501 pi`).
+
 ## Home
 - Pending approvals, number of agent runs, orders, and the **kill switch** toggle.
 - Recent decisions (ADRs) and recent events.
