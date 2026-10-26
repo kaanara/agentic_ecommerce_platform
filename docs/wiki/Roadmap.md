@@ -78,11 +78,11 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 ### H. Engineering hygiene, security and compliance
 | # | Item | Notes |
 |---|---|---|
-| H1 | CI | No `.github/` workflows yet. Run tests and offline scenarios on every push |
+| H1 ✅ 2026-10-26 | CI | No `.github/` workflows yet. Run tests and offline scenarios on every push |
 | H2 | Staging | Laptop in `LLM_MODE=scripted`; the Pi runs `main` only |
 | H3 | Rotate the AgentMail key | Revoke the shared org PAT; use the dedicated `aecom-poc` key |
 | H4 | Anthropic Console spend limit | Hard cap outside the app |
-| H5 | SSRF guard in `fetch_url` | Only checks for `http(s)://`; block loopback, private and link-local addresses |
+| H5 ✅ 2026-10-26 | SSRF guard in `fetch_url` | Only checks for `http(s)://`; block loopback, private and link-local addresses |
 | H6 | Host hygiene | Log rotation, NTP, SD-card health or USB SSD |
 | H7 | Legal pages | Legal notice (Impressum), privacy policy, terms |
 | H8 | Withdrawal consent | EU digital content: consent to immediate delivery and loss of the 14-day withdrawal right, recorded per order |
@@ -95,9 +95,9 @@ Confirmed by reading the code. The offline scenarios don't catch them because th
 
 | # | Sev | Finding | Where | Fix |
 |---|---|---|---|---|
-| I1 | 🔴 | **API has no authentication.** Anyone who can reach it can approve (with any `by` name), toggle the kill switch, start runs, and publish arbitrary events, including `email.received` (a free prompt-injection channel) | `api/app.py` | Token auth on every route; expose only signed webhook routes through the tunnel |
+| I1 | ✅ done 2026-10-26 | **API has no authentication.** Anyone who can reach it can approve (with any `by` name), toggle the kill switch, start runs, and publish arbitrary events, including `email.received` (a free prompt-injection channel) | `api/app.py` | Token auth on every route; expose only signed webhook routes through the tunnel |
 | I2 | ✅ done 2026-10-25 | **Support can email anyone.** `send_email` (T1) accepts any recipient, and Support also has `list_orders` / `get_order` with customer emails. An injected email can make it send other customers' data to an attacker | `tools/catalog.py`, `agents/support/TOOLS.md`, `policy.yaml` | Restrict recipients to the customer of the current thread or order; escalate anything else |
-| I3 | 🔴 | **Approvals bypass the kill switch.** `approve()` runs the parked call directly, so approving during an emergency still executes it | `approvals.py` | Re-check the kill switch (and only the kill switch) before executing |
+| I3 | ✅ done 2026-10-26 | **Approvals bypass the kill switch.** `approve()` runs the parked call directly, so approving during an emergency still executes it | `approvals.py` | Re-check the kill switch (and only the kill switch) before executing |
 | I4 | 🔴 | **Key never reaches the customer if the email fails.** `deliver_order` commits `delivered` and *then* sends the email. If AgentMail fails, a retry returns `already` and never resends | `tools/catalog.py`, `store/mock.py` | Track `email_sent` separately; resend on retry; invariant "every delivered order has a sent email" |
 | I5 | 🔴 | **Restock mints fake licence keys.** The `inventory.low` / `out_of_stock` reflexes call `add_license_keys(count=50)`, which generates random strings. With a real store, customers would get keys that don't work | `handlers.py`, `tools/catalog.py` | Restock from the vendor's key feed or the store platform only; with no feed → alert, never mint |
 | I6 | 🟠 | **Refunds don't reverse VAT.** `record_refund` debits the gross amount from `refunds` but leaves `vat_payable` unchanged, so net revenue is understated and VAT is overpaid | `ledger.py` | Split the refund into net + VAT; reverse `vat_payable` |
@@ -167,10 +167,21 @@ Today only the Researcher has web access: Anthropic's server-side `web_search` a
 
 | # | Item | Notes |
 |---|---|---|
-| M1 | Server-side web fetch | Replace `fetch_url` with Anthropic's server-side web fetch tool (confirm the current tool version in Anthropic's docs). It runs on Anthropic's side, so it can't reach the host's network. Keep H5 for any remaining local fetching |
+| M1 ✅ 2026-10-26 | Server-side web fetch | Replace `fetch_url` with Anthropic's server-side web fetch tool (confirm the current tool version in Anthropic's docs). It runs on Anthropic's side, so it can't reach the host's network. Keep H5 for any remaining local fetching |
 | M2 | Optional read-only browser | Playwright MCP through the registry, for JavaScript-heavy public pages. Researcher only; isolated container without access to the home or host network; fresh profile with no credentials or cookies; policy allows navigate, read and screenshot, and **denies** click-to-buy, form submit, login and download; output fenced; rate limited |
 | M3 | Scraping policy | Respect `robots.txt` and site terms, low request rates, prefer official APIs, never collect personal data (GDPR). Written into the Researcher's `POLICY.md` and a skill |
-| M4 | Explicit "no accounts, no logins" rule | Stated on the Policy and Approvals page; T4 deny rules in `policy.yaml` for sign-up, login and form-submit tools from any MCP server; a chaos test where a web page tries to make an agent sign up |
+| M4 ✅ 2026-10-26 | Explicit "no accounts, no logins" rule | Stated on the Policy and Approvals page; T4 deny rules in `policy.yaml` for sign-up, login and form-submit tools from any MCP server; a chaos test where a web page tries to make an agent sign up |
+
+### W0 review follow-ups (2026-10-26)
+Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves.
+
+| # | From | Follow-up |
+|---|---|---|
+| R1 | H5 | Pin the checked IP for the actual connection (DNS-rebinding window between check and fetch); also refuse IPv4-compatible (`::a.b.c.d`) and SIIT addresses; a redirect without `Location` should stop immediately |
+| R2 | I1 | Parametrized test over every protected route; test that the AgentMail webhook stays reachable; document that changing `AECOM_API_TOKEN` needs a restart |
+| R3 | M1 | `max_content_tokens` and optional domain allow/block lists for `web_fetch`; `web_search` default type → `web_search_20260209` and configurable `max_uses`; mention `web_fetch` on the Agents wiki page |
+| R4 | M4 | For MCP tools, match forbidden patterns on the tool part only, so a server *named* e.g. `login_service` doesn't deny its read tools; Policy page: `request_provisioning` escalates only for the CEO (others are denied) |
+| R5 | — | Replace FastAPI's deprecated `@app.on_event("startup")` with a lifespan handler |
 
 #### Decisions owned by the product owner
 | # | Decision | Status | Items waiting on it |
