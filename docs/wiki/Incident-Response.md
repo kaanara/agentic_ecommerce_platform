@@ -57,3 +57,16 @@ So neither you nor an agent can find the cause afterwards. Needed: an **`ops_err
 ### Escalation
 - **On-call:** today only you. Name a **backup person** with dashboard access for when you're unavailable.
 - **Safe mode** after an unacknowledged P1 (see Rules).
+
+## Using incidents
+The incident record (`ops_incidents`) and its lifecycle are built (K2, `aecom.incidents`); the monitors that raise incidents come next.
+- **One active incident per (monitor, subject).** `raise_incident(monitor, severity, subject, detail)` opens one, or refreshes the open/acknowledged one (last seen, detail). Severity can go up (P3 → P1) while it is active, never down. A resolved incident is never reopened: a recurrence is a new incident.
+- **Auto-resolve.** Each monitor run calls `resolve_absent(monitor, failing_subjects)`; incidents whose subject passes again are resolved.
+- **Alerts.** Every incident alerts once. A **P1** that is still **open** alerts again after the repeat interval (e.g. 30 min) until someone acknowledges it; P2/P3 alert once. Acknowledged and resolved incidents never alert.
+- **Audit.** Every change (raised, escalated, alerted, acknowledged, resolved, auto-resolved) is in the audit log, as `system` or `human:<name>`.
+
+```bash
+aecom incidents                                          # open + acknowledged (--all includes resolved)
+aecom incidents ack inc_123 --by kaan --note "looking"   # stops repeat alerts
+aecom incidents resolve inc_123 --by kaan --note "fixed"
+```

@@ -12,6 +12,8 @@
     aecom reconcile [--older-than-minutes N]   re-publish order.paid for stuck paid orders, then drain
     aecom drain | scheduler [--demo] | api | dashboard | mcp <domain>
     aecom events dead | retry [ID ...]     dead-lettered events; retry some or all after fixing the cause
+    aecom incidents [list] [--all]         active incidents (--all: include resolved)
+    aecom incidents ack|resolve ID --by NAME [--note TEXT]
     aecom doctor [--json]                  health report (paste into an issue); exit 1 if any check fails
     aecom agentmail keys|create-key NAME|inboxes   (admin, uses AGENTMAIL_API_KEY)
     aecom agentmail poll                   fetch unread inbound mail → Support (same as the scheduler job)
@@ -81,6 +83,12 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("events")
     s.add_argument("action", choices=["dead", "retry"])
     s.add_argument("ids", nargs="*", type=int)
+    s = sub.add_parser("incidents")
+    s.add_argument("action", nargs="?", default="list", choices=["list", "ack", "resolve"])
+    s.add_argument("id", nargs="?")
+    s.add_argument("--all", action="store_true", help="include resolved incidents")
+    s.add_argument("--by", default="cli-user")
+    s.add_argument("--note", default="")
     s = sub.add_parser("doctor")
     s.add_argument("--json", action="store_true", help="machine-readable report")
     s = sub.add_parser("scheduler")
@@ -174,6 +182,20 @@ def main(argv: list[str] | None = None) -> None:
             drain()
         else:
             _print(approvals.reject(a.id, a.by, a.note))
+    elif a.cmd == "incidents":
+        from aecom import incidents
+
+        if a.action == "list":
+            rows = incidents.list_incidents()
+            _print(rows if a.all else [r for r in rows if r["status"] in incidents.ACTIVE])
+        elif not a.id:
+            sys.exit("incident id required")
+        else:
+            fn = incidents.acknowledge if a.action == "ack" else incidents.resolve
+            try:
+                _print(fn(a.id, a.by, a.note))
+            except ValueError as e:
+                sys.exit(str(e))
     elif a.cmd == "simulate":
         from aecom.simulator import simulate_day
 
