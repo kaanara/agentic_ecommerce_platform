@@ -19,6 +19,25 @@
 defaults:
   unknown_tool_tier: T3          # MCP tools nobody classified yet are treated as high-stakes
   sandboxed_tool_tier: T3        # anything from a sandboxed MCP server needs a human
+  # Agents never sign up, log in or submit forms. fnmatch, case-insensitive, matched against the full
+  # tool name and the bare tool part of "mcp:<server>/<tool>". A match is always a T4 deny, read-only or not.
+  forbidden_patterns:
+    - "*sign_up*"
+    - "*signup*"
+    - "*create_account*"
+    - "*register_account*"
+    - "*login*"
+    - "*log_in*"
+    - "*sign_in*"
+    - "*signin*"
+    - "*submit_form*"
+    - "*fill_form*"
+    - "*form_submit*"
+    - "*browser_type*"
+    - "*browser_click*"
+    - "*file_upload*"
+    - "*enter_password*"
+    - "*payment_method*"
 
 budgets:                         # € of LLM spend per agent per day (checked before each agent run)
   ceo: 10

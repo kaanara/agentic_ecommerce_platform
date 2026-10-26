@@ -9,13 +9,25 @@ Every tool call is checked by `src/aecom/policy/gate.py`, using the escalation m
 | T1 | Low risk, reversible | allow + audit |
 | T2 | Bounded risk | allow inside limits, otherwise **escalate** |
 | T3 | High stakes / public / irreversible | always **escalate** |
-| T4 | Forbidden for agents | **deny** |
+| T4 | Forbidden for agents | **deny** (also every tool matching `defaults.forbidden_patterns`) |
 
 ## Order of checks
 1. **Kill switch**: if it's on, every side-effecting call is denied. Reads still work.
-2. **Allowlist**: the agent only receives tools it was granted.
-3. **Rule**: tier, agent restriction (`agents:`), then the T2 checks: `limits`, `price_change_pct_max`, `monthly_budget_setting`.
-4. Unknown tools (for example from a new MCP server) are treated as T3 when they have side effects. Anything from a **sandboxed** server is at least T3.
+2. **Forbidden patterns**: sign-up, login and form tools are denied as T4, read-only or not (see below).
+3. **Allowlist**: the agent only receives tools it was granted.
+4. **Rule**: tier, agent restriction (`agents:`), then the T2 checks: `limits`, `price_change_pct_max`, `monthly_budget_setting`.
+5. Unknown tools (for example from a new MCP server) are treated as T3 when they have side effects. Anything from a **sandboxed** server is at least T3.
+
+## No accounts, no logins
+Agents never sign up, log in or submit forms. Creating accounts, accepting terms and entering credentials or payment
+methods are human-only; an agent asks for them via `request_provisioning`, which always escalates.
+
+Rules are keyed by exact tool name and MCP tools arrive as `mcp:<server>/<tool>`, so `policy.yaml → defaults.forbidden_patterns`
+holds fnmatch patterns (case-insensitive) such as `*login*`, `*sign_in*`, `*create_account*`, `*fill_form*`,
+`*browser_type*`, `*browser_click*`, `*payment_method*`. They are matched against the full name and the bare tool part after `/`:
+`mcp:playwright/browser_fill_form` and `mcp:x/SignIn` are denied, `mcp:playwright/browser_navigate` follows the normal rules.
+A match always yields `DENIED by policy (T4): Forbidden for agents: accounts, logins and form submission are human-only.`
+No built-in catalog tool may match a pattern (enforced by `tests/test_policy_denylist.py`).
 
 ## Current matrix (highlights)
 | Action | Tier | Auto-allowed when | Otherwise |

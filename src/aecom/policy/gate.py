@@ -2,9 +2,10 @@
 
 Every tool an agent can call is wrapped here. Order of checks:
   1. kill switch      → deny every side-effecting call
-  2. allowlist        → deny tools the agent was not granted (done when tools are built)
-  3. policy rule      → tier T0..T4, agent restriction, limits, price-change %, monthly budgets
-  4. allow → execute; escalate → write an Approval and return immediately; deny → explain
+  2. forbidden pattern → deny sign-ups, logins and form submission (T4), read-only or not
+  3. allowlist        → deny tools the agent was not granted (done when tools are built)
+  4. policy rule      → tier T0..T4, agent restriction, limits, price-change %, monthly budgets
+  5. allow → execute; escalate → write an Approval and return immediately; deny → explain
 
 Escalations do *not* pause the graph. The exact call (tool + args) is parked in ``ops_approvals`` and
 executed verbatim when a human approves it — the human approves what will run, not a later re-generation.
@@ -12,6 +13,7 @@ executed verbatim when a human approves it — the human approves what will run,
 
 from __future__ import annotations
 
+import fnmatch
 import inspect
 import json
 from dataclasses import dataclass
@@ -42,6 +44,13 @@ class GateResult:
 @lru_cache
 def load_policy() -> dict[str, Any]:
     return yaml.safe_load(get_settings().policy_file.read_text())
+
+
+def is_forbidden(tool_name: str, policy: dict[str, Any] | None = None) -> bool:
+    """True if the tool name (or the bare tool part of ``mcp:<server>/<tool>``) hits a forbidden pattern."""
+    patterns = (policy or load_policy())["defaults"].get("forbidden_patterns") or []
+    names = {tool_name.lower(), tool_name.rsplit("/", 1)[-1].lower()}
+    return any(fnmatch.fnmatchcase(n, p.lower()) for n in names for p in patterns)
 
 
 def _max_tier(a: str, b: str) -> str:
@@ -77,6 +86,8 @@ def evaluate(agent_id: str, tool_name: str, args: dict[str, Any], *, side_effect
 
     if side_effect and kill_switch_on():
         return GateResult("deny", tier, "Kill switch is ON — all side-effecting actions are blocked.")
+    if is_forbidden(tool_name, policy):
+        return GateResult("deny", "T4", "Forbidden for agents: accounts, logins and form submission are human-only.")
     if "agents" in rule and agent_id not in rule["agents"]:
         return GateResult("deny", tier, f"{tool_name} is reserved for {', '.join(rule['agents'])}.")
     if tier == "T4":
