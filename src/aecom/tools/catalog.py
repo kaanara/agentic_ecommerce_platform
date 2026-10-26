@@ -15,7 +15,7 @@ from typing import Any, Callable
 import httpx
 from sqlalchemy import func, or_, select
 
-from aecom import ledger
+from aecom import ledger, metrics
 from aecom.config import get_settings
 from aecom.context import current_agent, current_counterparty, email_address
 from aecom.db import (
@@ -245,33 +245,23 @@ def publish_social_post(platform: str, text: str) -> dict:
 
 
 # =========================================================================== finance
-@tool("finance")
-def get_pnl() -> dict:
-    """Profit & loss from the double-entry ledger (EUR)."""
-    return ledger.pnl()
+def _window(period: str | None) -> tuple[datetime | None, datetime | None]:
+    """All time for None; otherwise a named metrics period (ValueError lists the valid names)."""
+    return metrics.period(period) if period is not None else (None, None)
 
 
 @tool("finance")
-def get_kpis() -> dict:
-    """Business KPIs: orders, AOV, customers, repeat rate, LTV, CAC, ROAS, agent cost per order."""
-    with session() as s:
-        orders = s.scalar(select(func.count(Order.id)).where(Order.status != "failed")) or 0
-        revenue = s.scalar(select(func.coalesce(func.sum(Order.amount_eur - Order.vat_eur), 0)).where(Order.status.in_(["paid", "delivered"]))) or 0
-        customers = s.scalar(select(func.count(Customer.id))) or 0
-        repeaters = s.scalar(select(func.count()).select_from(
-            select(Order.customer_id).group_by(Order.customer_id).having(func.count(Order.id) > 1).subquery())) or 0
-        spend = s.scalar(select(func.coalesce(func.sum(Campaign.spent_eur), 0))) or 0
-        camp_rev = s.scalar(select(func.coalesce(func.sum(Campaign.revenue_eur), 0))) or 0
-        new_paid = s.scalar(select(func.count(Customer.id)).where(Customer.acquisition_channel.is_not(None))) or 0
-    p = ledger.pnl()
-    return {
-        "orders": orders, "net_revenue_eur": round(revenue, 2), "aov_eur": round(revenue / orders, 2) if orders else 0,
-        "customers": customers, "repeat_rate_pct": round(100 * repeaters / customers, 1) if customers else 0,
-        "ltv_eur": round(revenue / customers, 2) if customers else 0, "cac_eur": round(spend / new_paid, 2) if new_paid else None,
-        "roas": round(camp_rev / spend, 2) if spend else None, "ai_cost_eur": p["ai_expense"],
-        "ai_cost_per_order_eur": round(p["ai_expense"] / orders, 3) if orders else None,
-        "gross_margin_pct": p["gross_margin_pct"],
-    }
+def get_pnl(period: str | None = None) -> dict:
+    """Profit & loss from the double-entry ledger (EUR). period: today | yesterday | last_7_days | month_to_date |
+    last_month | quarter_to_date; omit for all time."""
+    return metrics.pnl(*_window(period))
+
+
+@tool("finance")
+def get_kpis(period: str | None = None) -> dict:
+    """Business KPIs: orders, AOV, customers, repeat rate, LTV, CAC, ROAS, agent cost per order. period: today |
+    yesterday | last_7_days | month_to_date | last_month | quarter_to_date; omit for all time."""
+    return metrics.kpis(*_window(period))
 
 
 @tool("finance", side_effect=True)

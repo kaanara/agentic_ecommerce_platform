@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy import select
 
 from aecom.company_settings import get_setting, set_setting
 from aecom.db import Okr, RegistryTool, Vendor, init_db, session
 from aecom.policy.gate import load_policy
 from aecom.registry.tools import seed_registry
+
+log = logging.getLogger(__name__)
 
 DEFAULT_OKRS = [
     ("financial", "Profitable growth of the e-product business", "Reach €5,000 net revenue this quarter", "net_revenue_eur", 5000),
@@ -49,9 +53,11 @@ def init(with_registry_examples: bool = True) -> None:
 
 def seed_demo() -> None:
     from aecom.store.adapter import get_store
+    from aecom.store.keysource import get_key_source
     from aecom.tools.catalog import CATALOG
 
     store = get_store()
+    has_keys = get_key_source() is not None
     with session() as s:
         if not s.scalars(select(Vendor).where(Vendor.name == "KeyForge")).first():
             s.add(Vendor(name="KeyForge", category="asset_supplier", monthly_cost_eur=29, status="active",
@@ -59,6 +65,9 @@ def seed_demo() -> None:
     for sku, title, kind, price, cost, vendor, keys in DEMO_PRODUCTS:
         if store.get_product(sku) is None:
             store.create_product(sku, title, price, kind, f"{title}.", cost, vendor)
+            if keys and not has_keys:  # never sell a licence we cannot deliver
+                log.warning("seed_demo: no licence key source; %s left in draft until keys are added", sku)
+                continue
             if keys:
                 CATALOG["add_license_keys"].fn(sku=sku, count=keys)
             store.set_status(sku, "active")

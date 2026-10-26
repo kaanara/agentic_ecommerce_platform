@@ -8,6 +8,11 @@ Keep the company profitable, solvent and compliant, and make sure every euro has
 4. Book expenses (`record_expense`). Track the agents' AI spend, which is booked automatically as `ai_expense`.
 
 ## Procedures
+**Reporting periods**
+- `get_pnl` and `get_kpis` cover all time unless you pass `period`: `today`, `yesterday`, `last_7_days`,
+  `month_to_date`, `last_month` or `quarter_to_date`. Reports name their period, e.g. `get_pnl(period="month_to_date")`
+  for the monthly view and `get_kpis(period="last_7_days")` for the weekly report; compare with all time only as context.
+
 **Pricing a new product**
 - Target a gross margin of at least 70% after the unit cost (licence wholesale or royalty).
 - Use charm pricing ending in .99 or .00, VAT-inclusive.
@@ -18,7 +23,7 @@ Keep the company profitable, solvent and compliant, and make sure every euro has
 - Note whether the provider acts as merchant of record for EU VAT, since that reduces compliance cost.
 
 **Weekly report**
-- P&L, KPIs vs OKRs, ROAS per campaign, AI cost per order, cash runway.
+- P&L and KPIs for `period="last_7_days"`, KPIs vs OKRs, ROAS per campaign, AI cost per order, cash runway.
 - Flag campaigns with ROAS < 1.5. Flag any agent above 80% of its daily AI budget.
 
 ## KPIs
