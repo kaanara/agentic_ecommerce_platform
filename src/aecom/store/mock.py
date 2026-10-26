@@ -8,8 +8,8 @@ from typing import Any
 from sqlalchemy import func, select
 
 from aecom import ledger
-from aecom.bus.events import publish
-from aecom.db import Customer, LicenseKey, Order, Product, Refund, session
+from aecom.bus.events import outbox, publish
+from aecom.db import Customer, LicenseKey, Order, Product, Refund, now, session
 from aecom.money import cents, quantize
 from aecom.store.adapter import vat_included, vat_rate
 
@@ -21,7 +21,8 @@ def _p(p: Product) -> dict[str, Any]:
 
 def _o(o: Order) -> dict[str, Any]:
     return {"id": o.id, "customer_id": o.customer_id, "product_id": o.product_id, "amount_eur": o.amount_eur,
-            "vat_eur": o.vat_eur, "status": o.status, "campaign_id": o.campaign_id, "created_at": str(o.created_at)}
+            "vat_eur": o.vat_eur, "status": o.status, "campaign_id": o.campaign_id, "email_sent": bool(o.email_sent),
+            "created_at": str(o.created_at)}
 
 
 class MockStore:
@@ -79,7 +80,8 @@ class MockStore:
                  "available_keys": r[4] if r[2] == "license" else None} for r in rows]
 
     def create_order(self, customer_email: str, sku: str, country: str = "DE", campaign_id: str | None = None):
-        with session() as s:
+        # transactional outbox (I11): customer, order, ledger lines and order.paid commit together or not at all
+        with session() as s, outbox(s):
             p = s.scalars(select(Product).where(Product.sku == sku)).one()
             if p.status != "active":
                 raise ValueError(f"{sku} is not active")
@@ -96,10 +98,10 @@ class MockStore:
                       vat_eur=vat, campaign_id=campaign_id, status="paid")
             s.add(o)
             s.flush()
-            result, unit_cost = _o(o), p.unit_cost_eur
-        ledger.record_sale(result["id"], result["amount_eur"], result["vat_eur"], unit_cost,
-                           country=tax_country, vat_rate=rate)
-        publish("order.paid", {"order_id": result["id"], "sku": sku, "email": customer_email}, source="store")
+            result = _o(o)
+            ledger.record_sale(o.id, o.amount_eur, o.vat_eur, p.unit_cost_eur, country=tax_country, vat_rate=rate,
+                               session=s)
+            publish("order.paid", {"order_id": o.id, "sku": sku, "email": customer_email}, source="store")
         return result
 
     def deliver_order(self, order_id: str) -> dict[str, Any]:
@@ -107,10 +109,16 @@ class MockStore:
             o = s.get(Order, order_id)
             if o is None:
                 raise ValueError(f"order {order_id} not found")
-            if o.status == "delivered":  # idempotent
-                key = s.scalars(select(LicenseKey).where(LicenseKey.order_id == order_id)).first()
-                return {"order_id": order_id, "status": "delivered", "license_key": key.key if key else None, "already": True}
             p = s.get(Product, o.product_id)
+            if o.status in ("partially_refunded", "refunded"):  # refunds end the lifecycle: no new key, no status change
+                return {"order_id": order_id, "status": o.status, "already": True}
+            if o.status == "delivered":  # idempotent; the access details let the caller (re)send the email
+                key = s.scalars(select(LicenseKey).where(LicenseKey.order_id == order_id)).first()
+                already: dict[str, Any] = {"order_id": order_id, "status": "delivered", "sku": p.sku,
+                                           "license_key": key.key if key else None, "already": True}
+                if p.kind != "license":
+                    already["download_url"] = f"https://downloads.example/{p.sku}/{pysecrets.token_urlsafe(12)}"
+                return already
             delivered: dict[str, Any] = {"order_id": order_id, "status": "delivered", "sku": p.sku}
             remaining = None
             if p.kind == "license":
@@ -134,9 +142,20 @@ class MockStore:
             publish("inventory.low", {"sku": p.sku, "available_keys": remaining}, source="store")
         return delivered
 
-    def refund_order(self, order_id: str, amount_eur: float, reason: str) -> dict[str, Any]:
-        """Full or partial refund; the licence key is revoked only once the whole amount is refunded."""
+    def mark_email_sent(self, order_id: str) -> None:
+        """Record that the access email of a delivered order went out (I4), so it is never sent twice."""
         with session() as s:
+            o = s.get(Order, order_id)
+            if o is None:
+                raise ValueError(f"order {order_id} not found")
+            o.email_sent, o.email_sent_at = True, now()
+
+    def refund_order(self, order_id: str, amount_eur: float, reason: str) -> dict[str, Any]:
+        """Full or partial refund; the licence key is revoked only once the whole amount is refunded.
+
+        Refund row, order status, ledger lines and the order.refunded event commit in one transaction (I11).
+        """
+        with session() as s, outbox(s):
             o = s.get(Order, order_id)
             if o is None:
                 raise ValueError(f"order {order_id} not found")
@@ -156,8 +175,8 @@ class MockStore:
                 for key in s.scalars(select(LicenseKey).where(LicenseKey.order_id == order_id)):
                     key.status = "revoked"
             status = o.status
-        ledger.record_refund(order_id, amount_eur, country=country, vat_rate=rate)
-        publish("order.refunded", {"order_id": order_id, "amount_eur": amount_eur, "status": status}, source="store")
+            ledger.record_refund(order_id, amount_eur, country=country, vat_rate=rate, session=s)
+            publish("order.refunded", {"order_id": order_id, "amount_eur": amount_eur, "status": status}, source="store")
         return {"order_id": order_id, "status": status, "amount_eur": amount_eur,
                 "remaining_eur": (remaining - cents(amount_eur)) / 100}
 

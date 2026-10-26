@@ -128,11 +128,17 @@ def deliver_order(order_id: str) -> dict:
     """Assign a licence key / download link to a paid order and email it to the customer. Idempotent."""
     store = get_store()
     result = store.deliver_order(order_id)
-    if result.get("status") == "delivered" and not result.get("already"):
-        order = store.get_order(order_id) or {}
+    if result.get("status") != "delivered":
+        return result
+    order = store.get_order(order_id) or {}
+    # I4: the email is tracked apart from delivery, so a failed send is retried (also on an 'already' delivery)
+    # and a sent one is never repeated. A send error propagates: the gate reports ERROR and the bus retries.
+    if not order.get("email_sent"):
         secret = result.get("license_key") or result.get("download_url")
         AgentMail().send(order.get("customer_email", ""), f"Your purchase {result.get('sku', '')}",
                          f"Thank you for your order {order_id}.\n\nYour access: {secret}\n\nNeed help? Just reply to this email.")
+        store.mark_email_sent(order_id)
+        result["email_sent"] = True
     return result
 
 

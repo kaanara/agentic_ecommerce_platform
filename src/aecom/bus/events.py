@@ -9,14 +9,18 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import Any, Callable
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Callable, Iterator
 
 from datetime import timedelta
 
 from sqlalchemy import or_, select
+from sqlalchemy.orm import Session
 
 from aecom.audit import audit
 from aecom.db import EventRow, now, session
+from aecom.db import session as _session  # ``publish`` has a ``session`` keyword
 from aecom.observability import record_error
 
 log = logging.getLogger(__name__)
@@ -38,12 +42,33 @@ def subscribe(topic: str) -> Callable[[Handler], Handler]:
     return deco
 
 
-def publish(topic: str, payload: dict[str, Any], source: str = "system") -> int:
-    with session() as s:
-        row = EventRow(topic=topic, payload=payload, source=source)
-        s.add(row)
-        s.flush()
-        return row.id
+_outbox: ContextVar[Session | None] = ContextVar("aecom_outbox", default=None)
+
+
+@contextmanager
+def outbox(s: Session) -> Iterator[Session]:
+    """Transactional outbox: inside this block ``publish`` writes its event into ``s`` (committed with it)."""
+    token = _outbox.set(s)
+    try:
+        yield s
+    finally:
+        _outbox.reset(token)
+
+
+def publish(topic: str, payload: dict[str, Any], source: str = "system", *, session: Session | None = None) -> int:
+    """Persist an event. With ``session`` (or inside ``outbox``) the event commits atomically with that session."""
+    s = session if session is not None else _outbox.get()
+    if s is not None:
+        return _add_event(s, topic, payload, source)
+    with _session() as s:
+        return _add_event(s, topic, payload, source)
+
+
+def _add_event(s: Session, topic: str, payload: dict[str, Any], source: str) -> int:
+    row = EventRow(topic=topic, payload=payload, source=source)
+    s.add(row)
+    s.flush()
+    return row.id
 
 
 MAX_ATTEMPTS = 5

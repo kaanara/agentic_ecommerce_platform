@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from contextlib import nullcontext
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from aecom.db import LedgerEntry, new_id, session
 from aecom.money import cents, quantize, to_decimal, vat_split
@@ -15,17 +17,23 @@ DEBIT_NORMAL = {"cash", "cogs", "marketing_expense", "ai_expense", "vendor_expen
 EXPENSE_ACCOUNTS = {"cogs", "marketing_expense", "ai_expense", "vendor_expense"}
 
 
-def post(lines: list[tuple], memo: str, ref: str | None = None) -> str:
+def _use(s: Session | None):
+    """The caller's session (its transaction commits the lines) or a fresh one."""
+    return nullcontext(s) if s is not None else session()
+
+
+def post(lines: list[tuple], memo: str, ref: str | None = None, *, session: Session | None = None) -> str:
     """lines = [(account, debit, credit), ...] or (account, debit, credit, country, vat_rate) for VAT lines.
 
-    Balance is checked in integer cents and amounts are stored rounded to cents.
+    Balance is checked in integer cents and amounts are stored rounded to cents. With ``session`` the lines are
+    added to that session and commit (or roll back) with it.
     """
     debit = sum(cents(line[1]) for line in lines)
     credit = sum(cents(line[2]) for line in lines)
     if debit != credit:
         raise ValueError(f"unbalanced transaction: debit={debit / 100:.2f} credit={credit / 100:.2f}")
     txn = new_id("txn")
-    with session() as s:
+    with _use(session) as s:
         for account, d, c, *detail in lines:
             country, rate = (detail + [None, None])[:2]
             s.add(LedgerEntry(txn_id=txn, account=account, debit=float(quantize(d)), credit=float(quantize(c)),
@@ -34,19 +42,19 @@ def post(lines: list[tuple], memo: str, ref: str | None = None) -> str:
 
 
 def record_sale(order_id: str, gross: float, vat: float, unit_cost: float,
-                country: str | None = None, vat_rate: float | None = None) -> str:
+                country: str | None = None, vat_rate: float | None = None, *, session: Session | None = None) -> str:
     g, v, cost = quantize(gross), quantize(vat), quantize(unit_cost)
     lines: list[tuple] = [("cash", g, 0), ("revenue", 0, g - v), ("vat_payable", 0, v, country, vat_rate)]
     if cost:
         lines += [("cogs", cost, 0), ("cash", 0, cost)]
-    return post(lines, f"sale {order_id}", order_id)
+    return post(lines, f"sale {order_id}", order_id, session=session)
 
 
-def _refund_basis(order_id: str) -> tuple[str | None, float | None, Decimal, Decimal]:
+def _refund_basis(order_id: str, s: Session | None = None) -> tuple[str | None, float | None, Decimal, Decimal]:
     """(country, vat_rate) of the order's sale VAT line, plus gross and VAT already refunded on it."""
     country = rate = None
     gross = vat = Decimal(0)
-    with session() as s:
+    with _use(s) as s:
         for e in s.scalars(select(LedgerEntry).where(LedgerEntry.ref == order_id)):
             if e.memo.startswith("sale ") and e.account == "vat_payable" and e.credit:
                 country, rate = e.country, e.vat_rate
@@ -58,13 +66,14 @@ def _refund_basis(order_id: str) -> tuple[str | None, float | None, Decimal, Dec
     return country, rate, gross, vat
 
 
-def record_refund(order_id: str, amount: float, country: str | None = None, vat_rate: float | None = None) -> str:
+def record_refund(order_id: str, amount: float, country: str | None = None, vat_rate: float | None = None,
+                  *, session: Session | None = None) -> str:
     """Reverse a (partial) sale: debit refunds (net) and vat_payable (VAT), credit cash (gross).
 
     VAT is split on the cumulative refunded gross so partial refunds that add up to the order
     reverse exactly the VAT booked on the sale. Without a rate the sale's VAT line supplies it.
     """
-    sale_country, sale_rate, prior_gross, prior_vat = _refund_basis(order_id)
+    sale_country, sale_rate, prior_gross, prior_vat = _refund_basis(order_id, session)
     country = country or sale_country
     rate = vat_rate if vat_rate is not None else (sale_rate or 0.0)
     g = quantize(amount)
@@ -72,7 +81,7 @@ def record_refund(order_id: str, amount: float, country: str | None = None, vat_
     lines: list[tuple] = [("refunds", g - vat, 0), ("cash", 0, g)]
     if vat:
         lines.append(("vat_payable", vat, 0, country, rate))
-    return post(lines, f"refund {order_id}", order_id)
+    return post(lines, f"refund {order_id}", order_id, session=session)
 
 
 def record_expense(account: str, amount: float, memo: str, ref: str | None = None) -> str:
