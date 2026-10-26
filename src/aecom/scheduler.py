@@ -28,6 +28,14 @@ def stock_check() -> None:
     drain()
 
 
+def reconcile_orders() -> None:
+    from aecom.reconciler import reconcile
+
+    if (r := reconcile())["requeued"]:
+        log.info("reconciler: %s", r)
+    drain()
+
+
 def poll_email() -> None:
     from aecom.integrations.agentmail import poll_inbox
 
@@ -63,6 +71,7 @@ def main(demo: bool = False) -> None:
     sched = BlockingScheduler()
     sched.add_job(drain, "interval", seconds=30, id="drain")
     sched.add_job(stock_check, "interval", minutes=60, id="stock_check")
+    sched.add_job(reconcile_orders, "interval", minutes=15, id="reconcile")
     if secrets.has("AGENTMAIL_API_KEY"):
         sched.add_job(poll_email, "interval", seconds=60, id="poll_email")
     if demo:
