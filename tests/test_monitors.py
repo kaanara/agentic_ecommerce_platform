@@ -350,9 +350,12 @@ def test_health_503_when_db_is_down(monkeypatch):
     assert r.status_code == 503 and r.json()["db"] is False and r.json()["ok"] is False
 
 
-def test_health_default_body_keeps_its_shape_but_still_turns_503():
+def test_health_compact_body_on_request_still_turns_503():
     client = TestClient(api_app.app)
-    assert client.get("/health").json() == {"ok": True, "kill_switch": False, "agents_paused": False}
+    compact = {"detail": "false"}
+    assert client.get("/health", params=compact).json() == {"ok": True, "kill_switch": False, "agents_paused": False}
     incidents.raise_incident("undelivered_order", "P1", "ord_1")
-    r = client.get("/health")
+    r = client.get("/health", params=compact)
     assert r.status_code == 503 and r.json() == {"ok": False, "kill_switch": False, "agents_paused": False}
+    full = client.get("/health").json()  # the default body carries the real state
+    assert full["open_incidents"]["P1"] == 1 and full["db"] is True and "event_bus" in full

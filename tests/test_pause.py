@@ -42,12 +42,13 @@ def test_both_off_is_normal():
 def test_health_shows_both_flags_and_pause_route_is_protected(monkeypatch):
     monkeypatch.setattr(api_app.secrets, "get", lambda name: TOKEN if name == "AECOM_API_TOKEN" else None)
     client = TestClient(api_app.app)
-    assert client.get("/health").json() == {"ok": True, "kill_switch": False, "agents_paused": False}
+    flags = lambda: {k: client.get("/health").json()[k] for k in ("ok", "kill_switch", "agents_paused")}  # noqa: E731
+    assert flags() == {"ok": True, "kill_switch": False, "agents_paused": False}
 
     assert client.post("/agents-pause", params={"on": True}).status_code == 401
     r = client.post("/agents-pause", params={"on": True}, headers={"Authorization": f"Bearer {TOKEN}"})
     assert r.status_code == 200 and r.json() == {"agents_paused": True}
-    assert client.get("/health").json() == {"ok": True, "kill_switch": False, "agents_paused": True}
+    assert flags() == {"ok": True, "kill_switch": False, "agents_paused": True}
 
 
 def test_paid_order_is_delivered_while_paused(monkeypatch):

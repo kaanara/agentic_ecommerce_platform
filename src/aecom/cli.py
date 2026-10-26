@@ -14,6 +14,8 @@
     aecom events dead | retry [ID ...]     dead-lettered events; retry some or all after fixing the cause
     aecom incidents [list] [--all]         active incidents (--all: include resolved)
     aecom incidents ack|resolve ID --by NAME [--note TEXT]
+    aecom agents [list] | enable|disable ID   per-agent switch (reflexes such as delivery are unaffected)
+    aecom monitors run                     run all monitors once, raise/resolve incidents, send due alerts
     aecom doctor [--json]                  health report (paste into an issue); exit 1 if any check fails
     aecom agentmail keys|create-key NAME|inboxes   (admin, uses AGENTMAIL_API_KEY)
     aecom agentmail poll                   fetch unread inbound mail → Support (same as the scheduler job)
@@ -89,6 +91,11 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--all", action="store_true", help="include resolved incidents")
     s.add_argument("--by", default="cli-user")
     s.add_argument("--note", default="")
+    s = sub.add_parser("agents")
+    s.add_argument("action", nargs="?", default="list", choices=["list", "enable", "disable"])
+    s.add_argument("agent_id", nargs="?")
+    s = sub.add_parser("monitors")
+    s.add_argument("action", nargs="?", default="run", choices=["run"])
     s = sub.add_parser("doctor")
     s.add_argument("--json", action="store_true", help="machine-readable report")
     s = sub.add_parser("scheduler")
@@ -196,6 +203,24 @@ def main(argv: list[str] | None = None) -> None:
                 _print(fn(a.id, a.by, a.note))
             except ValueError as e:
                 sys.exit(str(e))
+    elif a.cmd == "agents":
+        from aecom.company_settings import agent_enabled, set_agent_enabled
+        from aecom.persona.loader import agent_ids
+
+        known = sorted(agent_ids())
+        if a.action == "list":
+            for aid in known:
+                print(f"{aid:12} {'on' if agent_enabled(aid) else 'off'}")
+        elif a.agent_id not in known:
+            print(f"unknown agent {a.agent_id!r}; choose from: {', '.join(known)}")
+            sys.exit(2)
+        else:
+            set_agent_enabled(a.agent_id, a.action == "enable")
+            print(f"{a.agent_id}: {'on' if agent_enabled(a.agent_id) else 'off'}")
+    elif a.cmd == "monitors":
+        from aecom.monitors import run_monitors
+
+        _print(run_monitors())
     elif a.cmd == "simulate":
         from aecom.simulator import simulate_day
 

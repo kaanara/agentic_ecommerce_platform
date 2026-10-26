@@ -72,3 +72,23 @@ def test_reconcile_prints_counts_and_drains(fresh_company, capsys):
     assert "attempted" in out
     with session() as s:
         assert s.get(Order, order_id).status == "delivered"
+
+
+def test_agents_enable_disable_and_unknown_id(capsys):
+    from aecom.company_settings import agent_enabled
+
+    cli.main(["agents", "disable", "marketing"])
+    assert agent_enabled("marketing") is False
+    cli.main(["agents", "enable", "marketing"])
+    assert agent_enabled("marketing") is True
+    cli.main(["agents"])
+    assert "marketing" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["agents", "disable", "nobody"])
+    assert exc.value.code == 2
+
+
+def test_monitors_run_prints_a_summary(capsys):
+    cli.main(["monitors", "run"])
+    out = capsys.readouterr().out
+    assert '"failing"' in out and '"heartbeat"' in out

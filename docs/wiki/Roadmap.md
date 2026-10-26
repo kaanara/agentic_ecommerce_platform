@@ -121,8 +121,8 @@ See [Reporting](Reporting) for the report catalog and design.
 |---|---|---|
 | J1 ✅ 2026-10-26 | `aecom/metrics.py` | Single place for KPIs, all with `start`/`end`; money KPIs from the ledger. Today `get_kpis` (orders table) and `get_pnl` (ledger) can disagree |
 | J2 ✅ 2026-10-26 | Period parameters | `get_pnl` / `get_kpis` are all-time only |
-| J3 | `ops_reports` + `submit_report` | Immutable, versioned, hashed snapshots; code attaches numbers, agents write commentary |
-| J4 | Number check | Reject report text that quotes figures not in its data |
+| J3 ✅ 2026-10-26 | `ops_reports` + `submit_report` | Immutable, versioned, hashed snapshots; code attaches numbers, agents write commentary |
+| J4 ✅ 2026-10-26 | Number check | Reject report text that quotes figures not in its data |
 | J5 | Daily flash email | Replaces the log-only daily report; merged with the P3 digest; stop writing daily insights to shared memory |
 | J6 | Weekly business review | Stored and emailed; product, marketing, support and AI sections |
 | J7 ✅ 2026-10-26 | VAT detail on ledger lines | Country and rate per VAT line, needed for the OSS report |
@@ -140,7 +140,7 @@ See [Incident Response](Incident-Response) for who detects, diagnoses and fixes 
 | # | Item | Notes |
 |---|---|---|
 | K1 ✅ 2026-10-26 | `ops_errors` with tracebacks | Today agent crashes keep only `"Type: message"`, tool errors keep only `ok=False`, and bus tracebacks live only in rotating process logs |
-| K2 | Incident lifecycle | `ops_incidents` with owner, timeline, root cause, fix, linked approvals and PRs |
+| K2 ✅ 2026-10-26 | Incident lifecycle | `ops_incidents` with owner, timeline, root cause, fix, linked approvals and PRs |
 | K3 | Runbooks as skills | One per monitor; shared by the Sentinel and humans |
 | K4 | Sentinel diagnostic tools | Read-only: incidents, errors, run timeline, health, backlog, dead letter, deploys |
 | K5 | Sentinel remediation tools | Gated: replay dead letter, resend delivery email, re-run reconciler, pause agents, manage incidents |
@@ -158,7 +158,7 @@ Build what makes the company different (the governed agent organisation); use pr
 |---|---|---|---|
 | L1 | **Lemon Squeezy as system of record** | Checkout, payment, VAT, licence keys, download hosting, refunds and receipts live in Lemon Squeezy. The app is the management layer: agents decide, price, market, support and report. The internal ledger mirrors platform data for the agents | A5 becomes the core of Phase 3. I4–I8, I11, I13 and J7 shrink to "mirror the platform correctly" instead of re-implementing it. Sales keep running when the app host is down |
 | L2 | **Off-the-shelf ops tooling** | Sentry (errors with tracebacks), healthchecks.io (external heartbeat), ntfy (phone push), LangSmith (traces). Build only the business monitors: undelivered orders, refund spikes, ROAS, budgets, invariants | K1 becomes Sentry integration plus a thin `ops_errors` link; B heartbeat and push become configuration |
-| L3 | **Start with fewer active agents** | Active at launch: Support (event-driven), Finance (daily), Store Ops reflexes (no LLM), CEO (weekly), Researcher (on demand). Others switched on when there is work. Needs a per-agent enabled flag in `ops_settings`, respected by the scheduler and the Foreman | AI cost per order measured from day one (target ≤ €0.50) |
+| L3 ✅ 2026-10-26 | **Start with fewer active agents** | Active at launch: Support (event-driven), Finance (daily), Store Ops reflexes (no LLM), CEO (weekly), Researcher (on demand). Others switched on when there is work. Needs a per-agent enabled flag in `ops_settings`, respected by the scheduler and the Foreman | AI cost per order measured from day one (target ≤ €0.50) |
 | L4 | **First 10 sales before autonomy** | Launch one product with agents assisting and a human approving almost everything | G4–G6 start only after real approvals exist; becomes the entry gate of Phase 5 |
 | L5 | **Phase 0 unchanged; merge the PoC** | Security fixes stay first. Merge `feat/agentic-ecommerce-poc` into `main`; afterwards small PRs with CI | — |
 
@@ -187,6 +187,7 @@ Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves
 | R9 | W2 | Monthly marketing budget uses lifetime `spent_eur` of campaigns spanning months (no per-month split yet) |
 | R10 | W3 | A `partially_refunded` order whose access email never went out is never emailed (delivery refuses refunded orders); pass `order_id` as an idempotency key to AgentMail so a crash between send and `mark_email_sent` can't double-send; store download URLs so a resent email carries the same link |
 | R11 | W4 | `docs/wiki/Agents.md` still says TOOLS.md seeds only on the first init (C5 changed that); ruff `known-first-party` for the dashboard; replace SQLite's deprecated default datetime adapter; init_db lock against two processes initialising an empty DB at once |
+| R12 | W5 | Make `--by` required for `aecom incidents ack/resolve`; partial unique index for active incidents (concurrent raise); immediate alert when an incident escalates P2→P1; guard `resolve_absent` against a bare string; the number check reads a trailing `m` as million (e.g. "5m" minutes is rejected) |
 | R5 ✅ | — | Replace FastAPI's deprecated `@app.on_event("startup")` with a lifespan handler |
 
 #### Decisions owned by the product owner
