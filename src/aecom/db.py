@@ -243,6 +243,12 @@ class EventRow(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     source: Mapped[str] = mapped_column(String, default="system")
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
+    # at-least-once delivery: see aecom.bus.events.drain
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # lease / retry time
+    done_handlers: Mapped[list[str]] = mapped_column(JSON, default=list)  # handlers that already succeeded
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dead: Mapped[bool] = mapped_column(Boolean, default=False)  # gave up after max attempts → dead letter
 
 
 class AgentRun(Base):
@@ -353,6 +359,31 @@ def reset_engine(url: str | None = None) -> None:
 
 def init_db() -> None:
     Base.metadata.create_all(get_engine())
+    _add_missing_columns()
+
+
+def _add_missing_columns() -> None:
+    """Stopgap until Alembic (backlog C4): create_all never alters existing tables, so add new nullable or
+    defaulted columns to databases created by an older version."""
+    from sqlalchemy import inspect, text
+
+    engine = get_engine()
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in existing:
+                    continue
+                default = col.default.arg if col.default is not None and not callable(col.default.arg) else None
+                ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(engine.dialect)}"
+                if isinstance(default, bool):
+                    ddl += f" DEFAULT {int(default) if engine.dialect.name == 'sqlite' else str(default).upper()}"
+                elif isinstance(default, (int, float)):
+                    ddl += f" DEFAULT {default}"
+                conn.execute(text(ddl))
 
 
 @contextmanager

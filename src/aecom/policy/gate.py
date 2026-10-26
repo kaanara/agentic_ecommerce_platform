@@ -26,7 +26,7 @@ from sqlalchemy import func, select
 from aecom.audit import audit
 from aecom.company_settings import get_setting, kill_switch_on
 from aecom.config import get_settings
-from aecom.context import current_agent, current_run
+from aecom.context import current_agent, current_counterparty, current_run, email_address
 from aecom.db import Approval, Campaign, ToolCallLog, Vendor, session
 
 TIER_ORDER = ["T0", "T1", "T2", "T3", "T4"]
@@ -87,6 +87,11 @@ def evaluate(agent_id: str, tool_name: str, args: dict[str, Any], *, side_effect
         return GateResult("allow", tier, "within policy")
 
     # T2 — bounded risk
+    if rule.get("recipient_must_be_counterparty"):
+        to, counterparty = email_address(str(args.get("to", ""))), current_counterparty.get()
+        if not counterparty or to != counterparty:
+            whom = f"the customer of this case ({counterparty})" if counterparty else "no customer case in this run"
+            return GateResult("escalate", tier, f"recipient {to or '?'} is not {whom}. {rule.get('reason', '')}".strip())
     for arg, maximum in (rule.get("limits") or {}).items():
         if arg in args and float(args[arg]) > float(maximum):
             return GateResult("escalate", tier, f"{arg}={args[arg]} exceeds limit {maximum}. {rule.get('reason', '')}".strip())

@@ -8,7 +8,9 @@
     aecom simulate --days N                market simulator
     aecom kill-switch on|off
     aecom drain | scheduler [--demo] | api | dashboard | mcp <domain>
+    aecom events dead | retry [ID ...]     dead-lettered events; retry some or all after fixing the cause
     aecom agentmail keys|create-key NAME|inboxes   (admin, uses AGENTMAIL_API_KEY)
+    aecom agentmail poll                   fetch unread inbound mail → Support (same as the scheduler job)
 """
 
 from __future__ import annotations
@@ -60,6 +62,9 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("state", choices=["on", "off"])
 
     sub.add_parser("drain")
+    s = sub.add_parser("events")
+    s.add_argument("action", choices=["dead", "retry"])
+    s.add_argument("ids", nargs="*", type=int)
     s = sub.add_parser("scheduler")
     s.add_argument("--demo", action="store_true")
     s = sub.add_parser("api")
@@ -68,7 +73,7 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("mcp")
     s.add_argument("domain", choices=["store", "marketing", "finance", "registry", "all"])
     s = sub.add_parser("agentmail")
-    s.add_argument("action", choices=["keys", "create-key", "inboxes"])
+    s.add_argument("action", choices=["keys", "create-key", "inboxes", "poll"])
     s.add_argument("name", nargs="?")
 
     a = p.parse_args(argv)
@@ -151,7 +156,15 @@ def main(argv: list[str] | None = None) -> None:
     elif a.cmd == "drain":
         from aecom.bus.events import drain
 
-        print(f"processed {drain()} events")
+        _print_drain(drain())
+    elif a.cmd == "events":
+        from aecom.bus.events import dead_letters, drain, retry
+
+        if a.action == "dead":
+            _print(dead_letters())
+        else:
+            print(f"re-queued {retry(a.ids or None)} dead-lettered event(s)")
+            _print_drain(drain())
     elif a.cmd == "agentmail":
         from aecom.integrations.agentmail import AgentMail
 
@@ -162,8 +175,24 @@ def main(argv: list[str] | None = None) -> None:
             _print(mail.list_api_keys())
         elif a.action == "inboxes":
             _print(mail.list_inboxes())
+        elif a.action == "poll":
+            from aecom.bootstrap import init
+            from aecom.bus.events import drain
+            from aecom.integrations.agentmail import poll_inbox
+
+            init()
+            print(f"{poll_inbox()} new inbound email(s)")
+            _print_drain(drain())
         else:
             _print(mail.create_api_key(a.name or "aecom-poc"))
+
+
+def _print_drain(attempted: int) -> None:
+    from aecom.bus.events import status
+
+    st = status()
+    print(f"attempted {attempted} event(s); waiting for retry: {st['waiting_for_retry']}, "
+          f"dead letter: {st['dead_letter']} (see `aecom events dead`)")
 
 
 if __name__ == "__main__":

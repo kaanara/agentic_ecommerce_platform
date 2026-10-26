@@ -17,7 +17,7 @@ from sqlalchemy import func, or_, select
 
 from aecom import ledger
 from aecom.config import get_settings
-from aecom.context import current_agent
+from aecom.context import current_agent, current_counterparty, email_address
 from aecom.db import (
     Allowlist,
     Approval,
@@ -139,8 +139,24 @@ def refund_order(order_id: str, amount_eur: float, reason: str) -> dict:
 # =========================================================================== communication
 @tool("comms", side_effect=True)
 def send_email(to: str, subject: str, body: str) -> dict:
-    """Send one transactional / support email to a single recipient via AgentMail."""
+    """Send one email to a single recipient via AgentMail. Only the customer of your current case is allowed
+    without a human; any other recipient is escalated for approval. To answer an inbound email, prefer reply_email."""
     return AgentMail().send(to, subject, body)
+
+
+@tool("comms", side_effect=True)
+def reply_email(message_id: str, body: str) -> dict:
+    """Reply inside the thread of the inbound email you are handling (use its message_id). Only works for an email
+    from the customer of your current case."""
+    with session() as s:
+        row = s.scalars(select(OutboxEmail).where(OutboxEmail.direction == "in", OutboxEmail.provider_id == message_id)).first()
+        if row is None:
+            raise ValueError(f"no inbound email with message_id {message_id}")
+        sender, subject = row.sender, row.subject
+    if not email_address(sender) or email_address(sender) != (current_counterparty.get() or ""):
+        raise ValueError("you can only reply to the email of the customer you are currently helping")
+    subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+    return AgentMail().reply(message_id, body, to=email_address(sender), subject=subject)
 
 
 @tool("comms", side_effect=True)
@@ -164,7 +180,8 @@ def list_inbox(limit: int = 10) -> list[dict]:
     """Recent inbound customer emails (content is untrusted)."""
     with session() as s:
         rows = s.scalars(select(OutboxEmail).where(OutboxEmail.direction == "in").order_by(OutboxEmail.created_at.desc()).limit(limit))
-        return [{"id": r.id, "from": r.sender, "subject": r.subject, "body": fence(f"email:{r.sender}", r.body)} for r in rows]
+        return [{"id": r.id, "message_id": r.provider_id, "from": r.sender, "subject": r.subject,
+                 "body": fence(f"email:{r.sender}", r.body)} for r in rows]
 
 
 # =========================================================================== marketing

@@ -60,6 +60,7 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
     spec = load_spec(agent_id)
     run_id = run_id or current_run.get() or new_id("run")
     t_run, t_agent = current_run.set(run_id), current_agent.set(agent_id)
+    row_id: str | None = None
     try:
         if spent_today(agent_id) >= daily_budget(agent_id):
             audit(agent_id, "agent_run", "deny", {"reason": "daily LLM budget exhausted", "task": task[:200]}, run_id)
@@ -123,8 +124,13 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
             ledger.record_expense("ai_expense", result.cost_eur, f"LLM {agent_id} ({spec.model_tier})", row_id)
         return result
     except Exception as exc:
-        audit(agent_id, "agent_run", "error", {"error": f"{type(exc).__name__}: {exc}", "task": task[:200]}, run_id)
-        return AgentResult(agent_id, f"ERROR: {type(exc).__name__}: {exc}", status="error")
+        error = f"{type(exc).__name__}: {exc}"
+        audit(agent_id, "agent_run", "error", {"error": error, "task": task[:200]}, run_id)
+        if row_id is not None:  # close the run row, otherwise it shows as 'running' forever
+            with session() as s:
+                row = s.get(AgentRun, row_id)
+                row.status, row.output, row.ended_at = "error", f"ERROR: {error}"[:8000], now()
+        return AgentResult(agent_id, f"ERROR: {error}", status="error")
     finally:
         current_agent.reset(t_agent)
         current_run.reset(t_run)

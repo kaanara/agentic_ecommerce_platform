@@ -15,6 +15,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 import aecom.handlers  # noqa: F401  (registers event subscribers)
 from aecom.bootstrap import init
 from aecom.bus.events import drain, publish
+from aecom.secrets import secrets
 from aecom.store.adapter import get_store
 
 log = logging.getLogger(__name__)
@@ -25,6 +26,14 @@ def stock_check() -> None:
         if item["status"] == "active" and item["available_keys"] is not None and item["available_keys"] < 10:
             publish("inventory.low", {"sku": item["sku"], "available_keys": item["available_keys"]}, source="scheduler")
     drain()
+
+
+def poll_email() -> None:
+    from aecom.integrations.agentmail import poll_inbox
+
+    if (n := poll_inbox()):
+        log.info("email: %d new inbound message(s)", n)
+        drain()
 
 
 def daily_finance_report() -> None:
@@ -54,6 +63,8 @@ def main(demo: bool = False) -> None:
     sched = BlockingScheduler()
     sched.add_job(drain, "interval", seconds=30, id="drain")
     sched.add_job(stock_check, "interval", minutes=60, id="stock_check")
+    if secrets.has("AGENTMAIL_API_KEY"):
+        sched.add_job(poll_email, "interval", seconds=60, id="poll_email")
     if demo:
         sched.add_job(simulate_market_day, "interval", minutes=1, id="market")
         sched.add_job(daily_finance_report, "interval", minutes=10, id="finance_daily")

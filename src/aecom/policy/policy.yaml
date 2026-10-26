@@ -13,6 +13,7 @@
 #   limits:      {arg_name: max_value}; exceeding any → escalate
 #   price_change_pct_max: escalate if a price moves more than this % vs. current
 #   monthly_budget_setting: escalate if this spend pushes the month past ops_settings[<key>]
+#   recipient_must_be_counterparty: escalate unless args["to"] is the customer the current run serves
 #   reason:      shown to the human in the approvals dashboard
 
 defaults:
@@ -76,8 +77,13 @@ rules:
 
   # ---------------------------------------------------------------- communication
   send_email:
-    tier: T1
+    tier: T2
     agents: [support, store_ops, marketing]
+    recipient_must_be_counterparty: true
+    reason: "Emails to anyone other than the customer of the current case could leak customer data."
+  reply_email:
+    tier: T1
+    agents: [support]           # the tool itself refuses messages that aren't from the current customer
   send_newsletter:
     tier: T3
     agents: [marketing]

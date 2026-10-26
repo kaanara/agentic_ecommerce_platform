@@ -125,6 +125,8 @@ def agentmail_webhook(payload: dict[str, Any], bg: BackgroundTasks) -> dict[str,
     if isinstance(sender, list):
         sender = sender[0] if sender else ""
     event_id = publish("email.received", {"from": sender, "subject": msg.get("subject", ""),
-                                          "body": msg.get("text") or msg.get("extracted_text") or ""}, source="agentmail")
+                                          "body": msg.get("extracted_text") or msg.get("text") or "",
+                                          "message_id": msg.get("message_id"), "thread_id": msg.get("thread_id"),
+                                          "labels": msg.get("labels", [])}, source="agentmail")
     bg.add_task(drain)
     return {"event_id": event_id}
