@@ -109,21 +109,12 @@ def no_run_stuck_running() -> list[Violation]:
 
 
 def no_dead_letters() -> list[Violation]:
-    """No dead-lettered event, except an ``order.paid`` the reconciler superseded (its order is delivered and emailed).
-
-    Delivery is the only ``order.paid`` handler, so once a requeued event has delivered and emailed the order the
-    dead copy has nothing left to do.
-    """
+    """No dead-lettered event. The reconciler revives dead ``order.paid`` events instead of copying them, so a
+    repaired order leaves nothing behind in the dead letter."""
     from aecom.bus.events import dead_letters
 
-    with session() as s:
-        dead_paid = {e.id: (e.payload or {}).get("order_id") for e in s.scalars(
-            select(EventRow).where(EventRow.dead.is_(True), EventRow.topic == "order.paid"))}
-        settled = set(s.scalars(select(Order.id).where(Order.id.in_(set(dead_paid.values()) - {None}),
-                                                       Order.status.in_(EMAILED_STATUSES),
-                                                       Order.email_sent.is_(True))))
     return [_v("no_dead_letters", f"event {d['id']} {d['topic']} dead after {d['attempts']} attempts: {d['last_error']}")
-            for d in dead_letters() if dead_paid.get(d["id"]) not in settled]
+            for d in dead_letters()]
 
 
 CHECKS: dict[str, Callable[[], list[Violation]]] = {fn.__name__: fn for fn in (

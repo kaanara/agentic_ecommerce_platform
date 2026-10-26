@@ -49,7 +49,7 @@
 
 **Exit:** CI green on `main`; no shared or long-lived org keys in use; `fetch_url("http://127.0.0.1:8000/health")` is refused; unauthenticated API calls return 401; Support can't email an address outside its current case.
 
-## Phase 1: Don't lose sales
+## Phase 1: Don't lose sales ✅ exit gate passed 2026-10-26
 **Goal:** a paid order is always delivered, or a human is told.
 
 | ID | Task |

@@ -57,7 +57,11 @@ def test_delivered_but_unemailed_order_is_a_violation(demo):
     assert [v["detail"] for v in check_all()] == [f"order {i} was delivered but never emailed" for i in sorted(demo[:2])]
 
 
-def test_superseded_dead_order_paid_is_not_a_violation(demo, monkeypatch):
+def test_reconciler_revives_dead_order_paid_and_leaves_no_dead_letter(demo, monkeypatch):
+    from datetime import timedelta
+
+    from aecom.reconciler import reconcile
+
     monkeypatch.setattr(events, "MAX_ATTEMPTS", 1)
     with session() as s:
         s.get(Order, demo[0]).email_sent = False
@@ -65,7 +69,7 @@ def test_superseded_dead_order_paid_is_not_a_violation(demo, monkeypatch):
         publish("order.paid", {"order_id": demo[0]})  # the email fails, the event is dead-lettered
         drain()
     assert names(check_all()) == {"no_dead_letters", "every_delivered_order_emailed"}
-    publish("order.paid", {"order_id": demo[0]})  # the reconciler's requeue: now the email goes out
+    reconcile(older_than=timedelta(0))  # revives the dead event; now the email goes out
     drain()
     assert check_all() == []
 

@@ -49,9 +49,13 @@ def test_lost_event_is_requeued_and_delivered(dead):
     age(order["id"])
 
     assert reconcile() == {"checked": 1, "requeued": 1, "already_pending": 0}
-    requeued = paid_events(order["id"])[-1]
-    assert requeued.source == "reconciler"
-    assert requeued.payload == {"order_id": order["id"], "sku": SKU, "email": "lost@example.com", "reconciled": True}
+    evs = paid_events(order["id"])
+    if dead:  # a dead-lettered event is revived, not copied, so nothing is left behind in the dead letter
+        assert len(evs) == 1 and evs[0].dead is False and evs[0].attempts == 0
+    else:
+        requeued = evs[-1]
+        assert requeued.source == "reconciler"
+        assert requeued.payload == {"order_id": order["id"], "sku": SKU, "email": "lost@example.com", "reconciled": True}
     with session() as s:
         assert s.scalars(select(AuditLog).where(AuditLog.action == "reconcile")).first().decision == "info"
 

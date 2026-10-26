@@ -34,14 +34,22 @@ def reconcile(older_than: timedelta = timedelta(minutes=15)) -> dict[str, int]:
         unemailed = s.execute(base.where(Order.status == "delivered", Order.email_sent.is_not(True))).all()
         pending = {(e.payload or {}).get("order_id") for e in s.scalars(select(EventRow).where(
             EventRow.topic.in_(DELIVERY_TOPICS), EventRow.processed.is_(False), EventRow.dead.is_not(True)))}
+        dead = {(e.payload or {}).get("order_id"): e.id for e in s.scalars(select(EventRow).where(
+            EventRow.topic == "order.paid", EventRow.dead.is_(True)).order_by(EventRow.id))}
     counts = {"checked": len(orders) + len(unemailed), "requeued": 0, "already_pending": 0}
     for kind, rows in (("requeued", orders), ("requeued_email", unemailed)):
         for order_id, sku, email in rows:
             if order_id in pending:
                 counts["already_pending"] += 1
                 continue
-            event_id = publish("order.paid", {"order_id": order_id, "sku": sku, "email": email, "reconciled": True},
-                               source="reconciler")
+            if order_id in dead:  # revive the dead-lettered event rather than leaving it behind next to a copy
+                event_id = dead[order_id]
+                with session() as s:
+                    e = s.get(EventRow, event_id)
+                    e.dead, e.attempts, e.next_attempt_at = False, 0, None
+            else:
+                event_id = publish("order.paid", {"order_id": order_id, "sku": sku, "email": email, "reconciled": True},
+                                   source="reconciler")
             audit("system", "reconcile", "info", {"order_id": order_id, "event_id": event_id, "reason": kind})
             counts[kind] = counts.get(kind, 0) + 1
     return counts
