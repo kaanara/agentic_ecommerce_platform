@@ -25,6 +25,23 @@
    `sha256 = sha256(canonical JSON(data) + text)`. `version` is the previous highest version for the same kind and
    period plus one; existing rows are never updated. Read them with `get_report(id)`, `list_reports(kind)` and `latest(kind)`.
 
+## Daily flash
+`aecom/flash.py` (J5), run by the scheduler job `finance_daily` at 07:00 (every 10 minutes with `--demo`).
+1. `build_flash()` computes everything in code: yesterday's orders, net revenue, refunds, marketing spend, AI cost and
+   AI cost per order (`aecom.metrics`, period `yesterday`); active incidents by severity with their titles; pending
+   approvals and the age of the oldest; event bus status; the kill switch, `agents_paused` and `safe_mode` flags.
+2. Finance gets that data as JSON and replies with 3-5 sentences of commentary. It's stored with
+   `create_report("daily_flash", "yesterday", text, created_by="finance")`, so the number check applies.
+3. **The flash always goes out.** If the kill switch is on, agents are paused, Finance is disabled, its run fails, or
+   the number check rejects its text, a numbers-only report is stored instead (`created_by="system"`, a deterministic
+   summary of the figures) and the email says why. `fallback_reason` in the result carries the same reason.
+4. The email goes via AgentMail to `REPORT_EMAIL` (or `ALERT_EMAIL` if unset), subject `Daily flash <date>`: the
+   commentary, a plain-text table of all the numbers, and an **Open issues** list of active P2/P3 incidents. That list
+   is the P3 alert digest: P3 incidents have no other channel. The body is secret-masked. With neither address set,
+   the report is still stored and nothing is sent. Like every AgentMail message it stays in the local outbox unless
+   `AGENTMAIL_LIVE=true`.
+5. Nothing is written to shared memory; daily notes live in `ops_reports` as `daily_flash` versions.
+
 ## Gaps
 - **Nobody receives a report.** No email, no file, no archive. A report exists only as a row in `ops_agent_runs`.
 - **No periods.** `get_pnl()` and `get_kpis()` are all-time only, so "last month" or "Q3" can't be answered with the tools.

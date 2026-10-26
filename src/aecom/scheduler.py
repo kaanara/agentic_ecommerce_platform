@@ -53,11 +53,10 @@ def monitors() -> None:
 
 
 def daily_finance_report() -> None:
-    from aecom.graph.agents import run_agent
+    """J5: the daily flash (stored report + email). Finance only writes the commentary; nothing goes to shared memory."""
+    from aecom.flash import send_daily_flash
 
-    r = asyncio.run(run_agent("finance", "Daily report: P&L, KPIs vs OKRs, campaign ROAS, AI cost per order. "
-                                         "Store the 3 most important insights with remember(shared=true)."))
-    log.info("finance report: %s", r.output[:300])
+    log.info("daily flash: %s", send_daily_flash())
 
 
 def weekly_review() -> None:
