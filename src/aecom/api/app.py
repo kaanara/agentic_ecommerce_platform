@@ -1,8 +1,9 @@
-"""HTTP API: runs, approvals (HITL), kill switch, agent pause, safe mode, events, AgentMail webhook.
+"""HTTP API: runs, approvals (HITL), kill switch, agent pause, safe mode, events, provider webhooks.
 
     uv run aecom api      → http://127.0.0.1:8000/docs
 
-Every route except /health and the AgentMail webhook requires `Authorization: Bearer $AECOM_API_TOKEN`.
+Every route except /health and /webhooks/* requires `Authorization: Bearer $AECOM_API_TOKEN`. The webhooks
+(`aecom.api.webhooks`) verify the provider's signature instead and fail closed.
 
 Handlers are sync on purpose: FastAPI runs them in a thread pool, so the agent/event code (which uses
 asyncio.run internally for approvals and reflexes) never collides with the server's event loop.
@@ -21,6 +22,7 @@ from pydantic import BaseModel
 
 import aecom.handlers  # noqa: F401  (registers event subscribers)
 from aecom import approvals
+from aecom.api import webhooks
 from aecom.bootstrap import init
 from aecom.bus.events import drain, publish
 from aecom.company_settings import agents_paused_on, enter_safe_mode, kill_switch_on, leave_safe_mode, safe_mode_on, set_setting
@@ -189,20 +191,5 @@ def post_event(evt: EventIn, bg: BackgroundTasks) -> dict[str, Any]:
     return {"event_id": event_id}
 
 
-# Unauthenticated on purpose: AgentMail can't send our bearer token; signature verification comes later.
-@app.post("/webhooks/agentmail")
-def agentmail_webhook(payload: dict[str, Any], bg: BackgroundTasks) -> dict[str, Any]:
-    """AgentMail `message.received` webhook → email.received event for the Support agent."""
-    msg = payload.get("message", payload)
-    sender = msg.get("from") or msg.get("from_", "")
-    if isinstance(sender, list):
-        sender = sender[0] if sender else ""
-    event_id = publish("email.received", {"from": sender, "subject": msg.get("subject", ""),
-                                          "body": msg.get("extracted_text") or msg.get("text") or "",
-                                          "message_id": msg.get("message_id"), "thread_id": msg.get("thread_id"),
-                                          "labels": msg.get("labels", [])}, source="agentmail")
-    bg.add_task(drain)
-    return {"event_id": event_id}
-
-
 app.include_router(api)
+app.include_router(webhooks.router)  # signature-verified instead of the bearer token

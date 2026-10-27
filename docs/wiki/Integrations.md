@@ -15,7 +15,7 @@ Tools read credentials at call time via `SecretsProvider` (`src/aecom/secrets.py
 - **Outbox-only by default.** Every send is stored in `ops_outbox_emails`. Real delivery requires `AGENTMAIL_LIVE=true` **and** `AGENTMAIL_API_KEY`.
 - Inbound, two ways, both publish `email.received` for the Support agent:
   - **Polling** (works without a public URL): the scheduler runs `poll_inbox()` every 60 s when a key is set, or run `uv run aecom agentmail poll`. It stores each new unread customer email with its event in one commit, then marks it read in AgentMail. Re-polls never create duplicates.
-  - **Webhook**: point an AgentMail `message.received` webhook at `POST /webhooks/agentmail` (signature check still to do).
+  - **Webhook**: point an AgentMail `message.received` webhook at `POST /webhooks/agentmail` (see [Webhooks](#webhooks)).
 - Reading needs only a key; `AGENTMAIL_LIVE` controls sending.
 - **Recipient restriction:** Support serves the sender of the email it is handling. `send_email` to anyone else escalates; `reply_email` answers in the customer's thread and refuses other customers' emails.
 - **Key:** use an inbox-scoped key with `inbox_read, message_read, message_send, message_update` (`uv run python scripts/agentmail_inbox_key.py`). The app's admin commands then return 403 by design.
@@ -43,7 +43,7 @@ Tools read credentials at call time via `SecretsProvider` (`src/aecom/secrets.py
 - `mirror_order(payload)` handles `order_created` with status `paid`. In one transaction it writes the customer, an order with `amount_eur` = `total` and `vat_eur` = Lemon Squeezy's `tax` (never recomputed), `ledger.record_sale` with that tax and rate, and any withdrawal consent the checkout passed. The order is marked `delivered` with `email_sent` set, because Lemon Squeezy has already delivered and emailed. The function publishes `order.mirrored`, **not** `order.paid`, so nothing is delivered twice. It is idempotent on the order id.
 - `mirror_refund(payload)` handles `order_refunded`, which fires for full and partial refunds. Lemon Squeezy's cumulative `refunded_amount` is authoritative, and only the part not yet mirrored is booked. The VAT reversal is pro rata on Lemon Squeezy's tax, so a full refund reverses exactly the booked VAT. The status becomes `partially_refunded` or `refunded`, and a full refund revokes the key. It is idempotent and safe out of order: a refund for an unknown order mirrors the sale first.
 - `mirror_license_key(payload)` handles `license_key_created` / `license_key_updated`. It stores only `ls:<key id>:****<last4>`; the full key is never stored or logged. While the order is not mirrored yet it raises `HandlerFailed` (retry).
-- `dispatch(payload)` routes a webhook body by `meta.event_name`. `verify_signature(raw_body, X-Signature)` checks the HMAC-SHA256 against `LEMONSQUEEZY_WEBHOOK_SECRET`.
+- `dispatch(payload)` routes a webhook body by `meta.event_name`. `verify_signature(raw_body, X-Signature)` checks the HMAC-SHA256 against `LEMONSQUEEZY_WEBHOOK_SECRET`. The HTTP route is `POST /webhooks/lemonsqueezy` (see [Webhooks](#webhooks)).
 
 **Adapter behaviour:**
 - **Catalog:** `sync_catalog()` reads products and variants over the REST API (`https://api.lemonsqueezy.com/v1`, JSON:API, Bearer key). It upserts one local product per variant (`external_id` = variant id, new SKU `LS-<variant id>`). Local SKUs, unit costs and vendors are kept.
@@ -61,6 +61,24 @@ Tools read credentials at call time via `SecretsProvider` (`src/aecom/secrets.py
 The simulator and `create_order` scenarios need `STORE_ADAPTER=mock`. Payload shapes and their doc sources are listed in `tests/fixtures/lemonsqueezy/README.md`.
 
 **VAT:** prices are VAT-inclusive. With `mock`, `vat_included(gross, country)` uses the customer's country rate (EU OSS). With a merchant of record, the MoR charges and files the VAT. The ledger still tracks `vat_payable` with the MoR's own amounts, per country and rate.
+
+## Webhooks
+`src/aecom/api/webhooks.py`. These routes are **not** behind the API bearer token, because providers can't send it. Instead each one verifies the provider's signature over the raw body and **fails closed**: no secret configured → 503, bad or missing signature → 401, and nothing is written. Every delivery is recorded once in `ops_webhook_receipts` (unique `provider, event_key`), so a provider's retry or duplicate returns 200 `{"duplicate": true}` without side effects.
+
+> ⚠️ **Expose only `/webhooks/*`.** Run the API on the host (Pi) bound to localhost and publish just these routes through a tunnel (e.g. a Cloudflare Tunnel or ngrok path rule to `http://127.0.0.1:8000/webhooks/`). The dashboard and every other API route must never be reachable from the internet.
+
+### Lemon Squeezy: `POST /webhooks/lemonsqueezy`
+- **Configure:** a human creates the webhook in the Lemon Squeezy dashboard (Settings > Webhooks) with the tunnel URL, a signing secret and the events `order_created, order_refunded, license_key_created, license_key_updated`. The secret goes into `.env` as `LEMONSQUEEZY_WEBHOOK_SECRET`.
+- **Signature:** `X-Signature` must equal the hex HMAC-SHA256 of the raw body under the secret (constant-time compare; [docs](https://docs.lemonsqueezy.com/help/webhooks/signing-requests)).
+- **Routing** by `meta.event_name` (or the `X-Event-Name` header): `order_created` (paid) → `mirror_order`, `order_refunded` → `mirror_refund`, `license_key_created` / `license_key_updated` → `mirror_license_key`. Other events are acknowledged with 200 and recorded as ignored.
+- **Idempotency:** the receipt key is `meta.event_id` if present, otherwise the SHA-256 of the raw body (Lemon Squeezy retries send the identical body). The mirrors are idempotent on the Lemon Squeezy ids too.
+- **Errors:** if mirroring fails, the error is stored (`record_error`, component `webhook.lemonsqueezy`), the receipt is removed again and the route returns 500, so Lemon Squeezy retries. A licence key that arrives before its order is retried this way.
+
+### AgentMail: `POST /webhooks/agentmail`
+- **Configure:** a human creates a `message.received` webhook in the AgentMail console with the tunnel URL and copies its `whsec_...` secret into `.env` as `AGENTMAIL_WEBHOOK_SECRET`.
+- **Signature** (Svix scheme, [docs](https://docs.agentmail.to/webhook-verification)): headers `svix-id`, `svix-timestamp`, `svix-signature`. The signature is the base64 HMAC-SHA256 of `{svix-id}.{svix-timestamp}.{raw body}`, keyed with the base64-decoded part after `whsec_`. Any `v1,<sig>` entry in the space-separated header may match (constant-time compare). Timestamps more than 5 minutes from the server clock are rejected (replay protection), so keep the host clock in sync (NTP).
+- **Idempotency:** on `svix-id` (Svix retries reuse it). The receipt and the `email.received` event (`from, subject, body, message_id, thread_id, labels`) commit in one transaction. Other `event_type`s are acknowledged and recorded as ignored.
+- Polling (`poll_inbox`) still works without a public URL. It deduplicates on its own.
 
 ## Ad platforms and social
 Mocked today: `launch_campaign` sets the campaign live, and the simulator generates traffic and orders per channel profile. For a real channel, provision the account (see above) and approve that platform's MCP server for Marketing. Spend stays gated by `launch_campaign` limits and the monthly budget.
