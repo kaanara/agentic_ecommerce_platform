@@ -26,8 +26,10 @@ methods are human-only; an agent asks for them via `request_provisioning`, which
 
 Rules are keyed by exact tool name and MCP tools arrive as `mcp:<server>/<tool>`, so `policy.yaml → defaults.forbidden_patterns`
 holds fnmatch patterns (case-insensitive) such as `*login*`, `*sign_in*`, `*create_account*`, `*fill_form*`,
-`*browser_type*`, `*browser_click*`, `*payment_method*`. They are matched against the full name and the bare tool part after `/`:
-`mcp:playwright/browser_fill_form` and `mcp:x/SignIn` are denied, `mcp:playwright/browser_navigate` follows the normal rules.
+`*browser_type*`, `*browser_click*`, `*payment_method*`. Built-in tool names are matched whole; for MCP tools only the
+tool part after `/` is matched, never the server name (R4): `mcp:playwright/browser_fill_form` and `mcp:x/SignIn` are denied,
+`mcp:playwright/browser_navigate` follows the normal rules, and a server called `login_service` does not deny its read tools
+(`mcp:login_service/list_users` follows the normal rules, `mcp:login_service/login` is still denied).
 A match always yields `DENIED by policy (T4): Forbidden for agents: accounts, logins and form submission are human-only.`
 No built-in catalog tool may match a pattern (enforced by `tests/test_policy_denylist.py`).
 

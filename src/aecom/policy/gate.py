@@ -31,7 +31,7 @@ import yaml
 from langchain_core.tools import BaseTool, StructuredTool
 from sqlalchemy import func, or_, select
 
-from aecom.audit import audit
+from aecom.audit import audit, mask_detail
 from aecom.company_settings import agents_paused_on, get_setting, kill_switch_on, safe_mode_on
 from aecom.config import get_settings
 from aecom.context import current_agent, current_counterparty, current_run, email_address
@@ -56,10 +56,13 @@ def load_policy() -> dict[str, Any]:
 
 
 def is_forbidden(tool_name: str, policy: dict[str, Any] | None = None) -> bool:
-    """True if the tool name (or the bare tool part of ``mcp:<server>/<tool>``) hits a forbidden pattern."""
+    """True if the tool name hits a forbidden pattern. For ``mcp:<server>/<tool>`` only the tool part is matched (R4),
+    so a server called e.g. ``login_service`` does not deny its read tools; builtin names are matched whole."""
     patterns = (policy or load_policy())["defaults"].get("forbidden_patterns") or []
-    names = {tool_name.lower(), tool_name.rsplit("/", 1)[-1].lower()}
-    return any(fnmatch.fnmatchcase(n, p.lower()) for n in names for p in patterns)
+    name = tool_name.lower()
+    if name.startswith("mcp:"):
+        name = name.rsplit("/", 1)[-1]
+    return any(fnmatch.fnmatchcase(name, p.lower()) for p in patterns)
 
 
 def _max_tier(a: str, b: str) -> str:
@@ -170,18 +173,55 @@ def _to_text(result: Any) -> str:
     return text if len(text) < 12000 else text[:12000] + " …[truncated]"
 
 
+SUMMARY_MAX = 500
+
+
+def summarize(value: Any, limit: int = SUMMARY_MAX) -> str:
+    """Shortened, masked, JSON-ish copy of tool args / results for ``ops_tool_calls`` (D3). Secret shapes are masked,
+    licence keys, download links, tokens and credentials redacted (also inside a JSON string result)."""
+    from aecom.observability import mask
+
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            parsed = None
+        value = parsed if isinstance(parsed, (dict, list)) else value
+    masked = mask_detail(value)
+    text = masked if isinstance(masked, str) else json.dumps(masked, default=str, ensure_ascii=False)
+    text = mask(text)
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _log_call(run_id: str | None, agent_id: str, tool_name: str, decision: str, args: dict[str, Any],
+              ok: bool = True, result: Any = None) -> int:
+    with session() as s:
+        row = ToolCallLog(run_id=run_id, agent_id=agent_id, tool_name=tool_name, decision=decision, ok=ok,
+                          args_summary=summarize(args), result_summary=None if result is None else summarize(result))
+        s.add(row)
+        s.flush()
+        return row.id
+
+
+def _log_result(call_id: int, result: Any) -> None:
+    with session() as s:
+        if (row := s.get(ToolCallLog, call_id)) is not None:
+            row.result_summary = summarize(result)
+
+
 async def run_gated(agent_id: str, tool_name: str, args: dict[str, Any], execute: Callable[[dict[str, Any]], Any | Awaitable[Any]],
                     *, side_effect: bool, sandboxed: bool = False, context: str = "") -> str:
     """Evaluate policy, then execute / escalate / deny. Always returns a string for the model."""
     run_id = current_run.get()
     verdict = evaluate(agent_id, tool_name, args, side_effect=side_effect, sandboxed=sandboxed)
-    with session() as s:
-        s.add(ToolCallLog(run_id=run_id, agent_id=agent_id, tool_name=tool_name, decision=verdict.decision))
+    call_id = _log_call(run_id, agent_id, tool_name, verdict.decision, args)  # D3: before executing, result added below
     if verdict.tier != "T0" or verdict.decision != "allow":
         audit(agent_id, tool_name, verdict.decision, {"args": args, "tier": verdict.tier, "reason": verdict.reason}, run_id)
 
     if verdict.decision == "deny":
-        return f"DENIED by policy ({verdict.tier}): {verdict.reason}"
+        message = f"DENIED by policy ({verdict.tier}): {verdict.reason}"
+        _log_result(call_id, message)
+        return message
     if verdict.decision == "escalate":
         key = dedup_key(agent_id, tool_name, args)
         ttl = float(load_policy()["defaults"].get("approval_ttl_hours", 72))
@@ -190,18 +230,20 @@ async def run_gated(agent_id: str, tool_name: str, args: dict[str, Any], execute
                                                         or_(Approval.expires_at.is_(None), Approval.expires_at > now()))
                                  .order_by(Approval.created_at)).first()
             if existing is not None:
-                return (f"ESCALATED to human approval ({verdict.tier}, id={existing.id}): {verdict.reason} "
-                        "This exact request is already pending - do not retry it; continue with the rest of your task "
-                        "and mention the pending approval in your final answer.")
-            a = Approval(agent_id=agent_id, tool_name=tool_name, args=args, risk_tier=verdict.tier,
-                         reason=verdict.reason, context=context[:4000], run_id=run_id, dedup_key=key,
-                         expires_at=now() + timedelta(hours=ttl))
-            s.add(a)
-            s.flush()
-            approval_id = a.id
-        return (f"ESCALATED to human approval ({verdict.tier}, id={approval_id}): {verdict.reason} "
-                "It will execute exactly as requested if approved. Do not retry it; continue with the rest of your task "
-                "and mention the pending approval in your final answer.")
+                message = (f"ESCALATED to human approval ({verdict.tier}, id={existing.id}): {verdict.reason} "
+                           "This exact request is already pending - do not retry it; continue with the rest of your task "
+                           "and mention the pending approval in your final answer.")
+            else:
+                a = Approval(agent_id=agent_id, tool_name=tool_name, args=args, risk_tier=verdict.tier,
+                             reason=verdict.reason, context=context[:4000], run_id=run_id, dedup_key=key,
+                             expires_at=now() + timedelta(hours=ttl))
+                s.add(a)
+                s.flush()
+                message = (f"ESCALATED to human approval ({verdict.tier}, id={a.id}): {verdict.reason} "
+                           "It will execute exactly as requested if approved. Do not retry it; continue with the rest of "
+                           "your task and mention the pending approval in your final answer.")
+        _log_result(call_id, message)
+        return message
     try:
         result = execute(args)
         if inspect.isawaitable(result):
@@ -210,9 +252,11 @@ async def run_gated(agent_id: str, tool_name: str, args: dict[str, Any], execute
         from aecom.observability import mask, record_error
 
         record_error("gate", exc, run_id=run_id, context={"agent_id": agent_id, "tool": tool_name})
-        with session() as s:
-            s.add(ToolCallLog(run_id=run_id, agent_id=agent_id, tool_name=tool_name, decision="error", ok=False))
-        return mask(f"ERROR: {type(exc).__name__}: {exc}")
+        message = mask(f"ERROR: {type(exc).__name__}: {exc}")
+        _log_result(call_id, message)
+        _log_call(run_id, agent_id, tool_name, "error", args, ok=False, result=message)
+        return message
+    _log_result(call_id, result)
     return _to_text(result)
 
 

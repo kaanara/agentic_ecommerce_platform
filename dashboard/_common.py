@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any, Iterable
+
 import pandas as pd
 import streamlit as st
 from sqlalchemy import text
 
 import aecom.handlers  # noqa: F401  (approvals publish events handled in-process)
 from aecom import dashboard_auth
+from aecom.audit import mask_detail
 from aecom.bootstrap import init
 from aecom.db import get_engine
 
@@ -61,3 +65,25 @@ def sql(query: str, **params: object) -> pd.DataFrame:
 
 def colors(n: int) -> list[str]:
     return SERIES[:n]
+
+
+def _mask_cell(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return mask_detail(value)
+        return json.dumps(mask_detail(parsed), ensure_ascii=False) if isinstance(parsed, (dict, list)) else mask_detail(value)
+    if isinstance(value, (dict, list)):
+        return mask_detail(value)
+    return value
+
+
+def mask_df(df: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
+    """Copy of ``df`` with the given columns secret-masked (I16) - for tables from ops_audit_log, ops_tool_calls and
+    ops_outbox_emails bodies. The stored rows are unchanged (the outbox keeps the full emails actually sent)."""
+    out = df.copy()
+    for col in columns:
+        if col in out.columns:
+            out[col] = out[col].map(_mask_cell)
+    return out

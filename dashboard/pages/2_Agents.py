@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-from _common import AGENT_ORDER, colors, require_login, sql
+from _common import AGENT_ORDER, colors, mask_df, require_login, sql
 from aecom import run_detail
 from aecom.company_settings import agent_enabled, set_agent_enabled
 
@@ -112,5 +112,5 @@ st.dataframe(sql("SELECT created_at, agent_id, lesson, evidence, status FROM mem
              hide_index=True, width="stretch")
 
 st.subheader("Audit trail")
-st.dataframe(sql("SELECT ts, actor, action, decision, run_id, detail FROM ops_audit_log ORDER BY id DESC LIMIT 100"),
-             hide_index=True, width="stretch")
+audit_trail = sql("SELECT ts, actor, action, decision, run_id, detail FROM ops_audit_log ORDER BY id DESC LIMIT 100")
+st.dataframe(mask_df(audit_trail, ["detail"]), hide_index=True, width="stretch")
