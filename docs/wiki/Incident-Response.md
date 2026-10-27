@@ -88,10 +88,23 @@ containment (safe mode, retries, the reconciler) stay in deterministic code and 
   [Runbooks](Runbooks), seeded and granted to the Sentinel by `aecom init`, refreshed when the doc changes), then calls
   `submit_diagnosis`: summary, root-cause hypotheses ranked by evidence, the evidence lines and safe next actions are
   appended to the incident's **notes** (`sentinel: DIAGNOSIS ...`, masked) and audited (`incident` / `diagnosed`).
-- **What it can't do.** Change anything: no refunds, deliveries, retries, settings, incident status (it doesn't
-  acknowledge or resolve), ledger, keys or code. The gate denies every side-effecting tool for it (none are in its
-  allowlist; the only exception every agent has is `request_account_need`, which only records a need for the CEO).
-  Its next actions are advice for a human. The remediation tools listed under *Repair* are not built.
+- **What it may do (K5, K9).** After diagnosing, and only where the matching runbook lists the action as safe, one
+  remediation step at a time through the policy gate (`aecom.tools.remediation`, rules in `policy.yaml`, reserved for
+  the Sentinel; denied under the kill switch, in safe mode and while agents are paused), recorded in the diagnosis'
+  next actions:
+  - `replay_dead_letter(event_id)` (T2): re-queues one dead letter and drains, like `aecom events retry <ID>`.
+    `order.*`, `inventory.*` and `email.*` replay at once; any other topic becomes an approval for you
+    (`rules.replay_dead_letter.topic_prefixes`).
+  - `rerun_reconciler()` (T1): `aecom reconcile` plus a drain.
+  - `resend_delivery_email(order_id)` (T2): only for a delivered order with `email_sent` false, through the normal
+    delivery path (no new key); refused for already-emailed or undelivered orders.
+  - `pause_agents(reason)` (T1): containment; deliveries keep running; the reason is audited.
+  - `propose_correcting_entry(lines, memo, ref)` (T3): always an approval. When you approve it, a **new** balanced
+    entry (to the cent, memo `correction: ...`) is posted with `ledger.post`; unbalanced lines fail and post nothing.
+    Existing ledger rows are never updated or deleted.
+- **What stays human.** Unpausing agents, leaving safe mode, the kill switch, acknowledging or resolving incidents,
+  approving correcting entries and out-of-scope replays, refunds, keys, code and credentials. The Sentinel has no tool
+  for any of them, and no `request_account_need` (needs go into the next actions).
 
 ## Safe mode
 If nobody reacts to a P1, the company gets safer, not riskier (K7).

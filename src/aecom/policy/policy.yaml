@@ -103,6 +103,24 @@ rules:
   submit_diagnosis: {tier: T1, agents: [sentinel]}   # K4: appends a diagnosis note to an incident
   submit_report: {tier: T1, agents: [finance, ceo]}   # J3: stored, immutable report snapshot
 
+  # ---------------------------------------------------------------- K5/K9: Sentinel remediation (aecom.tools.remediation)
+  # Only the runbooks' safe actions. Unpausing, leaving safe mode, the kill switch and incident status stay human.
+  replay_dead_letter:
+    tier: T2
+    agents: [sentinel]
+    topic_prefixes: [order., inventory., email.]   # any other topic escalates (checked by the tool itself)
+    reason: "Replaying an event outside order/inventory/email may repeat side effects a human should judge."
+  rerun_reconciler: {tier: T1, agents: [sentinel]}
+  resend_delivery_email:
+    tier: T2
+    agents: [sentinel]          # the tool refuses orders that are not delivered or already got their email
+    reason: "Resending a customer's access email."
+  pause_agents: {tier: T1, agents: [sentinel]}   # protective only; unpausing is human
+  propose_correcting_entry:
+    tier: T3
+    agents: [sentinel]
+    reason: "Correcting entry for the ledger: a human approves; it is appended (memo 'correction:'), never an edit."
+
   # ---------------------------------------------------------------- store
   create_product: {tier: T1, agents: [store_ops]}
   add_license_keys: {tier: T1, agents: [store_ops, supply]}

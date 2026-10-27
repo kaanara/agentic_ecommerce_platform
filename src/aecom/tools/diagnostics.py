@@ -1,4 +1,5 @@
-"""Read-only diagnostic tools for the Sentinel (K4), registered in the same CATALOG as the built-ins.
+"""Read-only diagnostic tools for the Sentinel (K4), registered in the same CATALOG as the built-ins. Its gated
+remediation tools (K5) are in :mod:`aecom.tools.remediation`.
 
 Everything here only reads, except the terminal ``submit_diagnosis``, which appends a note to an incident (it never
 changes the incident's status) via :func:`aecom.sentinel.append_diagnosis`. Free text is masked and long tracebacks
@@ -85,7 +86,8 @@ def event_bus_status() -> dict:
 
 @tool("ops")
 def dead_letters() -> list[dict]:
-    """Dead-lettered events (id, time, topic, attempts, last error). Retrying them is a human action."""
+    """Dead-lettered events (id, time, topic, attempts, last error). Replay one with `replay_dead_letter` only once
+    its cause is fixed."""
     from aecom.bus.events import dead_letters as _dead_letters
 
     return [{**d, "last_error": mask(d.get("last_error") or "")[:500]} for d in _dead_letters()[:50]]
@@ -106,7 +108,8 @@ def doctor_report() -> list[dict]:
 def submit_diagnosis(incident_id: str, summary: str, root_cause: str, evidence: list[str],
                      next_actions: list[str]) -> dict:
     """Finish: append your diagnosis to the incident's notes. root_cause = hypotheses ranked by evidence (most likely
-    first); evidence = one line per observed fact; next_actions = safe steps for a human, from the runbook."""
+    first); evidence = one line per observed fact; next_actions = safe steps from the runbook, each remediation tool
+    you already called marked "done: <tool>(<args>) -> <result>", the rest for a human."""
     from aecom.sentinel import append_diagnosis
 
     return append_diagnosis(incident_id, summary, root_cause, evidence, next_actions)

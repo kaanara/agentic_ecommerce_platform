@@ -1,4 +1,4 @@
-"""K4/K3: the Sentinel (read-only incident diagnosis), its diagnostic tools and the runbook skills."""
+"""K4/K3: the Sentinel (incident diagnosis), its diagnostic tools and the runbook skills (remediation: test_remediation)."""
 
 import asyncio
 import json
@@ -20,6 +20,8 @@ from sqlalchemy import func, select
 
 DIAGNOSTICS = ["list_open_incidents", "get_incident", "recent_errors", "run_timeline", "event_bus_status",
                "dead_letters", "doctor_report"]
+REMEDIATION = {"replay_dead_letter", "rerun_reconciler", "resend_delivery_email", "pause_agents",
+               "propose_correcting_entry"}
 ORDER = "ord_sentinel1"
 
 
@@ -59,13 +61,15 @@ def the_incident() -> dict:
 
 
 # ----------------------------------------------------------------------------- persona, tools, policy
-def test_persona_is_sonnet_with_only_read_only_tools_and_submit_diagnosis():
+def test_persona_is_sonnet_with_read_only_tools_the_remediation_set_and_submit_diagnosis():
     spec = load_spec("sentinel")
     assert (spec.model_tier, spec.role, spec.reports_to) == ("sonnet", "Operations Sentinel", "ceo")
     assert spec.identity["layer"] == "evaluation"
     assert set(DIAGNOSTICS) | {"submit_diagnosis"} <= set(spec.tools)
     side_effecting = {t for t in spec.tools if CATALOG[t].side_effect}
-    assert side_effecting == set()  # strictly read-only: account needs go into the diagnosis' next actions
+    assert side_effecting == REMEDIATION  # exactly the gated remediation set (K5/K9), not even request_account_need
+    seed_registry()
+    assert {t for t in allowed_tools("sentinel") if t in CATALOG and CATALOG[t].side_effect} == REMEDIATION
     assert [t for t in spec.tools if CATALOG[t].terminal] == ["submit_diagnosis"]
     assert spec.budget_eur_per_day == 3
 
