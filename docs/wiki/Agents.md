@@ -86,6 +86,23 @@ The non-negotiable rules:
 - Never sign up, accept terms or pay for anything.
 - Finish with what was done, what is pending, and what you recommend next.
 
+## Memory
+Agents store facts with `remember(content, namespace, shared)` and look them up with `recall_memory(query)`.
+
+**Provenance.** Every memory records who wrote it (`source_agent`), in which run (`source_run_id`) and whether that run had read untrusted content (`tainted`). `tainted` is set as soon as `fence()` wraps an email, web page or inbox listing in the run, or when the task itself carries fenced content. A tainted memory may repeat what an outsider wrote.
+
+**Own memories** (`shared=False`) are `active` right away. Only the agent that wrote them recalls them.
+
+**Shared memories** (`shared=True`) start as `pending_review`. No agent recalls them, the author included, until a human approves them. This blocks the poisoning path where an agent reads a hostile email and then writes "facts" every other agent would trust. Review them with:
+
+```bash
+uv run aecom memory pending                               # waiting for review: content, source agent and run, tainted
+uv run aecom memory approve mem_123 --by alice            # active: every agent recalls it
+uv run aecom memory reject mem_123 --by alice --note "came from a phishing email"
+```
+
+Rejected memories stay in the table for the record but are never recalled. Approving and rejecting are audited as `human:<name>` (action `memory_review`). Look hard at tainted entries before you approve them.
+
 ## Adding an agent
 1. Create `agents/<new_id>/` with all five files. The `id` in IDENTITY must match the folder name.
 2. List only tools that exist in the catalog (`uv run pytest` checks this).

@@ -15,6 +15,8 @@
     aecom events dead | retry [ID ...]     dead-lettered events; retry some or all after fixing the cause
     aecom incidents [list] [--all]         active incidents (--all: include resolved)
     aecom incidents ack|resolve ID --by NAME [--note TEXT]
+    aecom memory [pending]                 shared memories waiting for review (with provenance and taint)
+    aecom memory approve|reject ID --by NAME [--note TEXT]   only approved shared memories are recalled by agents
     aecom agents [list] | enable|disable ID   per-agent switch (reflexes such as delivery are unaffected)
     aecom monitors run                     run all monitors once, raise/resolve incidents, send due alerts
     aecom provisioning [list]              vendors waiting for a human, with their numbered checklist
@@ -97,6 +99,11 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("id", nargs="?")
     s.add_argument("--all", action="store_true", help="include resolved incidents")
     s.add_argument("--by", default="cli-user")
+    s.add_argument("--note", default="")
+    s = sub.add_parser("memory")
+    s.add_argument("action", nargs="?", default="pending", choices=["pending", "approve", "reject"])
+    s.add_argument("id", nargs="?")
+    s.add_argument("--by", default="")
     s.add_argument("--note", default="")
     s = sub.add_parser("agents")
     s.add_argument("action", nargs="?", default="list", choices=["list", "enable", "disable"])
@@ -212,6 +219,19 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit("incident id required")
         else:
             fn = incidents.acknowledge if a.action == "ack" else incidents.resolve
+            try:
+                _print(fn(a.id, a.by, a.note))
+            except ValueError as e:
+                sys.exit(str(e))
+    elif a.cmd == "memory":
+        from aecom import memory_review
+
+        if a.action == "pending":
+            _print(memory_review.list_pending())
+        elif not a.id or not a.by.strip():
+            sys.exit(f"usage: aecom memory {a.action} ID --by NAME [--note TEXT]")
+        else:
+            fn = memory_review.approve if a.action == "approve" else memory_review.reject
             try:
                 _print(fn(a.id, a.by, a.note))
             except ValueError as e:
