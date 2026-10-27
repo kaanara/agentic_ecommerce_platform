@@ -15,6 +15,8 @@
     aecom events dead | retry [ID ...]     dead-lettered events; retry some or all after fixing the cause
     aecom incidents [list] [--all]         active incidents (--all: include resolved)
     aecom incidents ack|resolve ID --by NAME [--note TEXT]
+    aecom incidents export ID [--live]     issue markdown to reports/issues/ID.md (--live: create the GitHub issue)
+    aecom incidents postmortem ID          draft a postmortem report for a resolved P1 incident
     aecom memory [pending]                 shared memories waiting for review (with provenance and taint)
     aecom memory approve|reject ID --by NAME [--note TEXT]   only approved shared memories are recalled by agents
     aecom agents [list] | enable|disable ID   per-agent switch (reflexes such as delivery are unaffected)
@@ -95,9 +97,10 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("action", choices=["dead", "retry"])
     s.add_argument("ids", nargs="*", type=int)
     s = sub.add_parser("incidents")
-    s.add_argument("action", nargs="?", default="list", choices=["list", "ack", "resolve"])
+    s.add_argument("action", nargs="?", default="list", choices=["list", "ack", "resolve", "export", "postmortem"])
     s.add_argument("id", nargs="?")
     s.add_argument("--all", action="store_true", help="include resolved incidents")
+    s.add_argument("--live", action="store_true", help="export: create the GitHub issue (GITHUB_REPO + GITHUB_TOKEN)")
     s.add_argument("--by", default="cli-user")
     s.add_argument("--note", default="")
     s = sub.add_parser("memory")
@@ -217,6 +220,16 @@ def main(argv: list[str] | None = None) -> None:
             _print(rows if a.all else [r for r in rows if r["status"] in incidents.ACTIVE])
         elif not a.id:
             sys.exit("incident id required")
+        elif a.action in ("export", "postmortem"):
+            from aecom import incident_export
+
+            try:
+                if a.action == "export":
+                    print(incident_export.export_issue(a.id, dry_run=not a.live))
+                else:
+                    _print(incident_export.draft_postmortem(a.id, created_by=f"human:{a.by}"))
+            except ValueError as e:
+                sys.exit(str(e))
         else:
             fn = incidents.acknowledge if a.action == "ack" else incidents.resolve
             try:

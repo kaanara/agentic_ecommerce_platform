@@ -106,6 +106,39 @@ containment (safe mode, retries, the reconciler) stay in deterministic code and 
   approving correcting entries and out-of-scope replays, refunds, keys, code and credentials. The Sentinel has no tool
   for any of them, and no `request_account_need` (needs go into the next actions).
 
+## Issues and postmortems
+Built in `aecom.incident_export` (K8, K10). Nothing here deploys, merges or changes an incident's status.
+
+- **Issue (dry run by default).** `aecom incidents export ID` writes `reports/issues/<ID>.md` under the repo root and
+  prints the path; it never touches the network. The issue has: severity, monitor, subject, detail, the timeline
+  (first/last seen, alerts, acknowledged, resolved), the Sentinel's latest diagnosis from the incident notes, related
+  `ops_errors` (of a referenced run or dead-lettered event, or from the hour before the incident; tracebacks shortened
+  to the last lines, repo paths made relative), the run timeline of every `run_...` id the incident mentions, and a
+  **Reproduce** section with a failing pytest skeleton (`fresh_company` fixture, the matching chaos injector and
+  invariant: `undelivered_order` and `order_dead_letter` → `delivery_failures`, `unemailed_order` →
+  `email_failures`, `duplicate_key` / `ledger_imbalance` → `duplicate_order_paid`, `stuck_run` / `errors` →
+  `claude_down`; other monitors get a TODO).
+- **Masking.** Everything is passed through `observability.mask` and then redacts licence keys and download tokens
+  (by value, from the database), links and e-mail addresses. An issue may be public.
+- **Live.** `aecom incidents export ID --live` also creates the issue via the GitHub REST API
+  (`POST /repos/{GITHUB_REPO}/issues`, labels `incident` and the severity) when `GITHUB_REPO` (`owner/name`) and
+  `GITHUB_TOKEN` are set; otherwise it refuses. The issue URL is added to the incident notes (`github: issue ...`)
+  and audited (`incident` / `issue_exported`). A failed call is recorded in `ops_errors`; the dry-run file stays.
+- **PR template.** `incident_export.pr_body(ID)` is the PR description for the Engineer agent or a human: problem,
+  root cause (from the diagnosis), the failing test, a fix checklist, and "never deploys; a human merges".
+- **Postmortem.** `aecom incidents postmortem ID [--by NAME]` stores a `postmortem` report (period `all`, a new
+  version per call) for a **resolved P1** only; open/acknowledged or P2/P3 incidents are refused. Sections: What
+  happened, Impact (orders affected and their order value in €, from the order ids the incident mentions), Why (the
+  diagnosis' root cause), What changes (for a human to finish) and Regression test. The text passes the report
+  number check: every figure is in the report data (impact, duration, alerts, and figures quoted from the incident
+  record). Find it with `reports.list_reports("postmortem")` or the dashboard Reports page.
+
+```bash
+aecom incidents export inc_123            # dry run: prints reports/issues/inc_123.md
+aecom incidents export inc_123 --live     # + GitHub issue (GITHUB_REPO, GITHUB_TOKEN)
+aecom incidents postmortem inc_123 --by kaan
+```
+
 ## Safe mode
 If nobody reacts to a P1, the company gets safer, not riskier (K7).
 - **When.** Each monitor run (`aecom monitors run`, scheduler every 5 min) checks for a P1 incident that has been **open** (not acknowledged) for more than 2 hours (`monitors.SAFE_MODE_AFTER`). If there is one and safe mode is off, it switches safe mode on, records why (`safe_mode_reason` names the incident) and since when, audits it and sends one extra P1 alert: "Safe mode is ON because ...". Acknowledging the P1 in time prevents it.
