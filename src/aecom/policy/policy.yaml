@@ -156,6 +156,7 @@ rules:
     tier: T3
     agents: [ceo]
     reason: "Creating accounts, accepting terms, and adding payment methods happen only by a human."
+  request_account_need: {tier: T1}   # E4: any agent may say it needs an account; the CEO decides, a human provisions
 
   # ---------------------------------------------------------------- memory
   remember: {tier: T1}

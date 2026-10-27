@@ -111,5 +111,20 @@ def handle_vendor_degraded(evt: dict[str, Any]) -> None:
     ensure_ok(run_sync(run_agent("supply", task, run_id=evt.get("run_id"))))
 
 
+# ----------------------------------------------------------------------------- provisioning loop (E1/E4/E7)
+@subscribe("approval.resolved")
+def provisioning_approval_resolved(evt: dict[str, Any]) -> None:
+    from aecom.provisioning import on_approval_resolved
+
+    on_approval_resolved(evt)
+
+
+@subscribe("account.need_raised")
+def account_need_to_ceo(evt: dict[str, Any]) -> None:
+    from aecom.provisioning import hand_need_to_ceo
+
+    hand_need_to_ceo(evt)
+
+
 def register_all() -> None:
     """Importing this module registers the subscribers; this function makes the intent explicit."""

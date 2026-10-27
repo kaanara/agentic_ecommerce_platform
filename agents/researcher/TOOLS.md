@@ -1,5 +1,5 @@
 ---
-tools: [fetch_url, submit_brief, propose_tool, list_products, list_decisions, list_registry, read_company_doc, recall_memory, remember]
+tools: [fetch_url, submit_brief, propose_tool, list_products, list_decisions, list_registry, read_company_doc, recall_memory, remember, request_account_need]
 server_tools: [web_search, web_fetch]
 ---
 # Researcher tools

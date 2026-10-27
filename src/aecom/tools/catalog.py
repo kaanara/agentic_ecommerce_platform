@@ -357,15 +357,35 @@ def record_decision(category: str, title: str, choice: str, rationale: str, alte
 def request_provisioning(vendor: str, category: str, purpose: str, steps: list[str], credential_env: str,
                          monthly_cost_eur: float = 0.0) -> dict:
     """Ask a human to create an account / API credentials at a vendor. Agents never sign up, accept terms or pay.
-    `credential_env` = env var name the human should fill in .env (e.g. SHOPIFY_ADMIN_TOKEN)."""
+    `credential_env` = env var name the human should fill in .env (e.g. SHOPIFY_ADMIN_TOKEN).
+    A vendor that is already provisioning or active is left as it is."""
+    from aecom.provisioning import rejection_reason
+
     with session() as s:
         v = s.scalars(select(Vendor).where(Vendor.name == vendor)).first()
+        if v is not None and v.status in ("provisioning", "active"):  # E7: never reset a vendor in flight or live
+            return {"vendor": vendor, "status": v.status, "credential_env": v.credential_env, "unchanged": True,
+                    "note": f"{vendor} is already {v.status}; nothing was reset."}
+        previously = v.status if v is not None else None
         if v is None:
             v = Vendor(name=vendor, category=category, monthly_cost_eur=monthly_cost_eur)
             s.add(v)
-        v.status, v.credential_env = "provisioning", credential_env
+        v.status, v.credential_env, v.checklist = "provisioning", credential_env, []
         v.notes = purpose + "\n\nSteps:\n" + "\n".join(f"- {x}" for x in steps)
-    return {"vendor": vendor, "status": "provisioning", "credential_env": credential_env}
+    out: dict[str, Any] = {"vendor": vendor, "status": "provisioning", "credential_env": credential_env}
+    if previously == "rejected":
+        out["previously_rejected"] = rejection_reason(vendor) or "rejected earlier (no reason stored)"
+    return out
+
+
+@tool("exec", side_effect=True)
+def request_account_need(vendor: str, why: str, evidence: str = "") -> str:
+    """Say that your work needs an account at a vendor (e.g. an ad platform or supplier). You never sign up yourself:
+    this records the need and hands it to the CEO, who decides and, if worth it, asks a human to provision it."""
+    from aecom.provisioning import raise_need
+
+    raise_need(vendor, why, evidence, raised_by=current_agent.get())
+    return "Recorded; the CEO decides"
 
 
 @tool("exec")

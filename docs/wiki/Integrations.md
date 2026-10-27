@@ -1,11 +1,11 @@
 # Integrations
 
 ## Provisioning model
-Agents **never** create accounts, accept terms, enter payment details or handle raw secrets. Instead:
-1. The selection workflow picks a vendor, and the CEO records an ADR.
-2. The CEO calls `request_provisioning(vendor, steps, credential_env)`. That's T3, so it lands in Approvals.
-3. A human approves, which marks the vendor `provisioning`, then follows the steps and puts the credential in `.env` under `credential_env`.
-4. The adapter or MCP server is activated: `STORE_ADAPTER=<platform>`, or the Foreman proposes the vendor's MCP server, which a human promotes and grants.
+Agents **never** create accounts, accept terms, enter payment details or handle raw secrets. Instead the loop in `src/aecom/provisioning.py` runs:
+1. **Need.** Any agent calls `request_account_need(vendor, why, evidence)` (T1). It's audited and published as `account.need_raised`.
+2. **CEO decides.** A subscriber gives the CEO one task per vendor per day (dedupe setting `account_need:<vendor>:<date>`; a failed CEO run is retried by the bus). The CEO prefers existing vendors, records an ADR and calls `request_provisioning(vendor, steps, credential_env)`. Selection workflows can call it directly too.
+3. **Human approves or rejects** (T3, Approvals). Approving marks the vendor `provisioning` and, on `approval.resolved`, stores its checklist `[{step, done}]` from the steps. Rejecting marks it `rejected` with the human's note and stores `Rejected <vendor>: <note>` in the CEO's memory (namespace `provisioning`), so it isn't requested again blindly; a later request for it reports that reason. A request for a vendor that is already `provisioning` or `active` changes nothing and says so.
+4. **Credential arrives.** The human follows the steps and puts the credential in `.env` under `credential_env`. The scheduler's `provisioning` job (every 15 min, `check_credentials`) calls `verify(vendor)`: today it only checks the env var is set (real API verification is E6). On success the vendor becomes `active` with `verified_at`, `vendor.provisioned` is published, and the Foreman gets the integration task (propose the MCP server or adapter; `STORE_ADAPTER=<platform>` for a store). If the Foreman is disabled or fails, a P3 incident `provisioning_followup` is raised instead. A failed check is kept in `last_check_error`; the credential value is never read into logs, audits, events or prompts.
 
 Tools read credentials at call time via `SecretsProvider` (`src/aecom/secrets.py`). Today that's `.env` or the environment; it can be swapped for a vault.
 

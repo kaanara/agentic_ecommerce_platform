@@ -1,5 +1,5 @@
 ---
-tools: [list_vendors, register_vendor, add_license_keys, get_inventory, list_products, list_decisions, read_company_doc, recall_memory, remember]
+tools: [list_vendors, register_vendor, add_license_keys, get_inventory, list_products, list_decisions, read_company_doc, recall_memory, remember, request_account_need]
 server_tools: []
 ---
 # Supply tools

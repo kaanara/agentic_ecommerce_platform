@@ -1,5 +1,5 @@
 ---
-tools: [submit_verdict, propose_lesson, read_company_doc, list_okrs, get_kpis, get_pnl, list_products, list_campaigns, list_decisions, recall_memory]
+tools: [submit_verdict, propose_lesson, read_company_doc, list_okrs, get_kpis, get_pnl, list_products, list_campaigns, list_decisions, recall_memory, request_account_need]
 server_tools: []
 ---
 # Judge tools

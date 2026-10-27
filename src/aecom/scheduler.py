@@ -52,6 +52,15 @@ def monitors() -> None:
         log.info("monitors: %s", r)
 
 
+def provisioning_check() -> None:
+    """E1: activate vendors whose credential a human has put in the env, and hand them to the Foreman."""
+    from aecom.provisioning import check_credentials
+
+    if (r := check_credentials())["activated"]:
+        log.info("provisioning: %s", r)
+    drain()
+
+
 def daily_finance_report() -> None:
     """J5: the daily flash (stored report + email). Finance only writes the commentary; nothing goes to shared memory."""
     from aecom.flash import send_daily_flash
@@ -80,6 +89,7 @@ def main(demo: bool = False) -> None:
     sched.add_job(stock_check, "interval", minutes=60, id="stock_check")
     sched.add_job(reconcile_orders, "interval", minutes=15, id="reconcile")
     sched.add_job(monitors, "interval", minutes=5, id="monitors")
+    sched.add_job(provisioning_check, "interval", minutes=15, id="provisioning")
     if secrets.has("AGENTMAIL_API_KEY"):
         sched.add_job(poll_email, "interval", seconds=60, id="poll_email")
     if demo:
