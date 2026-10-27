@@ -37,6 +37,11 @@ def vat_included(gross: float, country: str) -> float:
 
 
 class StoreAdapter(Protocol):
+    """What every storefront offers agents. Adapters where the platform is the system of record (Lemon Squeezy)
+    serve reads from the local mirror. They raise ``NotImplementedError`` for writes the platform's dashboard owns
+    (products, prices, status, keys, orders), so the agent gets an ERROR result and can ask a human.
+    ``deliver_order`` is a no-op there because the platform delivers."""
+
     name: str
 
     def list_products(self, status: str | None = None) -> list[dict[str, Any]]: ...
@@ -63,6 +68,10 @@ def get_store() -> StoreAdapter:
         from aecom.store.mock import MockStore
 
         return MockStore()
+    if name == "lemonsqueezy":
+        from aecom.store.lemonsqueezy import LemonSqueezyStore
+
+        return LemonSqueezyStore()
     raise NotImplementedError(
         f"Store adapter '{name}' is not implemented yet. The CEO's platform decision record lists the "
         "provisioning steps; add aecom/store/<platform>.py implementing StoreAdapter."

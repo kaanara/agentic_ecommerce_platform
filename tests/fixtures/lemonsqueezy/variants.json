@@ -1,0 +1,197 @@
+{
+  "meta": {
+    "page": {
+      "currentPage": 1,
+      "from": 1,
+      "lastPage": 1,
+      "perPage": 10,
+      "to": 4,
+      "total": 4
+    }
+  },
+  "jsonapi": {
+    "version": "1.0"
+  },
+  "links": {
+    "first": "https://api.lemonsqueezy.com/v1/variants?page%5Bnumber%5D=1&page%5Bsize%5D=10",
+    "last": "https://api.lemonsqueezy.com/v1/variants?page%5Bnumber%5D=1&page%5Bsize%5D=10"
+  },
+  "data": [
+    {
+      "type": "variants",
+      "id": "101",
+      "attributes": {
+        "product_id": 11,
+        "name": "Default",
+        "slug": "5c1f0e8a-1d2e-4b7a-9a0b-000000000101",
+        "description": "",
+        "price": 4900,
+        "is_subscription": false,
+        "interval": null,
+        "interval_count": null,
+        "has_free_trial": false,
+        "trial_interval": "day",
+        "trial_interval_count": 30,
+        "pay_what_you_want": false,
+        "min_price": 0,
+        "suggested_price": 0,
+        "has_license_keys": true,
+        "license_activation_limit": 3,
+        "is_license_limit_unlimited": false,
+        "license_length_value": 1,
+        "license_length_unit": "years",
+        "is_license_length_unlimited": true,
+        "links": [],
+        "sort": 0,
+        "status": "pending",
+        "status_formatted": "Pending",
+        "created_at": "2026-10-01T09:00:00.000000Z",
+        "updated_at": "2026-10-01T09:00:00.000000Z",
+        "test_mode": true
+      },
+      "relationships": {
+        "product": {
+          "links": {
+            "related": "https://api.lemonsqueezy.com/v1/variants/101/product",
+            "self": "https://api.lemonsqueezy.com/v1/variants/101/relationships/product"
+          }
+        }
+      },
+      "links": {
+        "self": "https://api.lemonsqueezy.com/v1/variants/101"
+      }
+    },
+    {
+      "type": "variants",
+      "id": "201",
+      "attributes": {
+        "product_id": 12,
+        "name": "Self-paced",
+        "slug": "5c1f0e8a-1d2e-4b7a-9a0b-000000000201",
+        "description": "<p>Videos only.</p>",
+        "price": 7900,
+        "is_subscription": false,
+        "interval": null,
+        "interval_count": null,
+        "has_free_trial": false,
+        "trial_interval": "day",
+        "trial_interval_count": 30,
+        "pay_what_you_want": false,
+        "min_price": 0,
+        "suggested_price": 0,
+        "has_license_keys": false,
+        "license_activation_limit": 3,
+        "is_license_limit_unlimited": false,
+        "license_length_value": 1,
+        "license_length_unit": "years",
+        "is_license_length_unlimited": true,
+        "links": [],
+        "sort": 1,
+        "status": "published",
+        "status_formatted": "Published",
+        "created_at": "2026-10-01T09:00:00.000000Z",
+        "updated_at": "2026-10-01T09:00:00.000000Z",
+        "test_mode": true
+      },
+      "relationships": {
+        "product": {
+          "links": {
+            "related": "https://api.lemonsqueezy.com/v1/variants/201/product",
+            "self": "https://api.lemonsqueezy.com/v1/variants/201/relationships/product"
+          }
+        }
+      },
+      "links": {
+        "self": "https://api.lemonsqueezy.com/v1/variants/201"
+      }
+    },
+    {
+      "type": "variants",
+      "id": "202",
+      "attributes": {
+        "product_id": 12,
+        "name": "With coaching",
+        "slug": "5c1f0e8a-1d2e-4b7a-9a0b-000000000202",
+        "description": "",
+        "price": 12900,
+        "is_subscription": false,
+        "interval": null,
+        "interval_count": null,
+        "has_free_trial": false,
+        "trial_interval": "day",
+        "trial_interval_count": 30,
+        "pay_what_you_want": false,
+        "min_price": 0,
+        "suggested_price": 0,
+        "has_license_keys": false,
+        "license_activation_limit": 3,
+        "is_license_limit_unlimited": false,
+        "license_length_value": 1,
+        "license_length_unit": "years",
+        "is_license_length_unlimited": true,
+        "links": [],
+        "sort": 2,
+        "status": "draft",
+        "status_formatted": "Draft",
+        "created_at": "2026-10-01T09:00:00.000000Z",
+        "updated_at": "2026-10-01T09:00:00.000000Z",
+        "test_mode": true
+      },
+      "relationships": {
+        "product": {
+          "links": {
+            "related": "https://api.lemonsqueezy.com/v1/variants/202/product",
+            "self": "https://api.lemonsqueezy.com/v1/variants/202/relationships/product"
+          }
+        }
+      },
+      "links": {
+        "self": "https://api.lemonsqueezy.com/v1/variants/202"
+      }
+    },
+    {
+      "type": "variants",
+      "id": "301",
+      "attributes": {
+        "product_id": 13,
+        "name": "Default",
+        "slug": "5c1f0e8a-1d2e-4b7a-9a0b-000000000301",
+        "description": "",
+        "price": 1900,
+        "is_subscription": false,
+        "interval": null,
+        "interval_count": null,
+        "has_free_trial": false,
+        "trial_interval": "day",
+        "trial_interval_count": 30,
+        "pay_what_you_want": false,
+        "min_price": 0,
+        "suggested_price": 0,
+        "has_license_keys": false,
+        "license_activation_limit": 3,
+        "is_license_limit_unlimited": false,
+        "license_length_value": 1,
+        "license_length_unit": "years",
+        "is_license_length_unlimited": true,
+        "links": [],
+        "sort": 0,
+        "status": "pending",
+        "status_formatted": "Pending",
+        "created_at": "2026-10-01T09:00:00.000000Z",
+        "updated_at": "2026-10-01T09:00:00.000000Z",
+        "test_mode": true
+      },
+      "relationships": {
+        "product": {
+          "links": {
+            "related": "https://api.lemonsqueezy.com/v1/variants/301/product",
+            "self": "https://api.lemonsqueezy.com/v1/variants/301/relationships/product"
+          }
+        }
+      },
+      "links": {
+        "self": "https://api.lemonsqueezy.com/v1/variants/301"
+      }
+    }
+  ]
+}

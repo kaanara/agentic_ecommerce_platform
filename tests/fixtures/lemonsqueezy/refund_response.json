@@ -1,0 +1,106 @@
+{
+  "jsonapi": {
+    "version": "1.0"
+  },
+  "links": {
+    "self": "https://api.lemonsqueezy.com/v1/orders/5001"
+  },
+  "data": {
+    "type": "orders",
+    "id": "5001",
+    "attributes": {
+      "store_id": 7,
+      "customer_id": 9001,
+      "identifier": "104e18a2-d755-4d4b-80c4-a6c1dcbe1c10",
+      "order_number": 1001,
+      "user_name": "Eva de Vries",
+      "user_email": "eva@example.nl",
+      "currency": "EUR",
+      "currency_rate": "1.08000000",
+      "subtotal": 4050,
+      "setup_fee": 0,
+      "discount_total": 0,
+      "tax": 850,
+      "total": 4900,
+      "refunded_amount": 1000,
+      "subtotal_usd": 4374,
+      "setup_fee_usd": 0,
+      "discount_total_usd": 0,
+      "tax_usd": 918,
+      "total_usd": 5292,
+      "refunded_amount_usd": 1080,
+      "tax_name": "VAT",
+      "tax_rate": "21.00",
+      "tax_inclusive": true,
+      "status": "paid",
+      "status_formatted": "Paid",
+      "refunded": false,
+      "refunded_at": null,
+      "subtotal_formatted": "\u20ac40.50",
+      "setup_fee_formatted": "\u20ac0.00",
+      "discount_total_formatted": "\u20ac0.00",
+      "tax_formatted": "\u20ac8.50",
+      "total_formatted": "\u20ac49.00",
+      "refunded_amount_formatted": "\u20ac10.00",
+      "first_order_item": {
+        "id": 7001,
+        "order_id": 5001,
+        "product_id": 11,
+        "variant_id": 101,
+        "product_name": "FocusFlow Pro",
+        "variant_name": "Default",
+        "price": 4900,
+        "created_at": "2026-10-27T10:00:00.000000Z",
+        "updated_at": "2026-10-27T10:00:00.000000Z",
+        "test_mode": true
+      },
+      "urls": {
+        "receipt": "https://app.lemonsqueezy.com/my-orders/104e18a2-d755-4d4b-80c4-a6c1dcbe1c10?signature=abc"
+      },
+      "created_at": "2026-10-27T10:00:00.000000Z",
+      "updated_at": "2026-10-28T12:00:00.000000Z",
+      "test_mode": true
+    },
+    "relationships": {
+      "store": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/v1/orders/5001/store",
+          "self": "https://api.lemonsqueezy.com/v1/orders/5001/relationships/store"
+        }
+      },
+      "customer": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/v1/orders/5001/customer",
+          "self": "https://api.lemonsqueezy.com/v1/orders/5001/relationships/customer"
+        }
+      },
+      "order-items": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/v1/orders/5001/order-items",
+          "self": "https://api.lemonsqueezy.com/v1/orders/5001/relationships/order-items"
+        }
+      },
+      "subscriptions": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/v1/orders/5001/subscriptions",
+          "self": "https://api.lemonsqueezy.com/v1/orders/5001/relationships/subscriptions"
+        }
+      },
+      "license-keys": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/v1/orders/5001/license-keys",
+          "self": "https://api.lemonsqueezy.com/v1/orders/5001/relationships/license-keys"
+        }
+      },
+      "discount-redemptions": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/v1/orders/5001/discount-redemptions",
+          "self": "https://api.lemonsqueezy.com/v1/orders/5001/relationships/discount-redemptions"
+        }
+      }
+    },
+    "links": {
+      "self": "https://api.lemonsqueezy.com/v1/orders/5001"
+    }
+  }
+}

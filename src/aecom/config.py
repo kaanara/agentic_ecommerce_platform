@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # Real sends only when explicitly enabled — seed/demo customers are fake addresses.
     agentmail_live: bool = False
     store_adapter: str = "mock"
+    # Lemon Squeezy (STORE_ADAPTER=lemonsqueezy). The API key and webhook secret are read via aecom.secrets.
+    lemonsqueezy_base_url: str = "https://api.lemonsqueezy.com/v1"
+    lemonsqueezy_store_id: str | None = None
+    lemonsqueezy_currency: str = "EUR"  # the store currency; orders in another currency are refused, not converted
+    lemonsqueezy_timeout_s: float = 20.0
     # Where automatic restocks get licence keys: "mock" mints fake keys (demo only), "none" = manual keys only
     license_key_source: str = "mock"
     mcp_autoload: bool = True          # load registry MCP servers into agents' toolbelts

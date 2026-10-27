@@ -1,0 +1,76 @@
+{
+  "meta": {
+    "test_mode": true,
+    "event_name": "license_key_created",
+    "webhook_id": "8c5f2d1e-0c8b-4a54-9a8f-3c2b1a000001",
+    "custom_data": {
+      "country": "NL",
+      "withdrawal_consent_at": "2026-10-27T09:59:30Z",
+      "withdrawal_consent_version": "2026-10"
+    }
+  },
+  "data": {
+    "type": "license-keys",
+    "id": "3001",
+    "attributes": {
+      "store_id": 7,
+      "customer_id": 9001,
+      "order_id": 5001,
+      "order_item_id": 7001,
+      "product_id": 11,
+      "user_name": "Eva de Vries",
+      "user_email": "eva@example.nl",
+      "key": "TEST0000-aaaa-4bbb-8ccc-fake00009f3c",
+      "key_short": "XXXX-8ccc-fake00009f3c",
+      "activation_limit": 3,
+      "instances_count": 0,
+      "disabled": 0,
+      "status": "inactive",
+      "status_formatted": "Inactive",
+      "expires_at": null,
+      "created_at": "2026-10-27T10:00:01.000000Z",
+      "updated_at": "2026-10-27T10:00:01.000000Z"
+    },
+    "relationships": {
+      "store": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/v1/license-keys/3001/store",
+          "self": "https://api.lemonsqueezy.com/v1/license-keys/3001/relationships/store"
+        }
+      },
+      "customer": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/v1/license-keys/3001/customer",
+          "self": "https://api.lemonsqueezy.com/v1/license-keys/3001/relationships/customer"
+        }
+      },
+      "order": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/v1/license-keys/3001/order",
+          "self": "https://api.lemonsqueezy.com/v1/license-keys/3001/relationships/order"
+        }
+      },
+      "order-item": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/v1/license-keys/3001/order-item",
+          "self": "https://api.lemonsqueezy.com/v1/license-keys/3001/relationships/order-item"
+        }
+      },
+      "product": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/v1/license-keys/3001/product",
+          "self": "https://api.lemonsqueezy.com/v1/license-keys/3001/relationships/product"
+        }
+      },
+      "license-key-instances": {
+        "links": {
+          "related": "https://api.lemonsqueezy.com/v1/license-keys/3001/license-key-instances",
+          "self": "https://api.lemonsqueezy.com/v1/license-keys/3001/relationships/license-key-instances"
+        }
+      }
+    },
+    "links": {
+      "self": "https://api.lemonsqueezy.com/v1/license-keys/3001"
+    }
+  }
+}
