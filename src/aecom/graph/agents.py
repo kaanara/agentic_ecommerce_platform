@@ -20,7 +20,7 @@ from aecom.company_settings import agent_enabled, get_setting, set_setting
 from aecom.config import get_settings
 from aecom.context import current_agent, current_run
 from aecom.db import AgentRun, Lesson, new_id, now, session
-from aecom.llm import get_model, server_tool_specs
+from aecom.llm import get_model, server_tool_specs, server_tool_usage
 from aecom.money import CENT, quantize, to_decimal
 from aecom.observability import mask, record_error
 from aecom.persona.loader import load_spec
@@ -38,6 +38,8 @@ class AgentResult:
     tool_calls: int = 0
     cost_eur: float = 0.0
     escalations: list[str] = field(default_factory=list)
+    web_searches: int = 0
+    web_fetches: int = 0
 
 
 def _text(msg: AIMessage) -> str:
@@ -110,8 +112,13 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
         tools = await build_tools(agent_id, context=task)
         by_name = {t.name: t for t in tools}
         model = get_model(spec.model_tier, agent_id)
-        bindable: list[Any] = [*tools, *server_tool_specs(spec.server_tools)]
-        bound = model.bind_tools(bindable) if bindable else model
+
+        def bind(server_tools: list[str]) -> Any:
+            bindable: list[Any] = [*tools, *server_tool_specs(server_tools)]
+            return model.bind_tools(bindable) if bindable else model
+
+        server_tools = list(spec.server_tools)
+        bound = bind(server_tools)
 
         system: SystemMessage = SystemMessage(
             content=prompt if settings.llm_mode == "scripted"
@@ -121,10 +128,19 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
         result = AgentResult(agent_id, "", status="max_steps")
         tin = tout = steps = 0
         for steps in range(1, settings.agent_max_steps + 1):
+            # max_uses only limits one API call; this caps web searches across the whole run.
+            if "web_search" in server_tools and result.web_searches >= settings.web_search_max_per_run:
+                server_tools.remove("web_search")
+                bound = bind(server_tools)
+                audit(agent_id, "web_search_cap", "ok", {"web_searches": result.web_searches,
+                                                         "max_per_run": settings.web_search_max_per_run}, run_id)
             ai: AIMessage = await bound.ainvoke(messages)
             usage = ai.usage_metadata or {}
             tin += usage.get("input_tokens", 0)
             tout += usage.get("output_tokens", 0)
+            searches, fetches = server_tool_usage(ai)
+            result.web_searches += searches
+            result.web_fetches += fetches
             messages.append(ai)
             if not ai.tool_calls:
                 result.output, result.status = _text(ai), "ok"
@@ -147,10 +163,12 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
         else:
             result.output = _text(messages[-1]) if isinstance(messages[-1], AIMessage) else "stopped: max steps reached"
 
-        result.cost_eur = settings.cost_eur(spec.model_tier, tin, tout)
+        result.cost_eur = (settings.cost_eur(spec.model_tier, tin, tout)
+                           + settings.web_cost_eur(result.web_searches, result.web_fetches))
         with session() as s:
             row = s.get(AgentRun, row_id)
             row.output, row.status, row.steps, row.tool_calls = result.output[:8000], result.status, steps, result.tool_calls
+            row.web_searches, row.web_fetches = result.web_searches, result.web_fetches
             row.input_tokens, row.output_tokens, row.cost_eur, row.ended_at = tin, tout, result.cost_eur, now()
         book_ai_costs()
         return result

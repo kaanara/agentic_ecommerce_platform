@@ -13,7 +13,8 @@ def test_server_tool_specs_anthropic_mode(monkeypatch):
     specs = server_tool_specs(["web_search", "web_fetch"])
     assert specs == [
         {"type": s.web_search_tool_type, "name": "web_search", "max_uses": 5},
-        {"type": "web_fetch_test", "name": "web_fetch", "max_uses": 3},
+        {"type": "web_fetch_test", "name": "web_fetch", "max_uses": 3,
+         "max_content_tokens": s.web_fetch_max_content_tokens},
     ]
     assert server_tool_specs(["web_fetch"]) == [specs[1]]
 

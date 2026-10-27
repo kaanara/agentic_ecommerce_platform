@@ -82,14 +82,43 @@ def get_model(tier: str, agent_id: str) -> BaseChatModel:
                          timeout=120)
 
 
+def _domain_filter(allowed: list[str], blocked: list[str]) -> dict[str, list[str]]:
+    # The API accepts allowed_domains or blocked_domains, never both.
+    if allowed:
+        return {"allowed_domains": list(allowed)}
+    if blocked:
+        return {"blocked_domains": list(blocked)}
+    return {}
+
+
 def server_tool_specs(names: list[str]) -> list[dict[str, Any]]:
     settings = get_settings()
     if settings.llm_mode == "scripted":
         return []
     specs = []
     if "web_search" in names:
-        specs.append({"type": settings.web_search_tool_type, "name": "web_search", "max_uses": 5})
+        specs.append({"type": settings.web_search_tool_type, "name": "web_search",
+                      "max_uses": settings.web_search_max_uses,
+                      **_domain_filter(settings.web_search_allowed_domains, settings.web_search_blocked_domains)})
     if "web_fetch" in names:
         specs.append({"type": settings.web_fetch_tool_type, "name": "web_fetch",
-                      "max_uses": settings.web_fetch_max_uses})
+                      "max_uses": settings.web_fetch_max_uses,
+                      "max_content_tokens": settings.web_fetch_max_content_tokens,
+                      **_domain_filter(settings.web_fetch_allowed_domains, settings.web_fetch_blocked_domains)})
     return specs
+
+
+def server_tool_usage(msg: AIMessage) -> tuple[int, int]:
+    """(web_search_requests, web_fetch_requests) reported for one model call.
+
+    langchain-anthropic copies the raw Messages API response (minus content) into ``response_metadata``, so the
+    counts sit at ``response_metadata["usage"]["server_tool_use"]``; ``usage_metadata`` carries tokens only.
+    """
+    usage = (msg.response_metadata or {}).get("usage") or {}
+    stu = usage.get("server_tool_use") if isinstance(usage, dict) else getattr(usage, "server_tool_use", None)
+    if not stu:
+        return 0, 0
+    if not isinstance(stu, dict):
+        stu = {"web_search_requests": getattr(stu, "web_search_requests", 0),
+               "web_fetch_requests": getattr(stu, "web_fetch_requests", 0)}
+    return int(stu.get("web_search_requests") or 0), int(stu.get("web_fetch_requests") or 0)

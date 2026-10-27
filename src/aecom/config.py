@@ -26,11 +26,24 @@ class Settings(BaseSettings):
     price_sonnet: tuple[float, float] = (3.0, 15.0)
     price_haiku: tuple[float, float] = (1.0, 5.0)
     usd_to_eur: float = 0.92
-    # Anthropic server-side web search for agents whose TOOLS.md lists it under server_tools
-    web_search_tool_type: str = "web_search_20250305"
+    # Anthropic server-side web search for agents whose TOOLS.md lists it under server_tools.
+    # _20260209 (dynamic filtering) is the current version for the Claude 5.5 models; use web_search_20250305 on
+    # older models or on Vertex AI.
+    web_search_tool_type: str = "web_search_20260209"
+    web_search_max_uses: int = 5        # per API call (the API's own max_uses)
+    web_search_max_per_run: int = 15    # per agent run: once reached, web_search is unbound for the remaining steps
+    # Billed per search on top of tokens: $10 per 1,000 searches, i.e. ~EUR 0.01 each
+    web_search_price_eur: float = 0.01
+    # The API takes allowed_domains or blocked_domains, never both: when both are set, allowed wins.
+    web_search_allowed_domains: list[str] = []
+    web_search_blocked_domains: list[str] = []
     # Anthropic server-side web fetch: pages are fetched on Anthropic's side, never from this host (no beta header)
     web_fetch_tool_type: str = "web_fetch_20260209"
     web_fetch_max_uses: int = 5
+    web_fetch_max_content_tokens: int = 8000  # cap on the tokens one fetched page may add to the context
+    web_fetch_price_eur: float = 0.0          # no per-use fee: fetched content is billed as ordinary input tokens
+    web_fetch_allowed_domains: list[str] = []
+    web_fetch_blocked_domains: list[str] = []
 
     # --- Data ----------------------------------------------------------------
     # SQLite by default so the PoC runs anywhere; set to postgresql+psycopg://... for docker-compose.
@@ -71,6 +84,10 @@ class Settings(BaseSettings):
     def cost_eur(self, tier: str, input_tokens: int, output_tokens: int) -> float:
         pin, pout = {"opus": self.price_opus, "sonnet": self.price_sonnet, "haiku": self.price_haiku}[tier]
         return (input_tokens * pin + output_tokens * pout) / 1_000_000 * self.usd_to_eur
+
+    def web_cost_eur(self, web_searches: int, web_fetches: int) -> float:
+        """Per-use fees of the Anthropic server tools, on top of the token cost."""
+        return web_searches * self.web_search_price_eur + web_fetches * self.web_fetch_price_eur
 
 
 @lru_cache
