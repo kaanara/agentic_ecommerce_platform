@@ -17,6 +17,8 @@
     aecom incidents ack|resolve ID --by NAME [--note TEXT]
     aecom agents [list] | enable|disable ID   per-agent switch (reflexes such as delivery are unaffected)
     aecom monitors run                     run all monitors once, raise/resolve incidents, send due alerts
+    aecom provisioning [list]              vendors waiting for a human, with their numbered checklist
+    aecom provisioning done VENDOR STEP_NO --by NAME | snooze VENDOR --days N
     aecom doctor [--json]                  health report (paste into an issue); exit 1 if any check fails
     aecom agentmail keys|create-key NAME|inboxes   (admin, uses AGENTMAIL_API_KEY)
     aecom agentmail poll                   fetch unread inbound mail → Support (same as the scheduler job)
@@ -101,6 +103,12 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("agent_id", nargs="?")
     s = sub.add_parser("monitors")
     s.add_argument("action", nargs="?", default="run", choices=["run"])
+    s = sub.add_parser("provisioning")
+    s.add_argument("action", nargs="?", default="list", choices=["list", "done", "snooze"])
+    s.add_argument("vendor", nargs="?")
+    s.add_argument("step", nargs="?", type=int)
+    s.add_argument("--by", default="")
+    s.add_argument("--days", type=int, default=3)
     s = sub.add_parser("doctor")
     s.add_argument("--json", action="store_true", help="machine-readable report")
     s = sub.add_parser("scheduler")
@@ -222,6 +230,22 @@ def main(argv: list[str] | None = None) -> None:
         else:
             set_agent_enabled(a.agent_id, a.action == "enable")
             print(f"{a.agent_id}: {'on' if agent_enabled(a.agent_id) else 'off'}")
+    elif a.cmd == "provisioning":
+        from aecom import provisioning
+
+        try:
+            if a.action == "list":
+                _print(provisioning.list_provisioning())
+            elif not a.vendor:
+                sys.exit("vendor required")
+            elif a.action == "done":
+                if a.step is None or not a.by.strip():
+                    sys.exit("usage: aecom provisioning done VENDOR STEP_NO --by NAME")
+                _print(provisioning.tick_step(a.vendor, a.step, a.by))
+            else:
+                _print(provisioning.snooze(a.vendor, a.days, by=a.by or "cli-user"))
+        except ValueError as e:
+            sys.exit(str(e))
     elif a.cmd == "monitors":
         from aecom.monitors import run_monitors
 

@@ -5,7 +5,27 @@ Agents **never** create accounts, accept terms, enter payment details or handle 
 1. **Need.** Any agent calls `request_account_need(vendor, why, evidence)` (T1). It's audited and published as `account.need_raised`.
 2. **CEO decides.** A subscriber gives the CEO one task per vendor per day (dedupe setting `account_need:<vendor>:<date>`; a failed CEO run is retried by the bus). The CEO prefers existing vendors, records an ADR and calls `request_provisioning(vendor, steps, credential_env)`. Selection workflows can call it directly too.
 3. **Human approves or rejects** (T3, Approvals). Approving marks the vendor `provisioning` and, on `approval.resolved`, stores its checklist `[{step, done}]` from the steps. Rejecting marks it `rejected` with the human's note and stores `Rejected <vendor>: <note>` in the CEO's memory (namespace `provisioning`), so it isn't requested again blindly; a later request for it reports that reason. A request for a vendor that is already `provisioning` or `active` changes nothing and says so.
-4. **Credential arrives.** The human follows the steps and puts the credential in `.env` under `credential_env`. The scheduler's `provisioning` job (every 15 min, `check_credentials`) calls `verify(vendor)`: today it only checks the env var is set (real API verification is E6). On success the vendor becomes `active` with `verified_at`, `vendor.provisioned` is published, and the Foreman gets the integration task (propose the MCP server or adapter; `STORE_ADAPTER=<platform>` for a store). If the Foreman is disabled or fails, a P3 incident `provisioning_followup` is raised instead. A failed check is kept in `last_check_error`; the credential value is never read into logs, audits, events or prompts.
+4. **The human is told (E5).** When the approval executes, the app raises a P3 incident `provisioning_action` (subject = vendor, so it shows in the dashboard and digest) and emails `ALERT_EMAIL` an "action needed" message: vendor, purpose, monthly cost, the numbered steps, the env var **name** for the credential, and the steps that name scopes/permissions (grant the least access that works). No email without `ALERT_EMAIL`; it stays in the outbox unless `AGENTMAIL_LIVE=true`. A redelivered event sends nothing twice.
+5. **Checklist and reminders.** While a vendor is `provisioning`, `check_credentials` emails a reminder 3 days after the approval and then at most every 3 days (`last_reminded_at`). The human works through the checklist on the CLI:
+   ```bash
+   uv run aecom provisioning                                  # vendors waiting, with their numbered checklist
+   uv run aecom provisioning done "Acme Ads" 2 --by kaan      # tick step 2 (audited as human:kaan)
+   uv run aecom provisioning snooze "Acme Ads" --days 7       # last_reminded_at = now + 7 days; next reminder 3 days after that
+   ```
+6. **Credential arrives and is verified (E6).** The human puts the credential in `.env` under `credential_env`. The scheduler's `provisioning` job (every 15 min, `check_credentials`) calls `verify(vendor)`, which picks a verifier from `VERIFIERS` by vendor name or category (normalised, e.g. `Lemon Squeezy` → `lemonsqueezy`). Each verifier makes **one read-only call** with a 10 s timeout:
+
+   | Vendor | Call | Notes |
+   |---|---|---|
+   | `lemonsqueezy` | `GET https://api.lemonsqueezy.com/v1/users/me` | Bearer key |
+   | `agentmail` | `GET /v0/inboxes/<AGENTMAIL_ORG_INBOX>` | then probes `GET /v0/api-keys`: if that succeeds the key is org-wide → warning "key has organization-wide access; create an inbox-scoped key" |
+   | `anthropic` | `GET https://api.anthropic.com/v1/models` | `x-api-key` + `anthropic-version` |
+   | anything else | none | presence only, with a warning that it wasn't verified |
+
+   - **Failure** (non-200, timeout, network error): the vendor stays `provisioning`, the masked error goes to `last_check_error`, and the human gets one email per distinct error saying what's wrong. A missing credential is not an error email (the reminders cover it). Nothing raises out of `check_credentials`.
+   - **Success**: the vendor becomes `active` with `verified_at`; warnings are kept in `last_check_error` as `warning: ...` and emailed with the "is active" message; `vendor.provisioned` is published; the `provisioning_action` incident resolves; the Foreman gets the integration task (propose the MCP server or adapter; `STORE_ADAPTER=<platform>` for a store). If the Foreman is disabled or fails, a P3 incident `provisioning_followup` is raised instead.
+   - The credential **value** is read only to make the call. It is never logged, audited, stored, emailed or put into events or prompts (only its env var name is); error text is passed through `observability.mask` and the value itself is scrubbed.
+
+   To add a vendor: write `verify_<vendor>(vendor, credential) -> (ok, error, warnings)` in `src/aecom/provisioning.py` and register it in `VERIFIERS`.
 
 Tools read credentials at call time via `SecretsProvider` (`src/aecom/secrets.py`). Today that's `.env` or the environment; it can be swapped for a vault.
 

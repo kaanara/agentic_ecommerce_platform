@@ -108,13 +108,14 @@ def test_check_credentials_activates_and_gives_the_foreman_a_task(monkeypatch):
     Script.load({"foreman": [final("Proposed the Acme Ads MCP server.")]})
     assert provisioning.check_credentials() == {"checked": 1, "activated": ["Acme Ads"]}
     v = vendor()
-    assert v.status == "active" and v.verified_at is not None and v.last_check_error is None
+    assert v.status == "active" and v.verified_at is not None
+    assert v.last_check_error.startswith("warning:")  # E6: no verifier for Acme Ads, presence only
     foreman = runs("foreman")
     assert len(foreman) == 1 and "Acme Ads is provisioned" in foreman[0].task
     with session() as s:
         evt = s.scalars(select(EventRow).where(EventRow.topic == "vendor.provisioned")).one()
         assert evt.payload["vendor"] == "Acme Ads"
-        assert s.scalars(select(Incident)).all() == []
+        assert s.scalars(select(Incident).where(Incident.monitor == "provisioning_followup")).all() == []
     assert provisioning.check_credentials() == {"checked": 0, "activated": []}  # once only
 
 
@@ -125,7 +126,7 @@ def test_disabled_foreman_raises_a_p3_followup_incident(monkeypatch):
     assert provisioning.check_credentials()["activated"] == ["Acme Ads"]
     assert vendor().status == "active"
     with session() as s:
-        inc = s.scalars(select(Incident)).one()
+        inc = s.scalars(select(Incident).where(Incident.monitor == "provisioning_followup")).one()
     assert (inc.monitor, inc.severity, inc.subject) == ("provisioning_followup", "P3", "Acme Ads")
 
 
