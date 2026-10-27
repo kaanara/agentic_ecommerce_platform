@@ -506,6 +506,8 @@ def propose_tool(name: str, kind: str, description: str, launch_config: dict) ->
     """Propose a new MCP server (kind=mcp_server, launch_config={command, args, transport, read_only_tools}) or a skill
     (kind=skill, launch_config={instructions}). Starts in status 'proposed'."""
     # (not named `config`: LangChain reserves that keyword for RunnableConfig when invoking tools)
+    # Grant levels are human-set only (grant_tool): drop any agent-supplied "grants" so a (re-)proposal starts read-only.
+    launch_config = {k: v for k, v in (launch_config or {}).items() if k != "grants"}
     with session() as s:
         t = s.get(RegistryTool, name)
         if t is None:

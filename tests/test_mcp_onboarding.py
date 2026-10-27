@@ -115,3 +115,22 @@ def test_parked_call_cannot_widen_a_read_only_grant(fake_mcp):
     finally:
         current_agent.reset(token)
     assert fake_mcp.calls == [("track_parcel", {})]
+
+
+def test_reproposal_cannot_smuggle_a_full_grant(fake_mcp):
+    grant_tool(SERVER, "supply", level="full")
+    # an agent re-proposes the server with grants in launch_config: the Allowlist row stays, the level must not
+    propose_tool(SERVER, "mcp_server", "Vendor shipping API v2",
+                 {"transport": "stdio", "command": "acme-mcp", "read_only_tools": READ_ONLY,
+                  "grants": {"supply": "full", "support": "full"}})
+    sandbox_tool(SERVER)
+    approve_tool(SERVER)
+    with session() as s:
+        assert "grants" not in s.get(RegistryTool, SERVER).config
+    assert _mcp_names("supply") == set(READ_ONLY)  # back to read-only after the re-proposal
+
+
+def test_new_proposal_drops_agent_supplied_grants(fake_mcp):
+    propose_tool("other-vendor", "mcp_server", "x", {"command": "x", "read_only_tools": [], "grants": {"supply": "full"}})
+    with session() as s:
+        assert "grants" not in s.get(RegistryTool, "other-vendor").config
