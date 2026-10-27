@@ -8,8 +8,9 @@ one that raises becomes its own P2 ``monitor_error`` incident and the others sti
 left untouched, because nothing is known about them). After evaluating, alerts go out for incidents that need
 one (P1 repeats every 30 min until acknowledged). If a P1 stays open (unacknowledged) for over 2 h, safe mode goes
 on (K7: only deliveries and customer replies continue) with one extra P1 alert; the monitors never turn it off, a
-human does. The external heartbeat is pinged last, so the dead-man's switch only hears from us when the monitor loop
-really ran.
+human does. New P1/P2 incidents are then handed to the Sentinel agent for a read-only diagnosis (K4, at most once per
+incident, never raising: see ``diagnose_new``). The external heartbeat is pinged last, so the dead-man's switch only
+hears from us when the monitor loop really ran.
 """
 
 from __future__ import annotations
@@ -236,18 +237,47 @@ def _safe_mode_check(now: datetime) -> bool:
     return True
 
 
+AUTO_DIAGNOSE = True  # K4: hand new P1/P2 incidents to the Sentinel; tests switch it off by monkeypatching
+
+
+def diagnose_new(new_incidents: list[dict[str, Any]]) -> list[str]:
+    """Ask the Sentinel to diagnose new P1/P2 incidents (after alerting). Returns the ids it ran for. Never raises.
+
+    Skipped when AUTO_DIAGNOSE is off or the Sentinel isn't available (disabled, or scripted LLM mode without a
+    sentinel script), so monitor runs stay deterministic and free. ``sentinel.diagnose`` runs at most once per incident."""
+    if not AUTO_DIAGNOSE:
+        return []
+    ran: list[str] = []
+    try:
+        from aecom import sentinel
+
+        if not sentinel.available():
+            return []
+        for inc in new_incidents:
+            if inc["severity"] in sentinel.SEVERITIES and sentinel.diagnose(inc["id"]) is not None:
+                ran.append(inc["id"])
+    except Exception as exc:  # diagnosis is a bonus; the monitors must keep running
+        log.exception("sentinel trigger failed")
+        record_error("monitors", exc, context={"step": "sentinel"})
+    return ran
+
+
 def run_monitors(now: datetime | None = None) -> dict[str, Any]:
     """Evaluate the monitors, alert for incidents that need it, then ping the external heartbeat."""
     t = now or db_now()
     summary = evaluate(t)
     alerted: list[str] = []
+    new: list[dict[str, Any]] = []
     for inc in incidents.list_incidents(status="open"):
         if incidents.needs_alert(inc, t, repeat_after=REPEAT_ALERT_AFTER):
             alerts.route(inc)
             incidents.mark_alerted(inc["id"], now=t)
             alerted.append(inc["id"])
+            if inc.get("last_alerted_at") is None:  # first alert = a new incident
+                new.append(inc)
     summary["alerted"] = alerted
-    summary["safe_mode"] = _safe_mode_check(t)
+    summary["safe_mode"] = _safe_mode_check(t)  # containment before diagnosis
+    summary["diagnosed"] = diagnose_new(new)
     summary["open"] = incidents.open_counts()
     summary["heartbeat"] = alerts.heartbeat()
     return summary

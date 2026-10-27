@@ -71,6 +71,28 @@ aecom incidents ack inc_123 --by kaan --note "looking"   # stops repeat alerts
 aecom incidents resolve inc_123 --by kaan --note "fixed"
 ```
 
+## Sentinel
+The Sentinel (`agents/sentinel/`, Argus, Sonnet) **diagnoses**; it is not the safety net. Detection, alerting and
+containment (safe mode, retries, the reconciler) stay in deterministic code and never wait for it.
+
+- **When it runs.** At the end of each monitor run (`aecom monitors`, scheduler every 5 min), after alerts and the
+  safe-mode check, `monitors.diagnose_new` calls `sentinel.diagnose(incident_id)` for every incident that was alerted for
+  the **first time** and is **P1 or P2**. It runs **at most once per incident**: the setting
+  `sentinel_diagnosed:<incident id>` is written before the run, so a failing run isn't retried every 5 minutes (ask
+  again by deleting that setting). Skipped when the agent is disabled (`agent_enabled:sentinel=off`), in scripted LLM
+  mode without a sentinel script, or with `monitors.AUTO_DIAGNOSE = False`. A failing run is recorded in `ops_errors`
+  (component `sentinel`) and never breaks the monitor run.
+- **What it does.** Reads the incident, gathers evidence with read-only tools (open incidents, recent errors with
+  masked, shortened tracebacks, the run timeline of a `run_id`, event bus status and dead letters, the `aecom doctor`
+  checks, orders and inventory), follows the matching **runbook skill** (`runbook_<monitor>`, one per section of
+  [Runbooks](Runbooks), seeded and granted to the Sentinel by `aecom init`, refreshed when the doc changes), then calls
+  `submit_diagnosis`: summary, root-cause hypotheses ranked by evidence, the evidence lines and safe next actions are
+  appended to the incident's **notes** (`sentinel: DIAGNOSIS ...`, masked) and audited (`incident` / `diagnosed`).
+- **What it can't do.** Change anything: no refunds, deliveries, retries, settings, incident status (it doesn't
+  acknowledge or resolve), ledger, keys or code. The gate denies every side-effecting tool for it (none are in its
+  allowlist; the only exception every agent has is `request_account_need`, which only records a need for the CEO).
+  Its next actions are advice for a human. The remediation tools listed under *Repair* are not built.
+
 ## Safe mode
 If nobody reacts to a P1, the company gets safer, not riskier (K7).
 - **When.** Each monitor run (`aecom monitors run`, scheduler every 5 min) checks for a P1 incident that has been **open** (not acknowledged) for more than 2 hours (`monitors.SAFE_MODE_AFTER`). If there is one and safe mode is off, it switches safe mode on, records why (`safe_mode_reason` names the incident) and since when, audits it and sends one extra P1 alert: "Safe mode is ON because ...". Acknowledging the P1 in time prevents it.

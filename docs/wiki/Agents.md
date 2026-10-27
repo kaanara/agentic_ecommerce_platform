@@ -11,6 +11,16 @@
 | `marketing` | 📣 Nova | Haiku | foreman | Copy, campaigns, social, newsletters |
 | `support` | 💬 Iris | Haiku | foreman | Customer email, access issues, refunds within limits |
 | `supply` | 🔗 Relay | Haiku | foreman | Vendors, key pools, third-party APIs, continuity |
+| `sentinel` | 🛰️ Argus | Sonnet | ceo | Read-only incident diagnosis: evidence, ranked root-cause hypotheses, safe next actions |
+
+**Sentinel (`sentinel`, Argus).** An Ops agent in the evaluation layer, not a Foreman department: the monitors start it
+(`monitors.diagnose_new`) for each **new P1/P2 incident**, at most once per incident. It reads the incident, gathers
+evidence with the read-only diagnostic tools (`aecom.tools.diagnostics`: `list_open_incidents`, `get_incident`,
+`recent_errors`, `run_timeline`, `event_bus_status`, `dead_letters`, `doctor_report`, plus read-only store tools),
+follows the matching runbook skill (`runbook_<monitor>`, seeded from [Runbooks](Runbooks)) and finishes with
+`submit_diagnosis`, which appends the diagnosis to the incident's notes. It never changes anything itself: no
+side-effecting tools (apart from `request_account_need`, which every agent has), `submit_diagnosis` is T1 and reserved
+for it, budget €3/day. Details: [Incident Response](Incident-Response#sentinel).
 
 ## Enabling and disabling agents
 Each agent has an on/off flag in `ops_settings` under `agent_enabled:<id>` (`on`/`off`, **default on**, so existing

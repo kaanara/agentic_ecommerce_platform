@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import logging
+import re
+from pathlib import Path
 
 from sqlalchemy import select
 
+from aecom.audit import audit
 from aecom.company_settings import get_setting, set_setting
-from aecom.db import Okr, RegistryTool, Vendor, init_db, session
+from aecom.config import ROOT
+from aecom.db import Allowlist, Okr, RegistryTool, Vendor, init_db, session
 from aecom.policy.gate import load_policy
 from aecom.registry.tools import seed_registry
 
@@ -30,9 +34,55 @@ DEMO_PRODUCTS = [
 ]
 
 
+RUNBOOKS_FILE = ROOT / "docs" / "wiki" / "Runbooks.md"
+RUNBOOK_AGENTS = ("sentinel",)  # K3: who gets the runbook skills
+
+
+def parse_runbooks(text: str) -> dict[str, str]:
+    """``## <monitor> (P1)`` sections of Runbooks.md → {"runbook_<monitor>": section markdown}."""
+    out: dict[str, str] = {}
+    for part in re.split(r"(?m)^## ", text)[1:]:
+        heading, _, body = part.partition("\n")
+        slug = re.sub(r"[^a-z0-9]+", "_", re.sub(r"\(.*?\)", "", heading).strip().lower()).strip("_")
+        if slug:
+            out[f"runbook_{slug}"] = f"## {heading.strip()}\n{body.strip().removesuffix('---').strip()}"
+    return out
+
+
+def seed_runbook_skills(path: Path | None = None) -> list[str]:
+    """K3: one approved skill per Runbooks.md section, granted to the Sentinel. Idempotent; returns the new skills.
+
+    Existing system-seeded skills get their instructions refreshed (the doc is the source); a missing file is skipped."""
+    path = path or RUNBOOKS_FILE
+    if not path.exists():
+        return []
+    runbooks = parse_runbooks(path.read_text())
+    added: list[str] = []
+    granted: list[tuple[str, str]] = []
+    with session() as s:
+        for name, instructions in runbooks.items():
+            row = s.get(RegistryTool, name)
+            if row is None:
+                s.add(RegistryTool(name=name, kind="skill", status="approved", side_effect=False, approved_by="system",
+                                   description=f"Runbook: {instructions.splitlines()[0].removeprefix('## ')}"[:500],
+                                   config={"instructions": instructions, "source": "docs/wiki/Runbooks.md"}))
+                added.append(name)
+            elif row.kind == "skill" and row.approved_by == "system" and row.config.get("instructions") != instructions:
+                row.config = {**row.config, "instructions": instructions}
+            for agent_id in RUNBOOK_AGENTS:
+                if s.scalars(select(Allowlist).where(Allowlist.agent_id == agent_id,
+                                                     Allowlist.tool_name == name)).first() is None:
+                    s.add(Allowlist(agent_id=agent_id, tool_name=name))
+                    granted.append((agent_id, name))
+    for agent_id, name in granted:  # after commit: audit() opens its own session
+        audit("system", "allowlist_sync", "info", {"agent_id": agent_id, "tool": name, "kind": "skill"})
+    return added
+
+
 def init(with_registry_examples: bool = True) -> None:
     init_db()
     seed_registry()
+    seed_runbook_skills()
     for key, value in load_policy()["company_settings_defaults"].items():
         if get_setting(key) is None:
             set_setting(key, str(value))

@@ -63,6 +63,7 @@ budgets:                         # € of LLM spend per agent per day (checked b
   marketing: 2
   support: 3
   supply: 2
+  sentinel: 3
 
 company_settings_defaults:
   marketing_budget_month_eur: 1500
@@ -86,11 +87,20 @@ rules:
   fetch_url: {tier: T0}
   list_inbox: {tier: T0}
   list_pending_approvals: {tier: T0}
+  # K4: Sentinel diagnostics (aecom.tools.diagnostics), read-only
+  list_open_incidents: {tier: T0}
+  get_incident: {tier: T0}
+  recent_errors: {tier: T0}
+  run_timeline: {tier: T0}
+  event_bus_status: {tier: T0}
+  dead_letters: {tier: T0}
+  doctor_report: {tier: T0}
 
   # ---------------------------------------------------------------- terminal / structured-output tools
   submit_plan: {tier: T0, agents: [foreman]}
   submit_verdict: {tier: T0, agents: [judge]}
   submit_brief: {tier: T0}
+  submit_diagnosis: {tier: T1, agents: [sentinel]}   # K4: appends a diagnosis note to an incident
   submit_report: {tier: T1, agents: [finance, ceo]}   # J3: stored, immutable report snapshot
 
   # ---------------------------------------------------------------- store
