@@ -6,9 +6,10 @@ import pytest
 from sqlalchemy import select
 
 from aecom.bootstrap import seed_demo
-from aecom.db import AuditLog, Order, Product, session
+from aecom.db import AuditLog, LicenseKey, Order, Product, session
 from aecom.db import now as real_now
 from aecom.store import mock
+from aecom.store.adapter import get_store
 from aecom.store.mock import MockStore
 
 DOWNLOAD = "TPL-NOTION-FREELANCE-V1"
@@ -120,3 +121,18 @@ def test_licence_products_are_unaffected(store):
     assert "download_url" not in store.deliver_order(order_id)
     o = order_row(order_id)
     assert o.download_token is None and o.download_expires_at is None
+
+
+def test_agent_tool_result_never_contains_the_key_or_link():
+    from aecom.tools.catalog import CATALOG
+
+    seed_demo()
+    store = get_store()
+    lic = store.create_order("k@example.com", "LIC-FOCUSFLOW-PRO-V1", "DE")["id"]
+    dl = store.create_order("d@example.com", "TPL-NOTION-FREELANCE-V1", "DE")["id"]
+    shown = {oid: str(CATALOG["deliver_order"].fn(order_id=oid)) for oid in (lic, dl)}  # delivered by the tool
+    with session() as s:
+        key = s.scalars(select(LicenseKey.key).where(LicenseKey.order_id == lic)).one()
+        token = s.get(Order, dl).download_token
+    assert key and key not in shown[lic] and key[-4:] in shown[lic]  # the agent sees only the last 4 chars
+    assert token and token not in shown[dl]

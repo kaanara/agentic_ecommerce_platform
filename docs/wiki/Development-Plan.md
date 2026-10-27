@@ -100,7 +100,7 @@ Extra invariants for G1: every delivered order has a sent email; refunds ≤ ord
 
 **Exit:** pull the power plug → back online, nothing lost, and a heartbeat alert arrives on your phone within 10 min; an injected undelivered order raises a P1 within 15 min.
 
-## Phase 3: Real store, legally ready
+## Phase 3: Real store, legally ready ✅ buildable parts done 2026-10-27 (live test-mode run, legal review and U1 items are human/pending)
 **Goal:** take real money safely and legally.
 
 | ID | Task |

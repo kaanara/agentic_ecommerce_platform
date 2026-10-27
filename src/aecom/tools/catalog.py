@@ -129,7 +129,7 @@ def deliver_order(order_id: str) -> dict:
     store = get_store()
     result = store.deliver_order(order_id)
     if result.get("status") != "delivered":
-        return result
+        return _redact_access(result)
     order = store.get_order(order_id) or {}
     # I4: the email is tracked apart from delivery, so a failed send is retried (also on an 'already' delivery)
     # and a sent one is never repeated. A send error propagates: the gate reports ERROR and the bus retries.
@@ -139,7 +139,17 @@ def deliver_order(order_id: str) -> dict:
                          f"Thank you for your order {order_id}.\n\nYour access: {secret}\n\nNeed help? Just reply to this email.")
         store.mark_email_sent(order_id)
         result["email_sent"] = True
-    return result
+    return _redact_access(result)
+
+
+def _redact_access(result: dict) -> dict:
+    """The key/link goes to the customer only; agents (and LLM logs) see that it exists, not its value."""
+    out = dict(result)
+    if out.get("license_key"):
+        out["license_key"] = f"****{str(out['license_key'])[-4:]}"
+    if out.get("download_url"):
+        out["download_url"] = "(sent to the customer)"
+    return out
 
 
 @tool("store", side_effect=True)

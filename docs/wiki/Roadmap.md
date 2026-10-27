@@ -49,8 +49,8 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 | E2 | Vendor MCP first | Foreman proposes and sandboxes the vendor's MCP server; read-only tools granted first |
 | E3 | Engineer agent | Writes adapters and webhooks on a branch and opens a PR; a human reviews and merges; never deploys |
 | E4 ✅ 2026-10-27 | Any agent can raise an account need | New tool `request_account_need(vendor, why, evidence)` for all agents → goes to the CEO, who decides and calls `request_provisioning`. Today only the CEO can ask, so other agents can only mention a need in their output |
-| E5 | Provisioning task with notification | Status `requested → approved → in_progress → active / rejected`; checklist of the steps; "action needed" message by email or push (B routing) with purpose, cost, steps, the credential name and required scopes; reminder after 3 days; snooze |
-| E6 | Credential verification | When `credential_env` appears: one read-only test call, and a scope check where the platform allows it (warn if broader than requested). Success → vendor `active`, CEO informed, Foreman integration task (E1). Failure → message to the human saying what's wrong |
+| E5 ✅ 2026-10-27 | Provisioning task with notification | Status `requested → approved → in_progress → active / rejected`; checklist of the steps; "action needed" message by email or push (B routing) with purpose, cost, steps, the credential name and required scopes; reminder after 3 days; snooze |
+| E6 ✅ 2026-10-27 | Credential verification | When `credential_env` appears: one read-only test call, and a scope check where the platform allows it (warn if broader than requested). Success → vendor `active`, CEO informed, Foreman integration task (E1). Failure → message to the human saying what's wrong |
 | E7 ✅ 2026-10-27 | Feedback to the CEO | Rejections and their reasons go back to the CEO and are recorded, so the same request isn't repeated; duplicate open requests per vendor are merged |
 
 ### F. Platforms and credentials
@@ -68,7 +68,7 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 | # | Item | Notes |
 |---|---|---|
 | G1 ✅ 2026-10-26 | Invariants | Every paid order delivered; ledger balances; no key on two orders; spend ≤ budget; no side effects with the kill switch on (except delivery); no run stuck `running` |
-| G2 ◐ (delivery, duplicate, email, Claude down, DB locked; webhook injectors in W8) | Fault injectors | Delivery crash, duplicate webhook, lost webhook, Claude API down, DB locked, vendor outage, injection variants |
+| G2 ✅ 2026-10-27 (incl. Lemon Squeezy webhook faults) | Fault injectors | Delivery crash, duplicate webhook, lost webhook, Claude API down, DB locked, vendor outage, injection variants |
 | G3 ✅ (offline; live runs in Phase 5) | `aecom chaos` | Offline (scripted, CI) and live (real Claude); seeded "random bad week" |
 | G4 | Trust report | Per action: escalations, approve-unchanged rate, a "promote" button |
 | G5 | Autonomy stages | Per-action stages in `policy.yaml`, stage stored in `ops_settings` (set by humans only); allow + notify for stage 3 |
@@ -107,8 +107,8 @@ Confirmed by reading the code. The offline scenarios don't catch them because th
 | I10 | ✅ done 2026-10-26 | **Duplicate approvals.** The same escalated call can be parked twice, and approving both executes it twice (e.g. two campaign launches). Approvals also never expire | `policy/gate.py`, `approvals.py` | Deduplicate pending approvals by tool + args; expire after N days |
 | I11 | ✅ done 2026-10-26 | **Order, ledger and event aren't one transaction.** `create_order` commits the order, then posts to the ledger, then publishes `order.paid`, each separately. A crash in between leaves an order with no ledger entry or no delivery | `store/mock.py` | Transactional outbox: write the order, ledger lines and event in one commit |
 | I12 | ✅ done 2026-10-26 (Decimal at the boundary; Float columns remain) | **Money stored as floats.** Rounding drift across many orders breaks the "ledger balances" invariant | `ledger.py`, `db.py` | Integer cents or `Decimal` |
-| I13 | 🟡 | **Download links are fake.** `deliver_order` returns a random `downloads.example` URL; there is no file hosting, no signed URL, no expiry or resend | `store/mock.py` | Hosted assets with signed, expiring URLs (the store platform or object storage) |
-| I14 | 🟡 | **Newsletter ignores consent.** `send_newsletter` emails every customer; "reply STOP" isn't processed; no marketing consent is recorded | `tools/catalog.py`, `db.py` | Consent flag per customer, unsubscribe handling, suppression list |
+| I13 | ✅ done 2026-10-27 | **Download links are fake.** `deliver_order` returns a random `downloads.example` URL; there is no file hosting, no signed URL, no expiry or resend | `store/mock.py` | Hosted assets with signed, expiring URLs (the store platform or object storage) |
+| I14 | ✅ done 2026-10-27 | **Newsletter ignores consent.** `send_newsletter` emails every customer; "reply STOP" isn't processed; no marketing consent is recorded | `tools/catalog.py`, `db.py` | Consent flag per customer, unsubscribe handling, suppression list |
 | I15 | 🟡 | **Shared memory can be poisoned.** Any agent can `remember(shared=True)` at T1, including right after reading an untrusted email; every agent then recalls it | `tools/catalog.py`, `policy.yaml` | Store the source with each memory; shared memories need Judge or human review |
 | I16 | 🟡 | **Secrets in plain text in the DB and dashboard.** Licence keys and download links are stored in `ops_outbox_emails` and in the audit log args, and both are shown on the dashboard | `integrations/agentmail.py`, `policy/gate.py` | Mask secrets in the audit log and dashboard views |
 | — | ℹ️ | On Postgres, two concurrent deliveries can pick the same key (`.first()` without a row lock; SQLite serialises writers, so not today) | `store/mock.py` | `SELECT … FOR UPDATE SKIP LOCKED` as part of the Postgres move |
@@ -189,6 +189,7 @@ Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves
 | R11 | W4 | `docs/wiki/Agents.md` still says TOOLS.md seeds only on the first init (C5 changed that); ruff `known-first-party` for the dashboard; replace SQLite's deprecated default datetime adapter; init_db lock against two processes initialising an empty DB at once |
 | R12 | W5 | Make `--by` required for `aecom incidents ack/resolve`; partial unique index for active incidents (concurrent raise); immediate alert when an incident escalates P2→P1; guard `resolve_absent` against a bare string; the number check reads a trailing `m` as million (e.g. "5m" minutes is rejected) |
 | R13 | W7 | Webhook receipt and mirror not in one transaction (a hard crash between them drops that delivery until a later replay); book Lemon Squeezy fees/payouts as expenses; P3 monitor for `awaiting_consent` orders; take licence-key quantity from the order item; `Data-Model.md` lacks the newer tables; personas should say product/price changes are a human dashboard task with Lemon Squeezy |
+| R14 | W8 | Recover lost `license_key_created` webhooks via the LS license-keys API; a download route that calls `verify_download`; unknown vendors become active on key presence only (consider a human tick); move `every_mirrored_order_has_ledger_lines` into the global invariants |
 | R5 ✅ | — | Replace FastAPI's deprecated `@app.on_event("startup")` with a lifespan handler |
 
 #### Decisions owned by the product owner
