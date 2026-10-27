@@ -75,15 +75,28 @@ def weekly_review() -> None:
     asyncio.run(run_company(REVIEW_DIRECTIVE))
 
 
+def weekly_review_report() -> None:
+    """J6: the weekly business review snapshot (code-computed, numbers-only text), emailed like the daily flash."""
+    from aecom.reports import send_report
+
+    log.info("weekly review report: %s", send_report("weekly_review", "last_7_days"))
+
+
+def governance_report() -> None:
+    """J12: last month's governance report (approvals, denies, controls, incidents, GDPR, provisioning)."""
+    from aecom.reports import send_report
+
+    log.info("governance report: %s", send_report("governance", "last_month"))
+
+
 def simulate_market_day() -> None:
     from aecom.simulator import simulate_day
 
     log.info("market day: %s", simulate_day(support_emails=True))
 
 
-def main(demo: bool = False) -> None:
-    logging.basicConfig(level=logging.INFO)
-    init()
+def build_scheduler(demo: bool = False) -> BlockingScheduler:
+    """All jobs registered, not started (so the setup can be inspected)."""
     sched = BlockingScheduler()
     sched.add_job(drain, "interval", seconds=30, id="drain")
     sched.add_job(stock_check, "interval", minutes=60, id="stock_check")
@@ -96,8 +109,19 @@ def main(demo: bool = False) -> None:
         sched.add_job(simulate_market_day, "interval", minutes=1, id="market")
         sched.add_job(daily_finance_report, "interval", minutes=10, id="finance_daily")
         sched.add_job(weekly_review, "interval", minutes=60, id="weekly_review")
+        sched.add_job(weekly_review_report, "interval", minutes=60, id="weekly_review_report")
+        sched.add_job(governance_report, "interval", minutes=240, id="governance_report")
     else:
         sched.add_job(daily_finance_report, "cron", hour=7, id="finance_daily")
         sched.add_job(weekly_review, "cron", day_of_week="mon", hour=8, id="weekly_review")
+        sched.add_job(weekly_review_report, "cron", day_of_week="mon", hour=8, id="weekly_review_report")
+        sched.add_job(governance_report, "cron", day=1, hour=7, minute=30, id="governance_report")
+    return sched
+
+
+def main(demo: bool = False) -> None:
+    logging.basicConfig(level=logging.INFO)
+    init()
+    sched = build_scheduler(demo)
     log.info("scheduler started (demo=%s)", demo)
     sched.start()

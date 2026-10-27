@@ -1,4 +1,4 @@
-"""HTTP API: runs, approvals (HITL), kill switch, agent pause, safe mode, events, provider webhooks.
+"""HTTP API: runs, approvals (HITL), kill switch, agent pause, safe mode, events, reports, provider webhooks.
 
     uv run aecom api      → http://127.0.0.1:8000/docs
 
@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Response
 from pydantic import BaseModel
 
 import aecom.handlers  # noqa: F401  (registers event subscribers)
@@ -189,6 +189,23 @@ def post_event(evt: EventIn, bg: BackgroundTasks) -> dict[str, Any]:
     event_id = publish(evt.topic, evt.payload, source="api")
     bg.add_task(drain)
     return {"event_id": event_id}
+
+
+@api.get("/reports")
+def list_reports(kind: str | None = None, limit: int = Query(20, ge=1, le=200)) -> list[dict[str, Any]]:
+    """Stored report versions, newest first (data, text, sha256, version)."""
+    from aecom import reports
+
+    return reports.list_reports(kind or None, limit=limit)
+
+
+@api.get("/reports/{report_id}")
+def get_report(report_id: str) -> dict[str, Any]:
+    from aecom import reports
+
+    if (report := reports.get_report(report_id)) is None:
+        raise HTTPException(404, "report not found")
+    return report
 
 
 app.include_router(api)

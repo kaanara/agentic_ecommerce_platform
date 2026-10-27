@@ -1,12 +1,15 @@
 # Reporting
 
-> **Status:** stored report snapshots exist (J3) and their commentary is number-checked (J4): `aecom/reports.py` + the `submit_report` tool, persisted in `ops_reports`. Reports are **not yet delivered or exportable** (no email, renderers, CLI, API or dashboard page), and periods aren't closed. This page records today's state, the remaining gaps and the target design. Work items are tracked in [Roadmap](Roadmap) → section J, and scheduled in the [Development Plan](Development-Plan).
+> **Status:** stored report snapshots exist (J3) and their commentary is number-checked (J4): `aecom/reports.py` + the `submit_report` tool, persisted in `ops_reports`. The daily flash (J5), the weekly business review (J6) and the monthly governance report (J12) are generated on schedule and emailed; the dashboard **Reports** page and `GET /reports` serve the archive with Markdown and CSV exports (J13). Still missing: PDF, a CLI, month-end close and accounting exports, and periods aren't closed. This page records today's state, the remaining gaps and the target design. Work items are tracked in [Roadmap](Roadmap) → section J, and scheduled in the [Development Plan](Development-Plan).
 
 ## What exists today
 | Report | How it's produced | Where it ends up |
 |---|---|---|
-| Daily finance report | Scheduler 07:00 → Finance agent | The agent's run output; 300 characters in the process log; "3 insights" written to **shared memory** |
-| Weekly review | Scheduler Monday 08:00 → company run | The CEO's executive summary in the run output |
+| Daily flash | Scheduler 07:00 → code + Finance commentary (`aecom/flash.py`) | `ops_reports` (`daily_flash`), email |
+| Weekly business review | Scheduler Monday 08:00 → `reports.send_report("weekly_review", "last_7_days")` | `ops_reports` (`weekly_review`), email |
+| Weekly company run | Scheduler Monday 08:00 → company run | The CEO's executive summary in the run output |
+| Governance report | Scheduler 1st of the month 07:30 → `reports.send_report("governance", "last_month")` | `ops_reports` (`governance`), email |
+| Reports page / `GET /reports` | Stored snapshots | Dashboard (Markdown and CSV download), API |
 | Business dashboard | Live SQL queries | On screen only (7/30/90-day ranges) |
 | `get_pnl` / `get_kpis` tools | Ledger and order queries | Returned to the agent that called them |
 
@@ -42,15 +45,54 @@
    `AGENTMAIL_LIVE=true`.
 5. Nothing is written to shared memory; daily notes live in `ops_reports` as `daily_flash` versions.
 
+## Weekly business review and governance report
+`build_data(kind, period)` always holds `period`, `pnl` and `kpis`; two kinds add their own sections, all computed by
+code from the database (periods are half-open `[start, end)` in UTC, see `aecom.metrics.period`):
+
+| Kind (period) | Section | Contents |
+|---|---|---|
+| `weekly_review` (`last_7_days`) | `products` | Per SKU: orders placed, net revenue and refunds booked in the ledger, refunded orders, refund rate (refunded orders / orders placed) |
+| | `campaigns` | Per campaign with spend or revenue in the period: ad spend (`marketing_expense` lines whose ref is the campaign), net revenue of its orders, ROAS |
+| | `support` | Inbound emails received; threaded replies sent (outbound subjects starting `Re:`) |
+| | `ai` | Ledger AI cost and cost per order (from `kpis`), runs and `cost_eur` per agent from `ops_agent_runs` |
+| `governance` (`last_month`) | `approvals` | Created in the period; decided in the period with tool, agent, tier, outcome and who decided; counts by outcome and decider |
+| | `policy_denies` | Gate denies (`ops_tool_calls.decision = deny`) by agent |
+| | `controls` | `kill_switch`, `agents_paused` and `safe_mode` changes from the audit log, with actor and new state |
+| | `incidents` | Opened (`first_seen`) and resolved (`resolved_at`) by severity |
+| | `gdpr` | Marketing opt-ins, unsubscribes and suppressions from the audit log; new suppressions by reason |
+| | `provisioning` | `provisioning` and `account_need` audit events (activations, checklists, rejections, decisions) by decision, with vendor |
+
+`reports.generate(kind, period)` stores a new version. Without commentary the text is `reports.summary(data)`, a
+deterministic numbers-only summary: every figure is formatted from the data, and a line that would still fail the
+number check (a product or campaign name containing a stray number) is dropped, so storing never fails. Agents can
+still add commentary with `submit_report(kind, period, text)`; it gets the same data and the same check.
+
+`reports.send_report(kind, period)` generates the report and emails it as Markdown to `REPORT_EMAIL` (or `ALERT_EMAIL`),
+secret-masked; with neither set it's only stored, and an email failure is recorded in `ops_errors` without losing the
+report. Scheduler jobs: `weekly_review_report` (Monday 08:00, next to the `weekly_review` company run) and
+`governance_report` (1st of the month 07:30); with `--demo` every 60 and 240 minutes. `scheduler.build_scheduler(demo)`
+returns the configured scheduler without starting it.
+
+Not yet in the governance data: who switched the kill switch or the agent pause. Those settings are changed with
+`set_setting` and only appear once that writes an audit row (safe mode already does).
+
+## Reports page, API and exports
+- **Dashboard → Reports** (`dashboard/pages/5_Reports.py`, behind the login): pick a kind, see every version with its
+  period, author, time and hash, read the text and the flattened data, and download **Markdown** (text plus a
+  key/value table of the data, `reports.to_markdown`) or **CSV** (`key,value` rows, `reports.to_csv`). Nested data is
+  flattened to dotted keys with list indexes, e.g. `products.0.refund_rate_pct`.
+- **API** (bearer token): `GET /reports?kind=&limit=` (newest first, default 20, max 200) and `GET /reports/{id}`
+  (`data`, `text`, `sha256`, `version`, period, author; 404 if unknown).
+
 ## Gaps
-- **Nobody receives a report.** No email, no file, no archive. A report exists only as a row in `ops_agent_runs`.
+- **No PDF and no archive outside the database.** Reports are emailed and kept in `ops_reports`; there is no file export beyond the dashboard downloads.
 - **No periods.** `get_pnl()` and `get_kpis()` are all-time only, so "last month" or "Q3" can't be answered with the tools.
 - **Two sources of truth.** `get_kpis` computes revenue from the `orders` table, while `get_pnl` uses the ledger. They can disagree (refunds, VAT, failed orders).
 - **Numbers written by an LLM.** The Finance agent writes the report text itself. Nothing checks that its figures match the database.
 - **Reports aren't snapshots.** Re-running later gives different numbers, and no period is ever closed.
 - **No tax or accounting output.** There's no VAT breakdown by country and rate (ledger lines carry no country), no journal export for an accountant, and no receipts attached to expenses.
 - **Records can be changed.** Ledger rows are ordinary rows (the simulator rewrites `created_at`). German bookkeeping rules (GoBD) require records that can't be altered, kept for 10 years.
-- **No export.** The dashboard has no CSV or PDF download.
+- **Partial export.** Stored reports download as Markdown and CSV; there is no PDF, and the Business page has no download.
 - **Daily insights pollute shared memory.** Every agent recalls them, they pile up daily, and they're never reviewed (see I15).
 
 ## Target design
