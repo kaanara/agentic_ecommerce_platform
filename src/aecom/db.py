@@ -91,6 +91,7 @@ class Vendor(Base):
     checklist: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_check_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # E5 reminders
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
@@ -144,6 +145,20 @@ class Customer(Base):
     name: Mapped[str] = mapped_column(String, default="")
     country: Mapped[str] = mapped_column(String, default="DE")
     acquisition_channel: Mapped[str | None] = mapped_column(String, nullable=True)
+    # I14: marketing email only with recorded opt-in; unsubscribing is permanent until a new opt-in
+    marketing_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    marketing_consent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    marketing_consent_source: Mapped[str | None] = mapped_column(String, nullable=True)  # checkout | form | import
+    unsubscribed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class Suppression(Base):
+    """I14: addresses that must never get marketing email (unsubscribed, bounced, complained), customer or not."""
+
+    __tablename__ = "commerce_suppressions"
+    email: Mapped[str] = mapped_column(String, primary_key=True)  # lower-case
+    reason: Mapped[str] = mapped_column(String)  # unsubscribe | bounce | complaint | manual
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
@@ -167,6 +182,9 @@ class Order(Base):
     # H8: EU digital content - consent to immediate delivery and acknowledgement that the withdrawal right is lost
     withdrawal_consent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     withdrawal_consent_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    # I13: one stable, expiring download link per order (the token is random; links are re-issued, not re-randomised)
+    download_token: Mapped[str | None] = mapped_column(String, nullable=True)
+    download_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
