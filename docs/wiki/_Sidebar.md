@@ -14,6 +14,7 @@
 - [Monitoring and Alerting](Monitoring-and-Alerting)
 - [Reporting](Reporting)
 - [Incident Response](Incident-Response)
+- [GDPR and Retention](GDPR-and-Retention)
 - [Runbooks](Runbooks)
 - [Roadmap](Roadmap)
 - [Development Plan](Development-Plan)
