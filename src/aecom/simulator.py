@@ -33,6 +33,8 @@ def _backdate(order_id: str, ts: Any) -> None:
     with session() as s:
         o = s.get(Order, order_id)
         o.created_at = ts
+        if o.withdrawal_consent_at is not None:  # consent is given at checkout, i.e. at order time
+            o.withdrawal_consent_at = ts
         for e in s.scalars(select(LedgerEntry).where(LedgerEntry.ref == order_id)):
             e.created_at = ts
 
@@ -40,7 +42,8 @@ def _backdate(order_id: str, ts: Any) -> None:
 def _order(rng: random.Random, sku: str, email: str | None, campaign_id: str | None, ts: Any) -> dict[str, Any] | None:
     email = email or f"buyer{rng.randint(10000, 99999)}@example.com"
     try:
-        o = get_store().create_order(email, sku, country=rng.choice(COUNTRIES), campaign_id=campaign_id)
+        o = get_store().create_order(email, sku, country=rng.choice(COUNTRIES), campaign_id=campaign_id,
+                                    withdrawal_consent=True)  # the simulated checkout ticks the H8 consent box
     except ValueError:
         return None
     _backdate(o["id"], ts)

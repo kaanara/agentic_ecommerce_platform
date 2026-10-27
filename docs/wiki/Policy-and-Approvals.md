@@ -85,6 +85,9 @@ The kill switch is checked first and wins: with it on, delivery is denied too, w
 
 How they differ: the **kill switch** is a human's emergency stop (nothing with side effects runs, not even delivery). **Pause** is a human's "stop new agent work" (only delivery continues). **Safe mode** is automatic and in between: it exists so that a P1 nobody reacts to makes the company *safer*, not riskier. Customers keep getting their keys and answers to their emails; nothing that costs money runs. The monitors never leave safe mode by themselves, even when the incident resolves, because a human has to look first; leaving it is audited with the human's name (`aecom safe-mode` shows since when and why).
 
+## Withdrawal consent
+EU law lets customers withdraw from a purchase for 14 days. For digital content that right ends early only if the customer **expressly agrees** to delivery starting before those 14 days are up and **acknowledges** that this ends their withdrawal right. We also have to keep a record of that consent. The checkout checkbox wording is `aecom.store.mock.WITHDRAWAL_CONSENT_VERSION` (currently `2026-10-v1`, English, pending legal review). Each order stores `withdrawal_consent_at` (the order time) and `withdrawal_consent_version`. An order without consent is still paid and booked in the ledger, but `deliver_order` holds it in status **`awaiting_consent`**: no key is assigned and no email is sent. It goes out only once a human steps in or the customer consents later (`MockStore.record_withdrawal_consent`, which sets the order back to `paid`). The reconciler, the monitors and the chaos invariants only look at `paid`/`failed`, so a held order is never retried in a loop or flagged as undelivered. If you change the wording, also bump the version.
+
 ## Budgets
 Each agent has a daily LLM budget in € (`POLICY.md`, falling back to `policy.yaml → budgets`). If the budget is spent, the run is refused and audited.
 

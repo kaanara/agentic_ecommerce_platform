@@ -13,6 +13,15 @@ from aecom.db import Customer, LicenseKey, Order, Product, Refund, now, session
 from aecom.money import cents, quantize
 from aecom.store.adapter import vat_included, vat_rate
 
+# H8 (EU digital content): version of the checkout checkbox the customer ticks before immediate delivery.
+# LEGAL REVIEW PENDING - bump the version whenever the wording changes; each order stores the version it agreed to.
+WITHDRAWAL_CONSENT_VERSION = "2026-10-v1"
+"""Consent wording of version 2026-10-v1 (English; to be reviewed by legal):
+
+"I expressly agree that you start delivering the digital content before the end of the 14-day withdrawal period.
+I acknowledge that I thereby lose my right of withdrawal once delivery has begun."
+"""
+
 
 def _p(p: Product) -> dict[str, Any]:
     return {"id": p.id, "sku": p.sku, "title": p.title, "kind": p.kind, "price_eur": p.price_eur,
@@ -22,7 +31,8 @@ def _p(p: Product) -> dict[str, Any]:
 def _o(o: Order) -> dict[str, Any]:
     return {"id": o.id, "customer_id": o.customer_id, "product_id": o.product_id, "amount_eur": o.amount_eur,
             "vat_eur": o.vat_eur, "status": o.status, "campaign_id": o.campaign_id, "email_sent": bool(o.email_sent),
-            "created_at": str(o.created_at)}
+            "withdrawal_consent_at": str(o.withdrawal_consent_at) if o.withdrawal_consent_at else None,
+            "withdrawal_consent_version": o.withdrawal_consent_version, "created_at": str(o.created_at)}
 
 
 class MockStore:
@@ -79,7 +89,10 @@ class MockStore:
         return [{"sku": r[0], "title": r[1], "kind": r[2], "status": r[3],
                  "available_keys": r[4] if r[2] == "license" else None} for r in rows]
 
-    def create_order(self, customer_email: str, sku: str, country: str = "DE", campaign_id: str | None = None):
+    def create_order(self, customer_email: str, sku: str, country: str = "DE", campaign_id: str | None = None,
+                     withdrawal_consent: bool = True, consent_version: str = WITHDRAWAL_CONSENT_VERSION):
+        """Record a paid order. ``withdrawal_consent`` is the checkout checkbox (H8): without it the order is
+        still paid, but deliver_order holds it as 'awaiting_consent' until a human or a later consent releases it."""
         # transactional outbox (I11): customer, order, ledger lines and order.paid commit together or not at all
         with session() as s, outbox(s):
             p = s.scalars(select(Product).where(Product.sku == sku)).one()
@@ -94,8 +107,11 @@ class MockStore:
                 c = Customer(email=customer_email, country=tax_country, acquisition_channel=campaign_id)
                 s.add(c)
                 s.flush()
-            o = Order(customer_id=c.id, product_id=p.id, amount_eur=p.price_eur,
-                      vat_eur=vat, campaign_id=campaign_id, status="paid")
+            ordered_at = now()
+            o = Order(customer_id=c.id, product_id=p.id, amount_eur=p.price_eur, vat_eur=vat,
+                      campaign_id=campaign_id, status="paid", created_at=ordered_at,
+                      withdrawal_consent_at=ordered_at if withdrawal_consent else None,
+                      withdrawal_consent_version=consent_version if withdrawal_consent else None)
             s.add(o)
             s.flush()
             result = _o(o)
@@ -119,6 +135,10 @@ class MockStore:
                 if p.kind != "license":
                     already["download_url"] = f"https://downloads.example/{p.sku}/{pysecrets.token_urlsafe(12)}"
                 return already
+            if o.withdrawal_consent_at is None:  # H8: no immediate delivery without the customer's express consent
+                o.status = "awaiting_consent"
+                return {"order_id": order_id, "status": "awaiting_consent",
+                        "error": "customer has not consented to immediate delivery (withdrawal right)"}
             delivered: dict[str, Any] = {"order_id": order_id, "status": "delivered", "sku": p.sku}
             remaining = None
             if p.kind == "license":
@@ -141,6 +161,20 @@ class MockStore:
         elif remaining is not None and remaining < 5:
             publish("inventory.low", {"sku": p.sku, "available_keys": remaining}, source="store")
         return delivered
+
+    def record_withdrawal_consent(self, order_id: str,
+                                  consent_version: str = WITHDRAWAL_CONSENT_VERSION) -> dict[str, Any]:
+        """Record a consent given after checkout (H8); an 'awaiting_consent' order becomes 'paid' again so it can
+        be delivered. Does not deliver by itself."""
+        with session() as s:
+            o = s.get(Order, order_id)
+            if o is None:
+                raise ValueError(f"order {order_id} not found")
+            if o.withdrawal_consent_at is None:
+                o.withdrawal_consent_at, o.withdrawal_consent_version = now(), consent_version
+            if o.status == "awaiting_consent":
+                o.status = "paid"
+            return _o(o)
 
     def mark_email_sent(self, order_id: str) -> None:
         """Record that the access email of a delivered order went out (I4), so it is never sent twice."""
