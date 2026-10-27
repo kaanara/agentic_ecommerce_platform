@@ -1,11 +1,42 @@
+import pandas as pd
 import streamlit as st
 
 from _common import AGENT_ORDER, colors, require_login, sql
+from aecom import run_detail
 from aecom.company_settings import agent_enabled, set_agent_enabled
 
 st.set_page_config(page_title="Agents", page_icon="🤖", layout="wide")
 require_login()
 st.title("🤖 Agents")
+
+
+def running_now_panel() -> None:
+    """D1: agent runs still marked running; stuck ones (older than run_detail.STUCK_AFTER) are flagged red."""
+    st.subheader("Running now")
+    rows = run_detail.running_now()
+    refreshed = f"Refreshed {pd.Timestamp.now():%H:%M:%S}."
+    if not rows:
+        st.caption(f"No agent is running. {refreshed}")
+        return
+    stuck = sum(r["stuck"] for r in rows)
+    if stuck:
+        st.error(f"{stuck} run(s) running for more than {run_detail.STUCK_AFTER.total_seconds() / 60:.0f} min. "
+                 "Open them on Run detail, or use the kill switch on Home.")
+    df = pd.DataFrame(rows)
+    df.insert(0, "state", df["stuck"].map({True: "🔴 stuck", False: "🟢 running"}))
+    df["age_min"] = (df["age_s"] / 60).round(1)
+    df["detail"] = "/Run_Detail?run_id=" + df["run_id"]
+    st.dataframe(df[["state", "agent_id", "age_min", "steps", "tool_calls", "cost_eur", "task", "run_id", "started_at",
+                     "detail"]], hide_index=True, width="stretch",
+                 column_config={"detail": st.column_config.LinkColumn("detail", display_text="open")})
+    st.caption(f"{refreshed} Updates every 10 s.")
+
+
+if hasattr(st, "fragment"):
+    st.fragment(run_every=10)(running_now_panel)()
+else:  # older Streamlit without fragments: refresh by hand
+    running_now_panel()
+    st.button("Refresh", key="running_now_refresh")
 
 st.subheader("Enabled agents")
 st.caption("A disabled agent's LLM runs are skipped (audited as denied). Reflexes such as order delivery and "
