@@ -29,9 +29,12 @@ class StubModel:
     def __init__(self, replies: list[AIMessage]):
         self.replies = list(replies)
         self.binds: list[list[str]] = []
+        self.search_uses: list[int | None] = []  # web_search max_uses per bind (None = not bound)
 
     def bind_tools(self, tools, **_kw):
-        self.binds.append([t["name"] for t in tools if isinstance(t, dict)])
+        specs = [t for t in tools if isinstance(t, dict)]
+        self.binds.append([t["name"] for t in specs])
+        self.search_uses.append(next((t["max_uses"] for t in specs if t["name"] == "web_search"), None))
         return self
 
     async def ainvoke(self, _messages):
@@ -78,14 +81,32 @@ def test_web_fetch_priced_by_setting(monkeypatch, live):
 
 def test_cap_reached_rebinds_without_web_search(monkeypatch, live):
     monkeypatch.setattr(live, "web_search_max_per_run", 4)
-    stub = StubModel([reply(2), reply(2), reply(1), reply(tool_call=False)])
+    monkeypatch.setattr(live, "web_search_max_uses", 5)
+    stub = StubModel([reply(2), reply(2), reply(tool_call=False)])
     res, (searches, _, _) = run_with(monkeypatch, stub)
-    assert res.status == "ok" and searches == 5
-    assert stub.binds[0] == ["web_search", "web_fetch"]
-    assert stub.binds[1:] == [["web_fetch"]]  # rebound once, after the second call reached the cap
+    assert res.status == "ok" and searches == 4
+    assert stub.binds == [["web_search", "web_fetch"], ["web_search", "web_fetch"], ["web_fetch"]]
+    assert stub.search_uses == [4, 2, None]  # max_uses clipped to the remaining budget, then the tool is dropped
     with session() as s:
         caps = list(s.scalars(select(AuditLog).where(AuditLog.action == "web_search_cap")))
     assert len(caps) == 1 and caps[0].detail["web_searches"] == 4
+
+
+class GreedyModel(StubModel):
+    """Searches as much as each bind allows (the API enforces max_uses per call) and keeps calling tools."""
+
+    async def ainvoke(self, _messages):
+        return reply(self.search_uses[-1] or 0)
+
+
+def test_run_total_never_exceeds_cap(monkeypatch, live):
+    monkeypatch.setattr(live, "web_search_max_per_run", 12)
+    monkeypatch.setattr(live, "web_search_max_uses", 5)
+    monkeypatch.setattr(live, "agent_max_steps", 8)
+    stub = GreedyModel([])
+    res, (searches, _, _) = run_with(monkeypatch, stub)
+    assert res.status == "max_steps" and res.web_searches == searches == 12
+    assert stub.search_uses == [5, 2, None]
 
 
 def test_scripted_mode_counts_zero(monkeypatch):
@@ -106,6 +127,9 @@ def test_spec_shapes(monkeypatch, live):
     assert search == {"type": live.web_search_tool_type, "name": "web_search", "max_uses": 7}
     assert fetch == {"type": live.web_fetch_tool_type, "name": "web_fetch", "max_uses": live.web_fetch_max_uses,
                      "max_content_tokens": 1234}
+    assert server_tool_specs(["web_search"], web_searches_left=3)[0]["max_uses"] == 3
+    assert server_tool_specs(["web_search"], web_searches_left=9)[0]["max_uses"] == 7
+    assert [t["name"] for t in server_tool_specs(["web_search", "web_fetch"], web_searches_left=0)] == ["web_fetch"]
     monkeypatch.setattr(live, "web_search_blocked_domains", ["spam.example"])
     monkeypatch.setattr(live, "web_fetch_allowed_domains", ["docs.example"])
     monkeypatch.setattr(live, "web_fetch_blocked_domains", ["ignored.example"])  # API takes only one of the two

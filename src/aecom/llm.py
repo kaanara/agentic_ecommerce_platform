@@ -91,14 +91,21 @@ def _domain_filter(allowed: list[str], blocked: list[str]) -> dict[str, list[str
     return {}
 
 
-def server_tool_specs(names: list[str]) -> list[dict[str, Any]]:
+def server_tool_specs(names: list[str], web_searches_left: int | None = None) -> list[dict[str, Any]]:
+    """Anthropic server-tool specs for ``names``.
+
+    ``web_searches_left`` is what remains of the per-run search budget: web_search's ``max_uses`` is clipped to it so
+    one API call cannot overshoot the run cap, and the tool is dropped once nothing is left.
+    """
     settings = get_settings()
     if settings.llm_mode == "scripted":
         return []
     specs = []
-    if "web_search" in names:
+    search_uses = settings.web_search_max_uses if web_searches_left is None \
+        else min(settings.web_search_max_uses, web_searches_left)
+    if "web_search" in names and search_uses > 0:
         specs.append({"type": settings.web_search_tool_type, "name": "web_search",
-                      "max_uses": settings.web_search_max_uses,
+                      "max_uses": search_uses,
                       **_domain_filter(settings.web_search_allowed_domains, settings.web_search_blocked_domains)})
     if "web_fetch" in names:
         specs.append({"type": settings.web_fetch_tool_type, "name": "web_fetch",

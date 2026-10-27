@@ -113,27 +113,37 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
         by_name = {t.name: t for t in tools}
         model = get_model(spec.model_tier, agent_id)
 
-        def bind(server_tools: list[str]) -> Any:
-            bindable: list[Any] = [*tools, *server_tool_specs(server_tools)]
+        def bind(server_tools: list[str], searches_left: int) -> Any:
+            bindable: list[Any] = [*tools, *server_tool_specs(server_tools, searches_left)]
             return model.bind_tools(bindable) if bindable else model
 
+        def searches_left() -> int:
+            return max(0, settings.web_search_max_per_run - result.web_searches)
+
+        result = AgentResult(agent_id, "", status="max_steps")
         server_tools = list(spec.server_tools)
-        bound = bind(server_tools)
+        bound_left = searches_left()
+        bound = bind(server_tools, bound_left)
 
         system: SystemMessage = SystemMessage(
             content=prompt if settings.llm_mode == "scripted"
             else [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}])  # cache the long persona prompt
         messages: list[BaseMessage] = [system, HumanMessage(content=task + (f"\n\n# Context\n{context}" if context else ""))]
 
-        result = AgentResult(agent_id, "", status="max_steps")
         tin = tout = steps = 0
         for steps in range(1, settings.agent_max_steps + 1):
-            # max_uses only limits one API call; this caps web searches across the whole run.
-            if "web_search" in server_tools and result.web_searches >= settings.web_search_max_per_run:
-                server_tools.remove("web_search")
-                bound = bind(server_tools)
-                audit(agent_id, "web_search_cap", "ok", {"web_searches": result.web_searches,
-                                                         "max_per_run": settings.web_search_max_per_run}, run_id)
+            # max_uses only limits one API call; clip it to what is left of the run cap (rebinding when that shrinks
+            # below the per-call max_uses) and drop web_search entirely once the cap is reached.
+            if "web_search" in server_tools:
+                left = searches_left()
+                if left <= 0:
+                    server_tools.remove("web_search")
+                    bound = bind(server_tools, 0)
+                    audit(agent_id, "web_search_cap", "ok", {"web_searches": result.web_searches,
+                                                             "max_per_run": settings.web_search_max_per_run}, run_id)
+                elif min(left, settings.web_search_max_uses) != min(bound_left, settings.web_search_max_uses):
+                    bound_left = left
+                    bound = bind(server_tools, left)
             ai: AIMessage = await bound.ainvoke(messages)
             usage = ai.usage_metadata or {}
             tin += usage.get("input_tokens", 0)
