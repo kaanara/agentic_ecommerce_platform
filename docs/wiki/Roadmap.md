@@ -19,7 +19,7 @@ Target setup: runs 24/7 on a Raspberry Pi 4 (64-bit OS), dashboards opened from 
 | A2 ✅ 2026-10-26 | Order reconciler job | Every 15 min: paid but undelivered orders → deliver, alert if it still fails |
 | A3 ✅ 2026-10-25 | Fix stuck `running` runs | The `except` path in `graph/agents.py` must set the `ops_agent_runs` row to `error` |
 | A4 ✅ 2026-10-26 | Split the kill switch | *Pause agents* vs. *stop selling*. Today the kill switch also stops deliveries |
-| A5 | Lemon Squeezy as store (MoR) | Checkout, payment, VAT and key delivery keep working when the Pi is off; webhooks retry |
+| A5 ✅ 2026-10-27 (offline fixtures; live test-mode run pending) | Lemon Squeezy as store (MoR) | Checkout, payment, VAT and key delivery keep working when the Pi is off; webhooks retry |
 
 ### B. Monitoring and alerting
 See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, P1/P2/P3 routing (push + email + digest), external heartbeat, `ops_incidents` + Health page, a real `/health`, then a read-only Sentinel agent for diagnosis.
@@ -45,13 +45,13 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 ### E. Closing the CEO's decision chain
 | # | Item | Notes |
 |---|---|---|
-| E1 | Provisioning loop | Subscribe to `approval.resolved` (it has no subscriber today); detect when `credential_env` appears; mark the vendor `active`; send the Foreman an integration task |
+| E1 ✅ 2026-10-27 | Provisioning loop | Subscribe to `approval.resolved` (it has no subscriber today); detect when `credential_env` appears; mark the vendor `active`; send the Foreman an integration task |
 | E2 | Vendor MCP first | Foreman proposes and sandboxes the vendor's MCP server; read-only tools granted first |
 | E3 | Engineer agent | Writes adapters and webhooks on a branch and opens a PR; a human reviews and merges; never deploys |
-| E4 | Any agent can raise an account need | New tool `request_account_need(vendor, why, evidence)` for all agents → goes to the CEO, who decides and calls `request_provisioning`. Today only the CEO can ask, so other agents can only mention a need in their output |
+| E4 ✅ 2026-10-27 | Any agent can raise an account need | New tool `request_account_need(vendor, why, evidence)` for all agents → goes to the CEO, who decides and calls `request_provisioning`. Today only the CEO can ask, so other agents can only mention a need in their output |
 | E5 | Provisioning task with notification | Status `requested → approved → in_progress → active / rejected`; checklist of the steps; "action needed" message by email or push (B routing) with purpose, cost, steps, the credential name and required scopes; reminder after 3 days; snooze |
 | E6 | Credential verification | When `credential_env` appears: one read-only test call, and a scope check where the platform allows it (warn if broader than requested). Success → vendor `active`, CEO informed, Foreman integration task (E1). Failure → message to the human saying what's wrong |
-| E7 | Feedback to the CEO | Rejections and their reasons go back to the CEO and are recorded, so the same request isn't repeated; duplicate open requests per vendor are merged |
+| E7 ✅ 2026-10-27 | Feedback to the CEO | Rejections and their reasons go back to the CEO and are recorded, so the same request isn't repeated; duplicate open requests per vendor are merged |
 
 ### F. Platforms and credentials
 | # | Item | Notes |
@@ -84,10 +84,10 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 | H4 | Anthropic Console spend limit | Hard cap outside the app |
 | H5 ✅ 2026-10-26 | SSRF guard in `fetch_url` | Only checks for `http(s)://`; block loopback, private and link-local addresses |
 | H6 | Host hygiene | Log rotation, NTP, SD-card health or USB SSD |
-| H7 | Legal pages | Legal notice (Impressum), privacy policy, terms |
-| H8 | Withdrawal consent | EU digital content: consent to immediate delivery and loss of the 14-day withdrawal right, recorded per order |
-| H9 | GDPR requests | Human procedure for access and deletion; `delete_customer_data` stays T4 |
-| H10 | Data retention | Orders, emails, audit logs, LangSmith traces |
+| H7 ◐ templates (legal review + publishing by a human) | Legal pages | Legal notice (Impressum), privacy policy, terms |
+| H8 ✅ 2026-10-27 | Withdrawal consent | EU digital content: consent to immediate delivery and loss of the 14-day withdrawal right, recorded per order |
+| H9 ✅ procedure documented | GDPR requests | Human procedure for access and deletion; `delete_customer_data` stays T4 |
+| H10 ◐ table drafted (decisions open) | Data retention | Orders, emails, audit logs, LangSmith traces |
 | H11 | LangSmith | Tracing on, PII handled per H10 |
 
 ### I. Code review findings (2026-10-25)
@@ -156,7 +156,7 @@ Build what makes the company different (the governed agent organisation); use pr
 
 | # | Item | Notes | Changes these items |
 |---|---|---|---|
-| L1 | **Lemon Squeezy as system of record** | Checkout, payment, VAT, licence keys, download hosting, refunds and receipts live in Lemon Squeezy. The app is the management layer: agents decide, price, market, support and report. The internal ledger mirrors platform data for the agents | A5 becomes the core of Phase 3. I4–I8, I11, I13 and J7 shrink to "mirror the platform correctly" instead of re-implementing it. Sales keep running when the app host is down |
+| L1 ✅ 2026-10-27 | **Lemon Squeezy as system of record** | Checkout, payment, VAT, licence keys, download hosting, refunds and receipts live in Lemon Squeezy. The app is the management layer: agents decide, price, market, support and report. The internal ledger mirrors platform data for the agents | A5 becomes the core of Phase 3. I4–I8, I11, I13 and J7 shrink to "mirror the platform correctly" instead of re-implementing it. Sales keep running when the app host is down |
 | L2 | **Off-the-shelf ops tooling** | Sentry (errors with tracebacks), healthchecks.io (external heartbeat), ntfy (phone push), LangSmith (traces). Build only the business monitors: undelivered orders, refund spikes, ROAS, budgets, invariants | K1 becomes Sentry integration plus a thin `ops_errors` link; B heartbeat and push become configuration |
 | L3 ✅ 2026-10-26 | **Start with fewer active agents** | Active at launch: Support (event-driven), Finance (daily), Store Ops reflexes (no LLM), CEO (weekly), Researcher (on demand). Others switched on when there is work. Needs a per-agent enabled flag in `ops_settings`, respected by the scheduler and the Foreman | AI cost per order measured from day one (target ≤ €0.50) |
 | L4 | **First 10 sales before autonomy** | Launch one product with agents assisting and a human approving almost everything | G4–G6 start only after real approvals exist; becomes the entry gate of Phase 5 |
@@ -188,6 +188,7 @@ Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves
 | R10 | W3 | A `partially_refunded` order whose access email never went out is never emailed (delivery refuses refunded orders); pass `order_id` as an idempotency key to AgentMail so a crash between send and `mark_email_sent` can't double-send; store download URLs so a resent email carries the same link |
 | R11 | W4 | `docs/wiki/Agents.md` still says TOOLS.md seeds only on the first init (C5 changed that); ruff `known-first-party` for the dashboard; replace SQLite's deprecated default datetime adapter; init_db lock against two processes initialising an empty DB at once |
 | R12 | W5 | Make `--by` required for `aecom incidents ack/resolve`; partial unique index for active incidents (concurrent raise); immediate alert when an incident escalates P2→P1; guard `resolve_absent` against a bare string; the number check reads a trailing `m` as million (e.g. "5m" minutes is rejected) |
+| R13 | W7 | Webhook receipt and mirror not in one transaction (a hard crash between them drops that delivery until a later replay); book Lemon Squeezy fees/payouts as expenses; P3 monitor for `awaiting_consent` orders; take licence-key quantity from the order item; `Data-Model.md` lacks the newer tables; personas should say product/price changes are a human dashboard task with Lemon Squeezy |
 | R5 ✅ | — | Replace FastAPI's deprecated `@app.on_event("startup")` with a lifespan handler |
 
 #### Decisions owned by the product owner

@@ -20,12 +20,14 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     create_engine,
     event,
+    text,
 )
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -82,7 +84,7 @@ class Vendor(Base):
     name: Mapped[str] = mapped_column(String, unique=True)
     category: Mapped[str] = mapped_column(String)  # platform | payment | ads | social | email | asset_supplier | api
     monthly_cost_eur: Mapped[float] = mapped_column(Float, default=0.0)
-    status: Mapped[str] = mapped_column(String, default="evaluating")  # evaluating | provisioning | active | degraded | retired
+    status: Mapped[str] = mapped_column(String, default="evaluating")  # evaluating | provisioning | active | rejected | degraded | retired
     credential_env: Mapped[str | None] = mapped_column(String, nullable=True)  # name of the env var holding its secret
     notes: Mapped[str] = mapped_column(Text, default="")
     # E5/E6: provisioning checklist [{step, done}] and the last credential check (never the credential itself)
@@ -147,6 +149,9 @@ class Customer(Base):
 
 class Order(Base):
     __tablename__ = "commerce_orders"
+    # one local order per store-platform order, even if two webhook deliveries race (NULL for mock orders)
+    __table_args__ = (Index("uq_commerce_orders_external_id", "external_id", unique=True,
+                            sqlite_where=text("external_id IS NOT NULL"), postgresql_where=text("external_id IS NOT NULL")),)
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("ord"))
     customer_id: Mapped[str] = mapped_column(ForeignKey("commerce_customers.id"))
     product_id: Mapped[str] = mapped_column(ForeignKey("commerce_products.id"))
@@ -158,7 +163,7 @@ class Order(Base):
     # I4: delivery (key assigned) and the access email are tracked separately, so a failed email is resent
     email_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     email_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    external_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)  # store platform order id
+    external_id: Mapped[str | None] = mapped_column(String, nullable=True)  # store platform order id (unique, see above)
     # H8: EU digital content - consent to immediate delivery and acknowledgement that the withdrawal right is lost
     withdrawal_consent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     withdrawal_consent_version: Mapped[str | None] = mapped_column(String, nullable=True)

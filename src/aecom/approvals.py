@@ -87,7 +87,8 @@ def approve(approval_id: str, by: str, note: str = "", args_override: dict[str, 
         a = s.get(Approval, approval_id)
         a.status, a.result = status, text[:4000]
     audit(agent_id, tool_name, status, {"approval_id": approval_id, "result": text[:500]}, run_id)
-    publish("approval.resolved", {"approval_id": approval_id, "tool": tool_name, "agent": agent_id, "status": status}, source="human")
+    publish("approval.resolved", {"approval_id": approval_id, "tool": tool_name, "agent": agent_id, "status": status,
+                                  "note": note}, source="human")
     return {"approval_id": approval_id, "status": status, "result": text}
 
 
