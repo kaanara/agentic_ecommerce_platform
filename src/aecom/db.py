@@ -85,6 +85,10 @@ class Vendor(Base):
     status: Mapped[str] = mapped_column(String, default="evaluating")  # evaluating | provisioning | active | degraded | retired
     credential_env: Mapped[str | None] = mapped_column(String, nullable=True)  # name of the env var holding its secret
     notes: Mapped[str] = mapped_column(Text, default="")
+    # E5/E6: provisioning checklist [{step, done}] and the last credential check (never the credential itself)
+    checklist: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_check_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
@@ -116,6 +120,7 @@ class Product(Base):
     price_eur: Mapped[float] = mapped_column(Float)
     unit_cost_eur: Mapped[float] = mapped_column(Float, default=0.0)  # wholesale licence cost / royalty
     asset_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    external_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)  # e.g. Lemon Squeezy variant id
     vendor: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="draft")  # draft | active | archived
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
@@ -153,6 +158,10 @@ class Order(Base):
     # I4: delivery (key assigned) and the access email are tracked separately, so a failed email is resent
     email_sent: Mapped[bool] = mapped_column(Boolean, default=False)
     email_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    external_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)  # store platform order id
+    # H8: EU digital content - consent to immediate delivery and acknowledgement that the withdrawal right is lost
+    withdrawal_consent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    withdrawal_consent_version: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
@@ -230,6 +239,19 @@ class Approval(Base):
     # I10: identical pending escalations share a dedup key; stale ones expire instead of executing late
     dedup_key: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class WebhookReceipt(Base):
+    """One row per webhook delivery processed, so a provider's retries or duplicates are handled exactly once."""
+
+    __tablename__ = "ops_webhook_receipts"
+    __table_args__ = (UniqueConstraint("provider", "event_key", name="uq_webhook_provider_event"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(String)  # lemonsqueezy | agentmail
+    event_key: Mapped[str] = mapped_column(String)  # provider event / delivery id (or a hash of the body)
+    topic: Mapped[str] = mapped_column(String, default="")
+    event_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # the ops_events row it produced
+    received_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
 class Incident(Base):
