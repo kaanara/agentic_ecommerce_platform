@@ -67,6 +67,17 @@ propose_tool (T1) → proposed → sandbox_tool (T1) → sandboxed → approve_t
 ```
 or `{"transport": "streamable_http", "url": "https://…/mcp"}`. Tools listed in `read_only_tools` are treated as T0. Everything else falls under its policy rule (key `mcp:<server>/<tool>`), or T3 if there's no rule.
 
+### Vendor MCP onboarding: read-only tools first
+A new vendor's MCP server reaches an agent in two steps. The agent gets the read-only tools first, and a human widens that later.
+```
+propose_tool (T1) → sandbox_tool (T1) → approve_tool (T3, human) → grant_tool level="read_only" (T3, human)
+                  → later: grant_tool level="full" (T3, human)
+```
+- When a vendor finishes provisioning, `provisioning.py` hands the Foreman an integration task. The Foreman calls `propose_tool(kind="mcp_server", ...)` and sandboxes the server, so you end up with a proposed and then sandboxed registry entry. Until you approve it, only the Foreman can load it, and every side-effecting call escalates.
+- `grant_tool(tool_name, agent_id)` defaults to `level="read_only"`. The agent loads **only** the tools in `launch_config.read_only_tools` (T0). The server's other tools aren't loaded at all, so the model never sees them. If an approval for one of them gets parked anyway, it's refused when executed.
+- `grant_tool(..., level="full")` is the upgrade. Like every `grant_tool` call it is T3, so a human approves the exact level. With a full grant all of the server's tools load, but they're still gated: a side-effecting tool without a `mcp:<server>/<tool>` policy rule stays T3, and `forbidden_patterns` still deny sign-up, login and form tools (T4).
+- The level is stored in the registry entry's config as `config["grants"][agent_id] = "read_only" | "full"`. A grant without a recorded level, including one that predates levels, counts as read-only. If the server is re-proposed (a new version), its config is replaced and the grants go back to read-only.
+
 Loading is done by `registry/mcp_manager.py` through `MultiServerMCPClient`, with a timeout (`MCP_LOAD_TIMEOUT_S`). It can be switched off with `MCP_AUTOLOAD=false`. A server that fails to load is audited and skipped; the agent still runs.
 
 ### Skills

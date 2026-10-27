@@ -67,6 +67,8 @@ def skills_for(agent_id: str) -> list[str]:
 
 
 async def build_tools(agent_id: str, context: str = "") -> list[BaseTool]:
+    """Gated built-ins from the allowlist plus MCP tools of granted servers. An MCP grant is read-only unless a human
+    upgraded it to "full" (``grant_tool(level="full")``): read-only grants load only the server's read_only_tools."""
     names = [n for n in allowed_tools(agent_id) if n in CATALOG]
     tools: list[BaseTool] = [gate_builtin(n, agent_id, context) for n in names]
     from aecom.registry.mcp_manager import load_mcp_tools

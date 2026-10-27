@@ -531,7 +531,8 @@ def sandbox_tool(name: str) -> dict:
 
 @tool("registry", side_effect=True)
 def approve_tool(name: str) -> dict:
-    """Promote a sandboxed tool to 'approved'."""
+    """Promote a sandboxed tool to 'approved' (human approval). Approval alone gives nobody access: grant it next. An MCP
+    server's tools then reach an agent read-only first (see grant_tool)."""
     with session() as s:
         t = s.get(RegistryTool, name)
         if t is None or t.status != "sandboxed":
@@ -541,12 +542,22 @@ def approve_tool(name: str) -> dict:
 
 
 @tool("registry", side_effect=True)
-def grant_tool(tool_name: str, agent_id: str) -> dict:
-    """Allow an agent to use a tool / MCP server / skill."""
+def grant_tool(tool_name: str, agent_id: str, level: str = "read_only") -> dict:
+    """Allow an agent to use a tool / MCP server / skill (human approval). For an MCP server, level="read_only" (default)
+    loads only its read_only_tools; level="full" upgrades to all of its tools (side-effect tools stay gated). Grant
+    read-only first and ask for "full" separately, once the read-only tools have proved useful."""
+    from aecom.registry.mcp_manager import GRANT_LEVELS, set_grant_level
+
+    if level not in GRANT_LEVELS:
+        raise ValueError(f"level must be one of {', '.join(GRANT_LEVELS)}")
     with session() as s:
         if not s.scalars(select(Allowlist).where(Allowlist.agent_id == agent_id, Allowlist.tool_name == tool_name)).first():
             s.add(Allowlist(agent_id=agent_id, tool_name=tool_name))
-        return {"tool": tool_name, "agent": agent_id, "granted": True}
+        is_mcp = (t := s.get(RegistryTool, tool_name)) is not None and t.kind == "mcp_server"
+    if is_mcp:
+        set_grant_level(tool_name, agent_id, level)
+        return {"tool": tool_name, "agent": agent_id, "granted": True, "level": level}
+    return {"tool": tool_name, "agent": agent_id, "granted": True}
 
 
 # =========================================================================== structured outputs (terminal)
