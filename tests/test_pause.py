@@ -59,3 +59,16 @@ def test_paid_order_is_delivered_while_paused(monkeypatch):
     drain()
     assert get_store().get_order(order["id"])["status"] == "delivered"
 
+
+
+def test_switch_changes_are_audited_for_the_governance_report():
+    from sqlalchemy import select
+
+    from aecom.company_settings import set_flag
+    from aecom.db import AuditLog, session
+
+    set_flag("kill_switch", True, "kaan")
+    set_flag("agents_paused", False, "dashboard")
+    with session() as s:
+        rows = [(a.actor, a.action, a.decision) for a in s.scalars(select(AuditLog).where(AuditLog.action.in_(["kill_switch", "agents_paused"])))]
+    assert ("human:kaan", "kill_switch", "on") in rows and ("human:dashboard", "agents_paused", "off") in rows

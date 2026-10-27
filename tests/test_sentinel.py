@@ -65,7 +65,7 @@ def test_persona_is_sonnet_with_only_read_only_tools_and_submit_diagnosis():
     assert spec.identity["layer"] == "evaluation"
     assert set(DIAGNOSTICS) | {"submit_diagnosis"} <= set(spec.tools)
     side_effecting = {t for t in spec.tools if CATALOG[t].side_effect}
-    assert side_effecting <= {"request_account_need"}  # every agent has it (E4); it only records a need for the CEO
+    assert side_effecting == set()  # strictly read-only: account needs go into the diagnosis' next actions
     assert [t for t in spec.tools if CATALOG[t].terminal] == ["submit_diagnosis"]
     assert spec.budget_eur_per_day == 3
 

@@ -1,7 +1,7 @@
 import streamlit as st
 
 from _common import require_login, sql
-from aecom.company_settings import agents_paused_on, get_setting, kill_switch_on, leave_safe_mode, safe_mode_on, set_setting
+from aecom.company_settings import agents_paused_on, get_setting, kill_switch_on, leave_safe_mode, safe_mode_on, set_flag
 
 st.set_page_config(page_title="aecom — agentic company", page_icon="🧭", layout="wide")
 require_login()
@@ -30,7 +30,7 @@ with c4:
     on = kill_switch_on()
     st.metric("Kill switch", "ON 🛑" if on else "off ✅")
     if st.button("Turn OFF" if on else "Turn ON (block all actions)", type="secondary" if on else "primary"):
-        set_setting("kill_switch", "off" if on else "on")
+        set_flag("kill_switch", not on, "dashboard")
         st.rerun()
     st.caption("Emergency stop: blocks every side effect, including key delivery to paying customers.")
 with c5:
@@ -39,7 +39,7 @@ with c5:
     if st.toggle("Pause agents (deliveries continue)", value=paused,
                  help="Agents and reflexes stop taking actions, but paid orders are still delivered "
                       "(policy.yaml → continue_while_paused). Use the kill switch to stop everything.") != paused:
-        set_setting("agents_paused", "off" if paused else "on")
+        set_flag("agents_paused", not paused, "dashboard")
         st.rerun()
 
 st.markdown("""

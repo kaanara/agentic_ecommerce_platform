@@ -150,7 +150,7 @@ def test_the_credential_value_is_never_logged(monkeypatch, caplog):
 
 # ----------------------------------------------------------------------------- account needs (E4)
 def test_every_agent_has_request_account_need_at_t1():
-    for agent_id in agent_ids():
+    for agent_id in set(agent_ids()) - {"sentinel"}:  # the Sentinel is strictly read-only
         assert "request_account_need" in load_spec(agent_id).tools
         assert evaluate(agent_id, "request_account_need", {"vendor": "x", "why": "y"}).decision == "allow"
 

@@ -18,7 +18,7 @@ from aecom import ledger
 from aecom.audit import audit
 from aecom.company_settings import agent_enabled, get_setting, set_setting
 from aecom.config import get_settings
-from aecom.context import current_agent, current_run
+from aecom.context import current_agent, current_run, reset_taint
 from aecom.db import AgentRun, Lesson, new_id, now, session
 from aecom.llm import get_model, server_tool_specs, server_tool_usage
 from aecom.money import CENT, quantize, to_decimal
@@ -90,6 +90,7 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
     spec = load_spec(agent_id)
     run_id = run_id or current_run.get() or new_id("run")
     t_run, t_agent = current_run.set(run_id), current_agent.set(agent_id)
+    reset_taint(task, context)  # I15: a run starts clean unless its task already carries fenced (untrusted) content
     row_id: str | None = None
     try:
         if not agent_enabled(agent_id):  # no LLM call and no AgentRun row; reflexes don't come through here

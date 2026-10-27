@@ -37,10 +37,10 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 ### D. Monitoring agents
 | # | Item | Notes |
 |---|---|---|
-| D1 | Live panel | Agents running now, auto-refresh |
-| D2 | Run detail page | One `run_id` → agents, tool calls, approvals, decision on one timeline |
+| D1 ✅ 2026-10-27 | Live panel | Agents running now, auto-refresh |
+| D2 ✅ 2026-10-27 | Run detail page | One `run_id` → agents, tool calls, approvals, decision on one timeline |
 | D3 | Tool-call arguments and results | Store a shortened copy in `ops_tool_calls` |
-| D4 | Web search cost | Server-tool search fees are missing from `cost_eur`; `max_uses` applies per API call, not per run |
+| D4 ✅ 2026-10-27 | Web search cost | Server-tool search fees are missing from `cost_eur`; `max_uses` applies per API call, not per run |
 
 ### E. Closing the CEO's decision chain
 | # | Item | Notes |
@@ -109,7 +109,7 @@ Confirmed by reading the code. The offline scenarios don't catch them because th
 | I12 | ✅ done 2026-10-26 (Decimal at the boundary; Float columns remain) | **Money stored as floats.** Rounding drift across many orders breaks the "ledger balances" invariant | `ledger.py`, `db.py` | Integer cents or `Decimal` |
 | I13 | ✅ done 2026-10-27 | **Download links are fake.** `deliver_order` returns a random `downloads.example` URL; there is no file hosting, no signed URL, no expiry or resend | `store/mock.py` | Hosted assets with signed, expiring URLs (the store platform or object storage) |
 | I14 | ✅ done 2026-10-27 | **Newsletter ignores consent.** `send_newsletter` emails every customer; "reply STOP" isn't processed; no marketing consent is recorded | `tools/catalog.py`, `db.py` | Consent flag per customer, unsubscribe handling, suppression list |
-| I15 | 🟡 | **Shared memory can be poisoned.** Any agent can `remember(shared=True)` at T1, including right after reading an untrusted email; every agent then recalls it | `tools/catalog.py`, `policy.yaml` | Store the source with each memory; shared memories need Judge or human review |
+| I15 | ✅ done 2026-10-27 | **Shared memory can be poisoned.** Any agent can `remember(shared=True)` at T1, including right after reading an untrusted email; every agent then recalls it | `tools/catalog.py`, `policy.yaml` | Store the source with each memory; shared memories need Judge or human review |
 | I16 | 🟡 | **Secrets in plain text in the DB and dashboard.** Licence keys and download links are stored in `ops_outbox_emails` and in the audit log args, and both are shown on the dashboard | `integrations/agentmail.py`, `policy/gate.py` | Mask secrets in the audit log and dashboard views |
 | — | ℹ️ | On Postgres, two concurrent deliveries can pick the same key (`.first()` without a row lock; SQLite serialises writers, so not today) | `store/mock.py` | `SELECT … FOR UPDATE SKIP LOCKED` as part of the Postgres move |
 | — | ℹ️ | AgentMail webhook has no signature check | `api/app.py` | Verify the webhook signature (with I1) |
@@ -124,14 +124,14 @@ See [Reporting](Reporting) for the report catalog and design.
 | J3 ✅ 2026-10-26 | `ops_reports` + `submit_report` | Immutable, versioned, hashed snapshots; code attaches numbers, agents write commentary |
 | J4 ✅ 2026-10-26 | Number check | Reject report text that quotes figures not in its data |
 | J5 ✅ 2026-10-26 | Daily flash email | Replaces the log-only daily report; merged with the P3 digest; stop writing daily insights to shared memory |
-| J6 | Weekly business review | Stored and emailed; product, marketing, support and AI sections |
+| J6 ✅ 2026-10-27 | Weekly business review | Stored and emailed; product, marketing, support and AI sections |
 | J7 ✅ 2026-10-26 | VAT detail on ledger lines | Country and rate per VAT line, needed for the OSS report |
 | J8 | Period close | `ops_periods`; no postings into closed months |
 | J9 | Month-end close report | P&L, cash, VAT, budget vs actual, payout reconciliation (F4) |
 | J10 | Accountant export | General journal CSV (DATEV format for a German accountant), receipts linked to expenses |
 | J11 | Immutable records | Append-only ledger, 10-year retention (GoBD); demo backdating only in simulator mode |
-| J12 | Governance report | Approvals, denies, kill switch, incidents, GDPR requests, consent, key rotations |
-| J13 | Reports page + exports | Dashboard archive, CSV/PDF downloads, `aecom report`, `GET /reports` |
+| J12 ✅ 2026-10-27 | Governance report | Approvals, denies, kill switch, incidents, GDPR requests, consent, key rotations |
+| J13 ✅ (Markdown/CSV; PDF later) | Reports page + exports | Dashboard archive, CSV/PDF downloads, `aecom report`, `GET /reports` |
 | J14 | Decision review | Quarterly: did each ADR deliver? |
 
 ### K. Incident response
@@ -141,8 +141,8 @@ See [Incident Response](Incident-Response) for who detects, diagnoses and fixes 
 |---|---|---|
 | K1 ✅ 2026-10-26 | `ops_errors` with tracebacks | Today agent crashes keep only `"Type: message"`, tool errors keep only `ok=False`, and bus tracebacks live only in rotating process logs |
 | K2 ✅ 2026-10-26 | Incident lifecycle | `ops_incidents` with owner, timeline, root cause, fix, linked approvals and PRs |
-| K3 ◐ (runbooks written; as Sentinel skills in W9) | Runbooks as skills | One per monitor; shared by the Sentinel and humans |
-| K4 | Sentinel diagnostic tools | Read-only: incidents, errors, run timeline, health, backlog, dead letter, deploys |
+| K3 ✅ 2026-10-27 | Runbooks as skills | One per monitor; shared by the Sentinel and humans |
+| K4 ✅ 2026-10-27 | Sentinel diagnostic tools | Read-only: incidents, errors, run timeline, health, backlog, dead letter, deploys |
 | K5 | Sentinel remediation tools | Gated: replay dead letter, resend delivery email, re-run reconciler, pause agents, manage incidents |
 | K6 ✅ 2026-10-26 | `aecom doctor` | One-command health and diagnostics report |
 | K7 ✅ 2026-10-26 | Safe mode | Unacknowledged P1 after 2 h → agents paused, deliveries and support continue, no spending |
@@ -179,7 +179,7 @@ Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves
 |---|---|---|
 | R1 | H5 | Pin the checked IP for the actual connection (DNS-rebinding window between check and fetch); also refuse IPv4-compatible (`::a.b.c.d`) and SIIT addresses; a redirect without `Location` should stop immediately |
 | R2 | I1 | Parametrized test over every protected route; test that the AgentMail webhook stays reachable; document that changing `AECOM_API_TOKEN` needs a restart |
-| R3 | M1 | `max_content_tokens` and optional domain allow/block lists for `web_fetch`; `web_search` default type → `web_search_20260209` and configurable `max_uses`; mention `web_fetch` on the Agents wiki page |
+| R3 ✅ | M1 | `max_content_tokens` and optional domain allow/block lists for `web_fetch`; `web_search` default type → `web_search_20260209` and configurable `max_uses`; mention `web_fetch` on the Agents wiki page |
 | R4 | M4 | For MCP tools, match forbidden patterns on the tool part only, so a server *named* e.g. `login_service` doesn't deny its read tools; Policy page: `request_provisioning` escalates only for the CEO (others are denied) |
 | R6 ✅ | W2 | Order lifecycle: `deliver_order` on a `partially_refunded` order must not assign a second key; KPI revenue filter should include `partially_refunded`; refund row/status and ledger post in one transaction (with I11) |
 | R7 | W2 | AI cost booking (`book_ai_costs`) should be atomic and also cover runs that crash after using tokens; round the `ai_cost_carry_eur` setting |

@@ -6,6 +6,12 @@ from aecom.audit import audit
 from aecom.db import Setting, now, session
 
 
+def set_flag(key: str, on: bool, by: str) -> None:
+    """Flip an on/off company switch (kill_switch, agents_paused) and audit who did it - the governance report reads this."""
+    set_setting(key, "on" if on else "off")
+    audit(f"human:{by}" if by else "system", key, "on" if on else "off", {"key": key})
+
+
 def get_setting(key: str, default: str | None = None) -> str | None:
     with session() as s:
         row = s.get(Setting, key)

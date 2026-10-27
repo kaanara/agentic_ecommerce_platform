@@ -25,7 +25,7 @@ from aecom import approvals
 from aecom.api import webhooks
 from aecom.bootstrap import init
 from aecom.bus.events import drain, publish
-from aecom.company_settings import agents_paused_on, enter_safe_mode, kill_switch_on, leave_safe_mode, safe_mode_on, set_setting
+from aecom.company_settings import agents_paused_on, enter_safe_mode, kill_switch_on, leave_safe_mode, safe_mode_on, set_flag
 from aecom.db import new_id
 from aecom.secrets import secrets
 
@@ -135,13 +135,13 @@ def reject(approval_id: str, body: Decision) -> dict[str, Any]:
 
 @api.post("/kill-switch")
 def kill_switch(on: bool) -> dict[str, Any]:
-    set_setting("kill_switch", "on" if on else "off")
+    set_flag("kill_switch", on, "api")
     return {"kill_switch": kill_switch_on()}
 
 
 @api.post("/agents-pause")
 def agents_pause(on: bool) -> dict[str, Any]:
-    set_setting("agents_paused", "on" if on else "off")
+    set_flag("agents_paused", on, "api")
     return {"agents_paused": agents_paused_on()}
 
 

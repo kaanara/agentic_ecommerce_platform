@@ -278,12 +278,16 @@ def main(argv: list[str] | None = None) -> None:
     elif a.cmd == "kill-switch":
         from aecom.company_settings import set_setting
 
-        set_setting("kill_switch", a.state)
+        from aecom.company_settings import set_flag
+
+        set_flag("kill_switch", a.state == "on", "cli")
         print(f"kill switch {a.state}")
     elif a.cmd == "agents-pause":
         from aecom.company_settings import set_setting
 
-        set_setting("agents_paused", a.state)
+        from aecom.company_settings import set_flag
+
+        set_flag("agents_paused", a.state == "on", "cli")
         print(f"agents paused {a.state}")
     elif a.cmd == "safe-mode":
         from aecom.company_settings import get_setting, leave_safe_mode, safe_mode_on
