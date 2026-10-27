@@ -154,6 +154,52 @@ log and add `restricted` to `ops_settings` or a future column]) and stop marketi
 (`acquisition_channel` attribution, campaigns). Tell the agents via the persona/memory only by id, never by
 copying the personal data.
 
+## Marketing consent
+
+Marketing email (newsletters) is sent **only with a recorded opt-in** (`src/aecom/consent.py`, I14). Order,
+delivery and support emails are not marketing and are not affected.
+
+**Where consent is stored**
+
+| What | Where |
+|---|---|
+| Opt-in flag, time and source (`checkout`, `form`, ...) | `commerce_customers.marketing_consent`, `marketing_consent_at`, `marketing_consent_source` |
+| Withdrawal | `commerce_customers.unsubscribed_at` (consent set to false) |
+| Addresses that must never get marketing email (customer or not) | `commerce_suppressions` (`email` lower-case, `reason` = `unsubscribe` / `bounce` / `complaint` / `manual`, `created_at`) |
+| Every change | `ops_audit_log`, actor `system`, actions `marketing_opt_in` / `marketing_unsubscribe` / `marketing_suppressed`, detail holds the **customer id** (never the address) and the source or reason |
+
+Existing customers were migrated with `marketing_consent = false`: nobody receives a newsletter until they opt in.
+`send_newsletter` sends only to addresses where `consent.is_marketable()` is true (consent recorded, not
+unsubscribed, not suppressed), reports `sent` and `skipped_no_consent`, and ends every newsletter with
+"Reply STOP to unsubscribe".
+
+**Export proof of consent** (e.g. for an access request or a complaint to the authority):
+
+```sql
+SELECT id, email, marketing_consent, marketing_consent_at, marketing_consent_source, unsubscribed_at
+FROM commerce_customers WHERE lower(email) = lower(:email);
+SELECT reason, created_at FROM commerce_suppressions WHERE email = lower(:email);
+SELECT ts, action, detail FROM ops_audit_log
+WHERE action LIKE 'marketing_%' AND json_extract(detail, '$.customer_id') = :customer_id ORDER BY ts;
+```
+
+(PostgreSQL: `detail->>'customer_id' = :customer_id`.) Keep consent evidence as long as the customer record,
+and the suppression row even after erasure (it holds only the address, to keep honouring the objection) -
+[DECISION: confirm with lawyer].
+
+**Unsubscribes, bounces, complaints**
+
+* A reply whose subject or first line is `STOP`, `UNSUBSCRIBE` or `abmelden` (case-insensitive, also after
+  `Re:`) is handled before Support: the sender is unsubscribed (`unsubscribed_at`, suppression `unsubscribe`),
+  gets a short confirmation in the same thread, and no agent runs. Repeats change nothing.
+* AgentMail webhooks `message.bounced` and `message.complained` suppress every listed recipient with reason
+  `bounce` / `complaint` (signed and de-duplicated like the other webhooks).
+* A new opt-in after an `unsubscribe` lifts that suppression. A `bounce`, `complaint` or `manual` suppression
+  is **not** lifted by an opt-in: the owner checks the address and, only if it is valid and the person asked
+  again, deletes the row from `commerce_suppressions` and audits `marketing_suppression_removed` with the
+  customer id.
+* An objection to marketing (Art. 21(2)) is handled with `consent.unsubscribe(email)` (see section 6).
+
 ## H10 - Retention
 
 Periods are proposals to be decided; "10 years" for accounting records follows German tax and commercial law

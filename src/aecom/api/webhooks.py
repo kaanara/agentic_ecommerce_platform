@@ -31,6 +31,7 @@ from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
+from aecom import consent
 from aecom.bus.events import drain, publish
 from aecom.db import WebhookReceipt, session
 from aecom.observability import record_error
@@ -147,6 +148,21 @@ def _email_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "labels": msg.get("labels", [])}
 
 
+# I14: delivery problems suppress the address for marketing (https://docs.agentmail.to/events)
+SUPPRESSING_EVENTS = {"message.bounced": ("bounce", "bounce"), "message.complained": ("complaint", "complaint")}
+
+
+def _recipients(payload: dict[str, Any], key: str) -> list[str]:
+    """``bounce.recipients`` is a list of ``{address, status}``; ``complaint.recipients`` a list of strings."""
+    body = payload.get(key) or {}
+    out = []
+    for r in body.get("recipients", []) if isinstance(body, dict) else []:
+        addr = r.get("address") if isinstance(r, dict) else r
+        if isinstance(addr, str) and addr.strip():
+            out.append(addr)
+    return out
+
+
 def _agentmail(raw: bytes, msg_id: str | None, timestamp: str | None, signature: str | None) -> dict[str, Any]:
     secret = secrets.get("AGENTMAIL_WEBHOOK_SECRET")
     if not secret:
@@ -160,6 +176,12 @@ def _agentmail(raw: bytes, msg_id: str | None, timestamp: str | None, signature:
             receipt = WebhookReceipt(provider="agentmail", event_key=str(msg_id), topic=event)
             s.add(receipt)
             s.flush()
+            if event in SUPPRESSING_EVENTS:
+                key, reason = SUPPRESSING_EVENTS[event]
+                recipients = _recipients(payload, key)
+                for addr in recipients:
+                    consent.suppress(addr, reason, db=s)
+                return {"duplicate": False, "event": event, "status": "suppressed", "suppressed": len(recipients)}
             if event != "message.received":
                 return {"duplicate": False, "event": event, "status": "ignored"}
             receipt.event_id = publish("email.received", _email_payload(payload), source="agentmail", session=s)
@@ -174,7 +196,8 @@ def _agentmail(raw: bytes, msg_id: str | None, timestamp: str | None, signature:
 
 @router.post("/agentmail")
 async def agentmail_webhook(request: Request, bg: BackgroundTasks) -> dict[str, Any]:
-    """AgentMail ``message.received`` webhook -> email.received event for the Support agent."""
+    """AgentMail ``message.received`` webhook -> email.received event for the Support agent;
+    ``message.bounced`` / ``message.complained`` -> the recipients are suppressed for marketing email."""
     raw = await request.body()
     h = request.headers
     result = await run_in_threadpool(_agentmail, raw, h.get("svix-id"), h.get("svix-timestamp"),

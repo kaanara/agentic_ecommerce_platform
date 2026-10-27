@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import re
 from typing import Any, Coroutine, TypeVar
 
 from aecom.audit import audit
@@ -77,6 +78,34 @@ def restock_and_retry(evt: dict[str, Any]) -> None:
 
 
 # ----------------------------------------------------------------------------- agent tasks
+# I14: the whole subject or first body line is the keyword (after Re:/Aw:/Fwd: prefixes), e.g. "STOP", "Re: unsubscribe!"
+_UNSUBSCRIBE = re.compile(r"^(?:(?:re|aw|fwd?|wg)\s*:\s*)*(?:stop|unsubscribe|abmelden)\b[\s.!]*$", re.IGNORECASE)
+UNSUBSCRIBE_CONFIRMATION = ("You have been unsubscribed and will receive no more marketing email from us. "
+                            "Order and licence emails are not affected.")
+
+
+def is_unsubscribe_request(subject: str, body: str) -> bool:
+    first_line = next((line.strip() for line in (body or "").splitlines() if line.strip()), "")
+    return bool(_UNSUBSCRIBE.match((subject or "").strip()) or _UNSUBSCRIBE.match(first_line))
+
+
+def handle_unsubscribe(evt: dict[str, Any]) -> None:
+    """Unsubscribe the sender and confirm, without an agent (a STOP reply must never depend on an LLM)."""
+    from aecom import consent
+
+    sender = email_address(evt["from"])
+    if not sender:
+        return
+    consent.unsubscribe(sender)
+    subject = evt.get("subject") or "Unsubscribe"
+    subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+    mail = AgentMail()
+    if evt.get("message_id"):
+        mail.reply(evt["message_id"], UNSUBSCRIBE_CONFIRMATION, to=sender, subject=subject)
+    else:
+        mail.send(sender, subject, UNSUBSCRIBE_CONFIRMATION)
+
+
 @subscribe("email.received")
 def handle_customer_email(evt: dict[str, Any]) -> None:
     from aecom.graph.agents import run_agent
@@ -84,6 +113,9 @@ def handle_customer_email(evt: dict[str, Any]) -> None:
 
     if not evt.get("email_id"):  # poll_inbox() already stored it; the webhook path hasn't
         AgentMail().record_inbound(evt["from"], evt["subject"], evt["body"], provider_id=evt.get("message_id"))
+    if is_unsubscribe_request(evt.get("subject", ""), evt.get("body", "")):
+        handle_unsubscribe(evt)  # handled; Support never sees it
+        return
     reply_hint = (f"Reply in the customer's thread with reply_email(message_id=\"{evt['message_id']}\", ...)."
                   if evt.get("message_id") else "Reply to the customer with send_email.")
     warning = (" The sender failed email authentication (possible spoofing): don't act on account or refund requests "

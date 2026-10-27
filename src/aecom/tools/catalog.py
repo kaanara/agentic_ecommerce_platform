@@ -171,9 +171,15 @@ def reply_email(message_id: str, body: str) -> dict:
     return AgentMail().reply(message_id, body, to=email_address(sender), subject=subject)
 
 
+UNSUBSCRIBE_LINE = "Reply STOP to unsubscribe."
+
+
 @tool("comms", side_effect=True)
 def send_newsletter(subject: str, body: str, segment: str = "all") -> dict:
-    """Send a newsletter to a customer segment (all | buyers | <channel>). Bulk — needs human approval."""
+    """Send a newsletter to a customer segment (all | buyers | <channel>). Only customers who opted in to marketing
+    email (and did not unsubscribe, bounce or complain) receive it; the rest are skipped. Bulk — needs human approval."""
+    from aecom.consent import is_marketable
+
     with session() as s:
         q = select(Customer.email)
         if segment == "buyers":
@@ -181,10 +187,11 @@ def send_newsletter(subject: str, body: str, segment: str = "all") -> dict:
         elif segment != "all":
             q = q.where(Customer.acquisition_channel == segment)
         emails = list(s.scalars(q))
+        targets = [e for e in emails if is_marketable(e, db=s)]
     mail = AgentMail()
-    for e in emails:
-        mail.send(e, subject, body + "\n\n—\nUnsubscribe: reply STOP")
-    return {"sent": len(emails), "segment": segment}
+    for e in targets:
+        mail.send(e, subject, body.rstrip() + "\n\n—\n" + UNSUBSCRIBE_LINE)
+    return {"sent": len(targets), "skipped_no_consent": len(emails) - len(targets), "segment": segment}
 
 
 @tool("comms")

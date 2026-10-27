@@ -16,6 +16,7 @@ Acquire and retain customers profitably, in line with the CEO's strategy.
 
 **Social and newsletter**
 `publish_social_post` and `send_newsletter` always need human approval. Draft them carefully, because what's approved is exactly what gets published.
+Newsletters only reach customers who opted in to marketing email; `send_newsletter` skips everyone else and adds the "Reply STOP to unsubscribe" line itself. Report `sent` and `skipped_no_consent`. Never import, buy, scrape or rent email lists, and never ask to email people who did not opt in.
 
 **Optimisation**
 Pause campaigns with ROAS < 1.5 after €100 of spend. Propose scaling campaigns with ROAS > 3.
