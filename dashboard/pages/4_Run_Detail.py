@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-from _common import require_login, sql
+from _common import mask_df, require_login, sql
 from aecom import run_detail
 from aecom.observability import mask
 
@@ -41,7 +41,8 @@ st.subheader("Timeline")
 tl = run_detail.timeline(run_id)
 kinds = sorted({e["kind"] for e in tl})
 shown = st.multiselect("Kinds", kinds, default=kinds)
-st.dataframe(pd.DataFrame([e for e in tl if e["kind"] in shown], columns=["ts", "kind", "actor", "summary", "ref"]),
+st.dataframe(mask_df(pd.DataFrame([e for e in tl if e["kind"] in shown], columns=["ts", "kind", "actor", "summary", "ref"]),
+                     ["summary"]),
              hide_index=True, width="stretch")
 
 st.subheader("Approvals")

@@ -39,14 +39,14 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 |---|---|---|
 | D1 ✅ 2026-10-27 | Live panel | Agents running now, auto-refresh |
 | D2 ✅ 2026-10-27 | Run detail page | One `run_id` → agents, tool calls, approvals, decision on one timeline |
-| D3 | Tool-call arguments and results | Store a shortened copy in `ops_tool_calls` |
+| D3 ✅ 2026-10-27 | Tool-call arguments and results | Store a shortened copy in `ops_tool_calls` |
 | D4 ✅ 2026-10-27 | Web search cost | Server-tool search fees are missing from `cost_eur`; `max_uses` applies per API call, not per run |
 
 ### E. Closing the CEO's decision chain
 | # | Item | Notes |
 |---|---|---|
 | E1 ✅ 2026-10-27 | Provisioning loop | Subscribe to `approval.resolved` (it has no subscriber today); detect when `credential_env` appears; mark the vendor `active`; send the Foreman an integration task |
-| E2 | Vendor MCP first | Foreman proposes and sandboxes the vendor's MCP server; read-only tools granted first |
+| E2 ✅ 2026-10-27 | Vendor MCP first | Foreman proposes and sandboxes the vendor's MCP server; read-only tools granted first |
 | E3 | Engineer agent | Writes adapters and webhooks on a branch and opens a PR; a human reviews and merges; never deploys |
 | E4 ✅ 2026-10-27 | Any agent can raise an account need | New tool `request_account_need(vendor, why, evidence)` for all agents → goes to the CEO, who decides and calls `request_provisioning`. Today only the CEO can ask, so other agents can only mention a need in their output |
 | E5 ✅ 2026-10-27 | Provisioning task with notification | Status `requested → approved → in_progress → active / rejected`; checklist of the steps; "action needed" message by email or push (B routing) with purpose, cost, steps, the credential name and required scopes; reminder after 3 days; snooze |
@@ -110,7 +110,7 @@ Confirmed by reading the code. The offline scenarios don't catch them because th
 | I13 | ✅ done 2026-10-27 | **Download links are fake.** `deliver_order` returns a random `downloads.example` URL; there is no file hosting, no signed URL, no expiry or resend | `store/mock.py` | Hosted assets with signed, expiring URLs (the store platform or object storage) |
 | I14 | ✅ done 2026-10-27 | **Newsletter ignores consent.** `send_newsletter` emails every customer; "reply STOP" isn't processed; no marketing consent is recorded | `tools/catalog.py`, `db.py` | Consent flag per customer, unsubscribe handling, suppression list |
 | I15 | ✅ done 2026-10-27 | **Shared memory can be poisoned.** Any agent can `remember(shared=True)` at T1, including right after reading an untrusted email; every agent then recalls it | `tools/catalog.py`, `policy.yaml` | Store the source with each memory; shared memories need Judge or human review |
-| I16 | 🟡 | **Secrets in plain text in the DB and dashboard.** Licence keys and download links are stored in `ops_outbox_emails` and in the audit log args, and both are shown on the dashboard | `integrations/agentmail.py`, `policy/gate.py` | Mask secrets in the audit log and dashboard views |
+| I16 | ✅ done 2026-10-27 | **Secrets in plain text in the DB and dashboard.** Licence keys and download links are stored in `ops_outbox_emails` and in the audit log args, and both are shown on the dashboard | `integrations/agentmail.py`, `policy/gate.py` | Mask secrets in the audit log and dashboard views |
 | — | ℹ️ | On Postgres, two concurrent deliveries can pick the same key (`.first()` without a row lock; SQLite serialises writers, so not today) | `store/mock.py` | `SELECT … FOR UPDATE SKIP LOCKED` as part of the Postgres move |
 | — | ℹ️ | AgentMail webhook has no signature check | `api/app.py` | Verify the webhook signature (with I1) |
 
@@ -143,12 +143,12 @@ See [Incident Response](Incident-Response) for who detects, diagnoses and fixes 
 | K2 ✅ 2026-10-26 | Incident lifecycle | `ops_incidents` with owner, timeline, root cause, fix, linked approvals and PRs |
 | K3 ✅ 2026-10-27 | Runbooks as skills | One per monitor; shared by the Sentinel and humans |
 | K4 ✅ 2026-10-27 | Sentinel diagnostic tools | Read-only: incidents, errors, run timeline, health, backlog, dead letter, deploys |
-| K5 | Sentinel remediation tools | Gated: replay dead letter, resend delivery email, re-run reconciler, pause agents, manage incidents |
+| K5 ✅ 2026-10-27 | Sentinel remediation tools | Gated: replay dead letter, resend delivery email, re-run reconciler, pause agents, manage incidents |
 | K6 ✅ 2026-10-26 | `aecom doctor` | One-command health and diagnostics report |
 | K7 ✅ 2026-10-26 | Safe mode | Unacknowledged P1 after 2 h → agents paused, deliveries and support continue, no spending |
-| K8 | Incident → GitHub issue → PR | Engineer agent (e.g. Claude Code in GitHub Actions) opens a PR with a failing test and the fix; human merges; never deploys |
-| K9 | Correcting entries | Data fixes prepared by Sentinel as T3 approvals; ledger stays append-only |
-| K10 | Postmortems | Every P1; draft by Sentinel, finished by a human; becomes a regression test and lessons |
+| K8 ✅ (dry run by default) | Incident → GitHub issue → PR | Engineer agent (e.g. Claude Code in GitHub Actions) opens a PR with a failing test and the fix; human merges; never deploys |
+| K9 ✅ 2026-10-27 | Correcting entries | Data fixes prepared by Sentinel as T3 approvals; ledger stays append-only |
+| K10 ✅ 2026-10-27 | Postmortems | Every P1; draft by Sentinel, finished by a human; becomes a regression test and lessons |
 | K11 | On-call | Backup person with dashboard access; Tailscale SSH from the phone |
 
 ### L. Architecture direction: build less, use services (2026-10-25)
@@ -177,10 +177,10 @@ Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves
 
 | # | From | Follow-up |
 |---|---|---|
-| R1 | H5 | Pin the checked IP for the actual connection (DNS-rebinding window between check and fetch); also refuse IPv4-compatible (`::a.b.c.d`) and SIIT addresses; a redirect without `Location` should stop immediately |
-| R2 | I1 | Parametrized test over every protected route; test that the AgentMail webhook stays reachable; document that changing `AECOM_API_TOKEN` needs a restart |
+| R1 ✅ | H5 | Pin the checked IP for the actual connection (DNS-rebinding window between check and fetch); also refuse IPv4-compatible (`::a.b.c.d`) and SIIT addresses; a redirect without `Location` should stop immediately |
+| R2 ✅ | I1 | Parametrized test over every protected route; test that the AgentMail webhook stays reachable; document that changing `AECOM_API_TOKEN` needs a restart |
 | R3 ✅ | M1 | `max_content_tokens` and optional domain allow/block lists for `web_fetch`; `web_search` default type → `web_search_20260209` and configurable `max_uses`; mention `web_fetch` on the Agents wiki page |
-| R4 | M4 | For MCP tools, match forbidden patterns on the tool part only, so a server *named* e.g. `login_service` doesn't deny its read tools; Policy page: `request_provisioning` escalates only for the CEO (others are denied) |
+| R4 ✅ | M4 | For MCP tools, match forbidden patterns on the tool part only, so a server *named* e.g. `login_service` doesn't deny its read tools; Policy page: `request_provisioning` escalates only for the CEO (others are denied) |
 | R6 ✅ | W2 | Order lifecycle: `deliver_order` on a `partially_refunded` order must not assign a second key; KPI revenue filter should include `partially_refunded`; refund row/status and ledger post in one transaction (with I11) |
 | R7 | W2 | AI cost booking (`book_ai_costs`) should be atomic and also cover runs that crash after using tokens; round the `ai_cost_carry_eur` setting |
 | R8 | W2 | Approval dedup needs a uniqueness guard against concurrent escalations; a scheduled `approvals.expire_stale()` sweep; show `expired` in dashboard/API |

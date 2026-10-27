@@ -138,7 +138,7 @@ Extra invariants for G1: every delivered order has a sent email; refunds ≤ ord
 - [ ] A test month closed: month-end report and accountant export reviewed by your accountant
 - [ ] The Lemon Squeezy account went through the full provisioning flow: request → notification → checklist → key verified → vendor `active`
 
-## Phase 4: Visibility and the decision chain
+## Phase 4: Visibility and the decision chain ✅ exit gate passed 2026-10-27
 **Goal:** answer "what happened and why?" in minutes.
 
 | ID | Task |
