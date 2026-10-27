@@ -1,5 +1,6 @@
 """Order reconciler: the safety net for paid orders whose ``order.paid`` event was lost or dead-lettered,
-and for delivered orders whose access email never went out (I4).
+and for delivered orders whose access email never went out (I4). With ``STORE_ADAPTER=lemonsqueezy`` it also
+recovers lost Lemon Squeezy webhooks: recent provider orders are compared with the local mirror (G2).
 
 Runs on a schedule (see aecom.scheduler). Pure bookkeeping: never calls an LLM.
 """
@@ -12,10 +13,12 @@ from sqlalchemy import select
 
 from aecom.audit import audit
 from aecom.bus.events import publish
+from aecom.config import get_settings
 from aecom.db import Customer, EventRow, Order, Product, now, session
 
 UNDELIVERED = ("paid", "failed")  # failed = no licence keys at delivery time
 DELIVERY_TOPICS = ("order.paid", "inventory.out_of_stock")  # both end in deliver_order
+PROVIDER_WINDOW = timedelta(days=2)  # how far back provider orders are compared with the mirror
 
 
 def reconcile(older_than: timedelta = timedelta(minutes=15)) -> dict[str, int]:
@@ -23,6 +26,8 @@ def reconcile(older_than: timedelta = timedelta(minutes=15)) -> dict[str, int]:
 
     Delivered orders whose email was never sent are requeued the same way (deliver_order is idempotent and only
     resends the email); they are counted as ``requeued_email``, a key present only when there are some.
+    With the Lemon Squeezy store, ``LemonSqueezyStore.reconcile_recent`` runs over the last ``PROVIDER_WINDOW`` and its
+    counts are added with an ``ls_`` prefix; a failure there is recorded (``ls_errors``), never raised.
     Idempotent: a requeued event stays pending until drained, so the next run skips that order.
     """
     cutoff = now() - older_than
@@ -52,4 +57,20 @@ def reconcile(older_than: timedelta = timedelta(minutes=15)) -> dict[str, int]:
                                    source="reconciler")
             audit("system", "reconcile", "info", {"order_id": order_id, "event_id": event_id, "reason": kind})
             counts[kind] = counts.get(kind, 0) + 1
+    if get_settings().store_adapter == "lemonsqueezy":
+        counts.update(_reconcile_provider())
     return counts
+
+
+def _reconcile_provider() -> dict[str, int]:
+    from aecom.observability import record_error
+    from aecom.store.lemonsqueezy import LemonSqueezyStore
+
+    try:
+        found = LemonSqueezyStore().reconcile_recent(now() - PROVIDER_WINDOW)
+    except Exception as exc:
+        record_error("reconciler.lemonsqueezy", exc)
+        return {"ls_errors": 1}
+    if found["mirrored"] or found["refunds"]:
+        audit("system", "reconcile", "info", {"provider": "lemonsqueezy", **found})
+    return {f"ls_{k}": v for k, v in found.items()}

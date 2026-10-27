@@ -117,10 +117,59 @@ def no_dead_letters() -> list[Violation]:
             for d in dead_letters()]
 
 
+def every_mirrored_order_has_ledger_lines() -> list[Violation]:
+    """In STORE_CHECKS. A store-platform order (``external_id`` set, e.g. mirrored from Lemon Squeezy) has exactly one sale booked
+    for its amount, and the cash its refund lines pay out equals its Refund rows: replays never book twice."""
+    with session() as s:
+        orders = s.execute(select(Order.id, Order.external_id, Order.amount_eur)
+                           .where(Order.external_id.is_not(None)).order_by(Order.id)).all()
+        lines = s.execute(select(LedgerEntry.ref, LedgerEntry.txn_id, LedgerEntry.memo, LedgerEntry.account,
+                                 LedgerEntry.debit, LedgerEntry.credit)
+                          .where(LedgerEntry.ref.in_([o.id for o in orders]))).all()
+        refunded = dict(s.execute(select(Refund.order_id, func.sum(Refund.amount_eur)).group_by(Refund.order_id)).all())
+    sales: dict[str, set[str]] = defaultdict(set)
+    sold, paid_back = defaultdict(int), defaultdict(int)
+    for ref, txn, memo, account, debit, credit in lines:
+        if memo.startswith("sale ") and account == "cash" and debit:
+            sales[ref].add(txn)
+            sold[ref] += _cents(debit)
+        elif memo.startswith("refund ") and account == "cash":
+            paid_back[ref] += _cents(credit)
+    out = []
+    for oid, ext, amount in orders:
+        if len(sales[oid]) != 1 or sold[oid] != _cents(amount):
+            out.append(_v("every_mirrored_order_has_ledger_lines",
+                          f"order {oid} ({ext}): {len(sales[oid])} sale txns for {sold[oid]} of {_cents(amount)} cents"))
+        if paid_back[oid] != _cents(refunded.get(oid)):
+            out.append(_v("every_mirrored_order_has_ledger_lines", f"order {oid} ({ext}): refund lines pay out "
+                          f"{paid_back[oid]} cents, refunds total {_cents(refunded.get(oid))}"))
+    return out
+
+
+def refund_mirror_matches_provider(provider: dict[str, int]) -> list[Violation]:
+    """Every provider order is mirrored and its local refunded total equals the provider's ``refunded_amount``
+    (``provider`` maps the provider order id to that amount in cents). Not in CHECKS: it needs the provider's view."""
+    with session() as s:
+        local = dict(s.execute(select(Order.external_id, Order.id).where(Order.external_id.in_(list(provider)))).all())
+        refunded = dict(s.execute(select(Refund.order_id, func.sum(Refund.amount_eur))
+                                  .where(Refund.order_id.in_(list(local.values()))).group_by(Refund.order_id)).all())
+    out = []
+    for ext, want in sorted(provider.items()):
+        if ext not in local:
+            out.append(_v("refund_mirror_matches_provider", f"provider order {ext} is not mirrored"))
+        elif _cents(refunded.get(local[ext])) != want:
+            out.append(_v("refund_mirror_matches_provider", f"provider order {ext}: refunded "
+                          f"{_cents(refunded.get(local[ext]))} cents locally, {want} at the provider"))
+    return out
+
+
 CHECKS: dict[str, Callable[[], list[Violation]]] = {fn.__name__: fn for fn in (
     every_paid_order_delivered, every_delivered_order_emailed, ledger_balanced, no_key_on_two_orders,
     refunds_not_above_order_amount, no_order_without_ledger_lines, marketing_spend_within_budget, no_run_stuck_running,
     no_dead_letters)}
+# checks for runs against a store platform; the Lemon Squeezy chaos scenarios add them to check_all()
+STORE_CHECKS: dict[str, Callable[[], list[Violation]]] = {fn.__name__: fn for fn in (
+    every_mirrored_order_has_ledger_lines,)}
 
 
 def check_all() -> list[Violation]:

@@ -51,6 +51,7 @@ CUSTOM_COUNTRY = "country"
 CUSTOM_CONSENT_AT = "withdrawal_consent_at"
 CUSTOM_CONSENT_VERSION = "withdrawal_consent_version"
 CUSTOM_CAMPAIGN = "campaign_id"
+CUSTOM_MARKETING_CONSENT = "marketing_consent"  # explicit opt-in checkbox at checkout; nothing else counts as consent
 REVOKED_KEY_STATUSES = {"disabled", "expired"}
 
 
@@ -88,6 +89,15 @@ def _tax_rate(a: dict[str, Any]) -> float:
         return float(Decimal(str(a.get("tax_rate") or 0)) / 100)
     except ArithmeticError:
         return 0.0
+
+
+def _opted_in(value: Any) -> bool:
+    """Checkout custom data arrives as JSON booleans or as strings (``checkout[custom][...]`` query values)."""
+    return value is True or (isinstance(value, str) and value.strip().lower() in ("true", "1", "yes"))
+
+
+def _refunded_c(s: Session, order_id: str) -> int:
+    return cents(s.scalar(select(func.coalesce(func.sum(Refund.amount_eur), 0.0)).where(Refund.order_id == order_id)))
 
 
 def _mirrored(s: Session, external_id: str) -> Order | None:
@@ -137,6 +147,9 @@ def _create_mirror(s: Session, ext: str, a: dict[str, Any], payload: dict[str, A
         s.flush()
     elif tax_country and not c.country:
         c.country = tax_country
+    if _opted_in(custom.get(CUSTOM_MARKETING_CONSENT)) and not c.marketing_consent:
+        c.marketing_consent, c.marketing_consent_source = True, "checkout"
+        c.marketing_consent_at = _ts(a.get("created_at")) or now()
     o = Order(customer_id=c.id, product_id=p.id, amount_eur=float(gross), vat_eur=float(vat), campaign_id=campaign,
               status="delivered", email_sent=True, email_sent_at=now(), external_id=ext,
               withdrawal_consent_at=_ts(custom.get(CUSTOM_CONSENT_AT)),
@@ -155,7 +168,9 @@ def mirror_order(payload: dict[str, Any], country: str | None = None) -> dict[st
     """Mirror an ``order_created`` payload of a paid order. Idempotent on the Lemon Squeezy order id.
 
     ``country`` (ISO alpha-2) overrides ``meta.custom_data.country``. The order object carries no customer country.
-    Orders that are not ``paid`` (pending, failed, fraudulent) are ignored. Refund states go through ``mirror_refund``.
+    ``meta.custom_data.marketing_consent`` true (the checkout opt-in) records marketing consent on the customer
+    (source ``checkout``); absent or false changes nothing. Orders that are not ``paid`` (pending, failed,
+    fraudulent) are ignored. Refund states go through ``mirror_refund``.
     """
     ext, a = _resource(payload, "orders")
     if a.get("status") != "paid":
@@ -194,8 +209,7 @@ def mirror_refund(payload: dict[str, Any], country: str | None = None,
         target_c = min(int(a.get("refunded_amount") or 0), total_c)
         if a.get("refunded") and not target_c:
             target_c = total_c
-        done_c = cents(s.scalar(select(func.coalesce(func.sum(Refund.amount_eur), 0.0))
-                                .where(Refund.order_id == o.id)))
+        done_c = _refunded_c(s, o.id)
         delta_c = target_c - done_c
         if delta_c <= 0:
             return {**_o(o), "already": True}
@@ -346,6 +360,78 @@ class LemonSqueezyStore:
             r = c.get(f"/customers/{ls_customer_id}")
             r.raise_for_status()
             return ((r.json().get("data") or {}).get("attributes") or {}).get("country")
+
+    # ---- lost-webhook recovery
+    def recent_orders(self, since: datetime) -> list[dict[str, Any]]:
+        """Orders created at or after ``since`` (naive UTC), from ``GET /v1/orders?filter[store_id]=...``.
+        The list is newest first, so paging stops at the first page that reaches back past ``since``."""
+        out: list[dict[str, Any]] = []
+        with self._client() as c:
+            number = 1
+            while True:
+                r = c.get("/orders", params={"filter[store_id]": self._store_id(), "page[number]": number,
+                                             "page[size]": 100})
+                r.raise_for_status()
+                body = r.json()
+                page = body.get("data") or []
+                fresh = [o for o in page if (_ts((o.get("attributes") or {}).get("created_at")) or since) >= since]
+                out.extend(fresh)
+                last = ((body.get("meta") or {}).get("page") or {}).get("lastPage") or 1
+                if number >= last or len(fresh) < len(page) or not page:
+                    return out
+                number += 1
+
+    def reconcile_recent(self, since: datetime) -> dict[str, int]:
+        """Repair lost or failed webhooks: mirror every recent Lemon Squeezy order that is missing locally, and
+        book the rest of any refund whose local total is below the provider's ``refunded_amount``.
+
+        Idempotent: the mirror functions only book what is not mirrored yet, so a second run changes nothing.
+        A failing order is recorded (``aecom.observability.record_error``) and counted in ``errors``; the others go on.
+        The order object has no checkout custom data, so the country is looked up on the Lemon Squeezy customer.
+        """
+        from aecom.observability import record_error
+
+        orders = self.recent_orders(since)
+        counts = {"listed": len(orders), "mirrored": 0, "refunds": 0, "unchanged": 0, "ignored": 0, "errors": 0}
+        for data in orders:
+            ext, a = str(data.get("id")), data.get("attributes") or {}
+            try:
+                with session() as s:
+                    o = _mirrored(s, ext)
+                    local_c = _refunded_c(s, o.id) if o is not None else 0
+                    total_c = cents(o.amount_eur) if o is not None else int(a.get("total") or 0)
+                provider_c = min(int(a.get("refunded_amount") or 0), total_c)
+                if a.get("refunded") and not provider_c:
+                    provider_c = total_c
+                if o is None and a.get("status") not in ("paid", "refunded", "partial_refund"):
+                    counts["ignored"] += 1  # pending / failed / fraudulent: mirror_order would ignore it as well
+                    continue
+                if o is None:
+                    payload = {"meta": {"event_name": "order_created"}, "data": data}
+                    country = self._country_or_none(a.get("customer_id"))
+                    if provider_c:  # mirror_refund mirrors the order first
+                        mirror_refund(payload, country=country)
+                        counts["refunds"] += 1
+                    else:
+                        mirror_order(payload, country=country)
+                    counts["mirrored"] += 1
+                elif provider_c > local_c:
+                    mirror_refund({"meta": {"event_name": "order_refunded"}, "data": data})
+                    counts["refunds"] += 1
+                else:
+                    counts["unchanged"] += 1
+            except Exception as exc:
+                counts["errors"] += 1
+                record_error("lemonsqueezy.reconcile", exc, context={"external_id": ext})
+        return counts
+
+    def _country_or_none(self, ls_customer_id: Any) -> str | None:
+        if not ls_customer_id:
+            return None
+        try:
+            return self.customer_country(ls_customer_id)
+        except httpx.HTTPError:
+            return None  # the sale is still booked; its VAT line just has no country
 
     # ---- local mirror reads
     def list_products(self, status: str | None = None) -> list[dict[str, Any]]:

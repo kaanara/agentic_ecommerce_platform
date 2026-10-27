@@ -141,3 +141,105 @@ def db_locked_once(fn_path: str) -> Iterator[dict[str, int]]:
 
     with _swap(owner, name, locked_once):
         yield stats
+
+
+# --------------------------------------------------------------------------- Lemon Squeezy webhooks
+WEBHOOK_RANK = {"order_refunded": 0, "license_key_created": 1, "license_key_updated": 1, "order_created": 2}
+
+
+def _event(payload: dict[str, Any]) -> str:
+    return (payload.get("meta") or {}).get("event_name", "")
+
+
+def ls_schedule(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The order a Lemon Squeezy-like provider sends its webhooks in: as they happened. Swapped by ``out_of_order``."""
+    return list(payloads)
+
+
+@contextmanager
+def duplicate_webhooks() -> Iterator[dict[str, int]]:
+    """Every Lemon Squeezy webhook is delivered twice (``lemonsqueezy.dispatch`` runs twice per delivery)."""
+    from aecom.store import lemonsqueezy
+
+    stats, real = {"duplicates": 0}, lemonsqueezy.dispatch
+
+    @functools.wraps(real)
+    def twice(payload: dict[str, Any]) -> dict[str, Any]:
+        first = real(payload)
+        real(payload)
+        stats["duplicates"] += 1
+        return first
+
+    with _swap(lemonsqueezy, "dispatch", twice):
+        yield stats
+
+
+@contextmanager
+def out_of_order(seed: int = 0) -> Iterator[dict[str, int]]:
+    """Webhooks arrive in the worst order: every refund before any ``order_created`` and licence keys before their
+    order (``mirror_license_key`` then fails and the provider retries it), shuffled within each kind."""
+    rng, stats = random.Random(seed), {"reordered": 0}
+
+    def worst(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        shuffled = list(payloads)
+        rng.shuffle(shuffled)
+        out = sorted(shuffled, key=lambda p: WEBHOOK_RANK.get(_event(p), 3))
+        stats["reordered"] += sum(a is not b for a, b in zip(out, payloads, strict=True))
+        return out
+
+    with _swap(sys.modules[__name__], "ls_schedule", worst):
+        yield stats
+
+
+@contextmanager
+def lost_webhooks(rate: float, seed: int = 0) -> Iterator[dict[str, int]]:
+    """A seeded ``rate`` share of Lemon Squeezy webhooks never arrives (dropped before ``dispatch``)."""
+    from aecom.store import lemonsqueezy
+
+    rng, stats, real = random.Random(seed), {"deliveries": 0, "lost": 0}, lemonsqueezy.dispatch
+
+    @functools.wraps(real)
+    def lossy(payload: dict[str, Any]) -> dict[str, Any]:
+        stats["deliveries"] += 1
+        if rng.random() < rate:
+            stats["lost"] += 1
+            return {"event": _event(payload), "status": "lost"}
+        return real(payload)
+
+    with _swap(lemonsqueezy, "dispatch", lossy):
+        yield stats
+
+
+@contextmanager
+def lemonsqueezy_api(orders: list[dict[str, Any]], countries: dict[str, str] | None = None,
+                     page_size: int = 2) -> Iterator[dict[str, int]]:
+    """An in-process Lemon Squeezy API: ``GET /v1/orders`` serves ``orders`` (JSON:API order objects) newest first,
+    ``page_size`` per page; ``GET /v1/customers/:id`` serves ``countries``. No API key and no network:
+    ``LemonSqueezyStore._client`` is swapped for a client on an ``httpx.MockTransport``."""
+    import httpx
+
+    from aecom.store.lemonsqueezy import LemonSqueezyStore
+
+    stats = {"requests": 0, "order_pages": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        stats["requests"] += 1
+        path = request.url.path.removeprefix("/v1")
+        if path == "/orders":
+            stats["order_pages"] += 1
+            ordered = sorted(orders, key=lambda o: o["attributes"]["created_at"], reverse=True)
+            number = int(request.url.params.get("page[number]", 1))
+            last = max(1, -(-len(ordered) // page_size))
+            page = ordered[(number - 1) * page_size:number * page_size]
+            return httpx.Response(200, json={"data": page, "meta": {"page": {"currentPage": number, "lastPage": last}}})
+        cid = path.removeprefix("/customers/")
+        if cid != path and cid in (countries or {}):
+            return httpx.Response(200, json={"data": {"type": "customers", "id": cid,
+                                                      "attributes": {"country": countries[cid]}}})
+        return httpx.Response(404, json={"errors": [{"detail": "not found"}]})
+
+    def client(self: Any) -> httpx.Client:
+        return httpx.Client(base_url="https://api.lemonsqueezy.test/v1", transport=httpx.MockTransport(handler))
+
+    with _swap(LemonSqueezyStore, "_client", client):
+        yield stats

@@ -47,6 +47,16 @@ Each one injects a fault into a scripted run, drains the bus, then checks the bu
 | `claude-down` | Model API down while a customer email arrives | Email dead-lettered, then answered after recovery |
 | `email-failures` | 30% of access-email sends raise | Retries email every delivered order exactly once (`email_sent`) |
 | `phase1-exit` | 30% delivery and 30% email failures at the same time | **Phase 1 exit gate.** Bus retries, then up to two simulated reconciler cycles (`reconcile(older_than=0)` + drain), leave zero violations; `stats.reconciler_cycles` says how many were needed |
+| `ls-duplicate` | Every Lemon Squeezy webhook is delivered twice | Nothing is mirrored, booked or refunded twice |
+| `ls-out-of-order` | Refunds arrive before any `order_created`, licence keys before their order | The refund mirrors the order first; a key retries until its order exists; the mirror matches the provider |
+| `ls-lost` | 30% of Lemon Squeezy webhooks are dropped | One reconciler run (`reconcile_recent` against an in-process API) mirrors the missing orders and books the missing refunds |
+
+The `ls-*` scenarios run with `STORE_ADAPTER=lemonsqueezy` set only for the scenario. They build about ten recent orders shaped like `tests/fixtures/lemonsqueezy`, some partly or fully refunded, and send them through `lemonsqueezy.dispatch` the way the provider would: a delivery that raises `HandlerFailed` is retried up to 4 times. The injectors live in `aecom.chaos.injectors`: `duplicate_webhooks`, `out_of_order`, `lost_webhooks(rate, seed)`, and `lemonsqueezy_api(orders)`, a fake `GET /v1/orders` + `/v1/customers/:id` with no key and no network. On top of the usual invariants, these scenarios check:
+- `every_mirrored_order_has_ledger_lines`: each order with an `external_id` has one sale booked for its amount, and refund cash lines equal its Refund rows.
+- `refund_mirror_matches_provider`: every provider order is mirrored, and its local refunded total equals the provider's `refunded_amount`.
+- `webhooks_delivered`: no delivery is still failing after the provider's retries.
+
+**Lost-webhook recovery in production.** With `STORE_ADAPTER=lemonsqueezy`, every `reconcile()` run also calls `LemonSqueezyStore.reconcile_recent(now - 2 days)`. That lists the store's orders newest first and stops paging once it is past the window. It mirrors any order that is missing locally (the country comes from the Lemon Squeezy customer, because the order object carries no checkout custom data) and books the rest of any refund the mirror is missing. Its counts appear in the result with an `ls_` prefix. A failure is recorded in the errors table and counted as `ls_errors`; it never raises.
 
 ## Writing a new scenario
 1. Write `setup() -> ctx` (seed data, ids), `run(ctx)` (call a workflow), and `script(ctx)` (offline steps per agent).
