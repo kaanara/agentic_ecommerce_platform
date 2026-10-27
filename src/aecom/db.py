@@ -373,6 +373,8 @@ class AgentRun(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_eur: Mapped[float] = mapped_column(Float, default=0.0)
     cost_booked: Mapped[bool] = mapped_column(Boolean, default=False)  # sub-cent costs are booked in batches
+    web_searches: Mapped[int] = mapped_column(Integer, default=0)  # D4: server-side tool uses, billed per use
+    web_fetches: Mapped[int] = mapped_column(Integer, default=0)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -386,6 +388,9 @@ class ToolCallLog(Base):
     tool_name: Mapped[str] = mapped_column(String, index=True)
     decision: Mapped[str] = mapped_column(String)  # allow | deny | escalate
     ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    # D3: shortened, masked arguments and result, so a run can be read later without LangSmith
+    args_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class OutboxEmail(Base):
@@ -417,6 +422,12 @@ class Memory(Base):
     agent_id: Mapped[str] = mapped_column(String, index=True)  # or "shared"
     namespace: Mapped[str] = mapped_column(String, default="facts")
     content: Mapped[str] = mapped_column(Text)
+    # I15 provenance: who wrote it and from what; shared memories wait for review before other agents recall them
+    source_agent: Mapped[str | None] = mapped_column(String, nullable=True)
+    source_run_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    tainted: Mapped[bool] = mapped_column(Boolean, default=False)  # written in a run that read untrusted content
+    status: Mapped[str] = mapped_column(String, default="active")  # active | pending_review | rejected
+    reviewed_by: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
