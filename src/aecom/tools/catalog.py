@@ -430,15 +430,16 @@ def fetch_url(url: str, max_chars: int = 6000) -> str:
     """Fetch a public web page as text (untrusted content). Private, loopback and metadata hosts are refused."""
     from urllib.parse import urljoin
 
-    from aecom.net_guard import UnsafeURL, check_public_url
+    from aecom.net_guard import UnsafeURL, pinned_get, resolve_public
 
     try:
-        for _ in range(6):  # initial request + max 5 redirects, each hop re-checked
-            check_public_url(url)
-            r = httpx.get(url, timeout=15, follow_redirects=False, headers={"User-Agent": "aecom-researcher/0.1"})
+        for _ in range(6):  # initial request + max 5 redirects, each hop re-resolved, re-checked and IP-pinned
+            r = pinned_get(resolve_public(url), timeout=15, headers={"User-Agent": "aecom-researcher/0.1"})
             if not r.is_redirect:
                 break
-            url = urljoin(url, r.headers.get("location", ""))
+            if not (location := r.headers.get("location")):
+                return f"refused: redirect ({r.status_code}) without Location header"
+            url = urljoin(url, location)
         else:
             return "refused: too many redirects"
         text = re.sub(r"<script.*?</script>|<style.*?</style>", " ", r.text, flags=re.S | re.I)

@@ -1,4 +1,11 @@
-"""HTTP API bearer-token auth (fail closed)."""
+"""HTTP API bearer-token auth (fail closed).
+
+Operational note: require_token looks the token up per request, but `aecom.secrets` reads the process environment
+and `.env` once at startup - changing or rotating AECOM_API_TOKEN therefore needs a restart of `aecom api`.
+The tests below swap the lookup itself, which is why they can change the token without a restart.
+"""
+
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -44,3 +51,56 @@ def test_health_is_public(client):
     assert client.get("/health").status_code == 200
     client.use_token(None)
     assert client.get("/health").status_code == 200
+
+
+# --------------------------------------------------------------------------- route discovery
+PUBLIC = {"/health", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
+BEARER_401 = "Invalid or missing bearer token"
+UNCONFIGURED_503 = "API token not configured"
+
+
+def _routes(webhooks: bool) -> list[tuple[str, str]]:
+    """(method, path) of every route served by the app - discovered, never hardcoded.
+
+    Read from the generated OpenAPI schema: FastAPI >= 0.14x keeps included routers as lazy `_IncludedRouter`
+    entries in `app.routes`, so the schema is the stable public view of all effective routes (a route registered
+    with include_in_schema=False would be invisible here - don't do that for API endpoints)."""
+    out = []
+    for path, ops in api_app.app.openapi()["paths"].items():
+        if path in PUBLIC or path.startswith("/webhooks/") != webhooks:
+            continue
+        out.extend((m.upper(), path) for m in sorted(ops) if m.upper() != "HEAD")
+    return out
+
+
+PROTECTED = _routes(webhooks=False)
+WEBHOOKS = _routes(webhooks=True)
+
+
+def _concrete(path: str) -> str:
+    return re.sub(r"\{[^}]+\}", "x", path)
+
+
+def test_route_discovery_sees_the_api():
+    assert ("GET", "/approvals") in PROTECTED and ("POST", "/kill-switch") in PROTECTED
+    assert len(PROTECTED) >= 10 and len(WEBHOOKS) >= 2
+
+
+@pytest.mark.parametrize(("method", "path"), PROTECTED, ids=[f"{m} {p}" for m, p in PROTECTED])
+def test_every_non_public_route_requires_the_token(client, method, path):
+    """Fails if a route is added to `app` directly instead of the protected `api` router."""
+    r = client.request(method, _concrete(path))
+    assert r.status_code == 401 and r.json()["detail"] == BEARER_401, (method, path, r.status_code)
+    client.use_token(None)
+    r = client.request(method, _concrete(path), headers={"Authorization": f"Bearer {TOKEN}"})
+    assert r.status_code == 503 and r.json()["detail"] == UNCONFIGURED_503, (method, path, r.status_code)
+
+
+@pytest.mark.parametrize(("method", "path"), WEBHOOKS, ids=[f"{m} {p}" for m, p in WEBHOOKS])
+def test_webhooks_are_not_behind_the_bearer_token(client, method, path):
+    """Providers cannot send our bearer token: webhooks answer from their own signature checks (401/503)."""
+    for token in (TOKEN, None):
+        client.use_token(token)
+        r = client.request(method, path, content=b"{}")
+        assert r.status_code in (401, 503), (path, r.status_code)
+        assert r.json()["detail"] not in (BEARER_401, UNCONFIGURED_503), (path, r.json())
