@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     lemonsqueezy_timeout_s: float = 20.0
     # Where automatic restocks get licence keys: "mock" mints fake keys (demo only), "none" = manual keys only
     license_key_source: str = "mock"
+    # I13: download links of the built-in store, {download_base_url}/{order_id}/{token}, valid for N days
+    download_base_url: str = "https://downloads.example"
+    download_link_days: int = 7
     mcp_autoload: bool = True          # load registry MCP servers into agents' toolbelts
     mcp_load_timeout_s: float = 20.0
 

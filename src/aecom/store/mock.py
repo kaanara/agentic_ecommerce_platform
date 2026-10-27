@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import hmac
 import secrets as pysecrets
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
 
 from aecom import ledger
+from aecom.audit import audit
 from aecom.bus.events import outbox, publish
+from aecom.config import get_settings
 from aecom.db import Customer, LicenseKey, Order, Product, Refund, now, session
 from aecom.money import cents, quantize
 from aecom.store.adapter import vat_included, vat_rate
@@ -33,6 +37,25 @@ def _o(o: Order) -> dict[str, Any]:
             "vat_eur": o.vat_eur, "status": o.status, "campaign_id": o.campaign_id, "email_sent": bool(o.email_sent),
             "withdrawal_consent_at": str(o.withdrawal_consent_at) if o.withdrawal_consent_at else None,
             "withdrawal_consent_version": o.withdrawal_consent_version, "created_at": str(o.created_at)}
+
+
+def _now() -> datetime:
+    """The clock, for methods whose ``now`` parameter shadows aecom.db.now."""
+    return now()
+
+
+def _download_link(o: Order) -> tuple[str, bool]:
+    """The order's download link (I13): the same URL while it is valid, a new token and expiry once expired.
+
+    Returns (url, reissued). The link names only the order and a random token, never Product.asset_url.
+    """
+    cfg = get_settings()
+    reissued = False
+    if o.download_token is None or o.download_expires_at is None or o.download_expires_at <= now():
+        reissued = o.download_token is not None
+        o.download_token = pysecrets.token_urlsafe(24)
+        o.download_expires_at = now() + timedelta(days=cfg.download_link_days)
+    return f"{cfg.download_base_url.rstrip('/')}/{o.id}/{o.download_token}", reissued
 
 
 class MockStore:
@@ -121,6 +144,13 @@ class MockStore:
         return result
 
     def deliver_order(self, order_id: str) -> dict[str, Any]:
+        result = self._deliver(order_id)
+        reissued = result.pop("_link_reissued", None)
+        if reissued:  # audited after the delivery transaction committed (one SQLite writer); never the token
+            audit("store", "download_link_reissued", "ok", {"order_id": order_id, "expires_at": reissued})
+        return result
+
+    def _deliver(self, order_id: str) -> dict[str, Any]:
         with session() as s:
             o = s.get(Order, order_id)
             if o is None:
@@ -132,8 +162,10 @@ class MockStore:
                 key = s.scalars(select(LicenseKey).where(LicenseKey.order_id == order_id)).first()
                 already: dict[str, Any] = {"order_id": order_id, "status": "delivered", "sku": p.sku,
                                            "license_key": key.key if key else None, "already": True}
-                if p.kind != "license":
-                    already["download_url"] = f"https://downloads.example/{p.sku}/{pysecrets.token_urlsafe(12)}"
+                if p.kind != "license":  # I13: a resend carries the same link while it is valid
+                    already["download_url"], reissued = _download_link(o)
+                    if reissued:
+                        already["_link_reissued"] = str(o.download_expires_at)
                 return already
             if o.withdrawal_consent_at is None:  # H8: no immediate delivery without the customer's express consent
                 o.status = "awaiting_consent"
@@ -152,7 +184,7 @@ class MockStore:
                     remaining = s.scalar(select(func.count(LicenseKey.id))
                                          .where(LicenseKey.product_id == p.id, LicenseKey.status == "available"))
             else:
-                delivered["download_url"] = f"https://downloads.example/{p.sku}/{pysecrets.token_urlsafe(12)}"
+                delivered["download_url"], _ = _download_link(o)
             if delivered["status"] == "delivered":
                 o.status = "delivered"
         # publish only after the write transaction above has committed (SQLite allows one writer)
@@ -161,6 +193,18 @@ class MockStore:
         elif remaining is not None and remaining < 5:
             publish("inventory.low", {"sku": p.sku, "available_keys": remaining}, source="store")
         return delivered
+
+    def verify_download(self, order_id: str, token: str, now: datetime | None = None) -> bool:
+        """True when ``token`` is the order's current, unexpired download token (I13). A fully refunded order
+        loses access, a partially refunded one keeps it. Constant-time compare; the token is never logged."""
+        at = now if now is not None else _now()
+        with session() as s:
+            o = s.get(Order, order_id)
+            if o is None or not o.download_token or o.download_expires_at is None or not token:
+                return False
+            if o.status not in ("delivered", "partially_refunded") or o.download_expires_at <= at:
+                return False
+            return hmac.compare_digest(o.download_token.encode(), str(token).encode())
 
     def record_withdrawal_consent(self, order_id: str,
                                   consent_version: str = WITHDRAWAL_CONSENT_VERSION) -> dict[str, Any]:

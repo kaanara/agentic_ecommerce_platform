@@ -56,6 +56,9 @@ Tools read credentials at call time via `SecretsProvider` (`src/aecom/secrets.py
 | `lemonsqueezy` | ✅ `src/aecom/store/lemonsqueezy.py`. Lemon Squeezy is the system of record (Roadmap L1). The app mirrors orders, refunds and licence keys. |
 | Paddle / Shopify / Gumroad | ⏳ Add `store/<platform>.py` and register it in `get_store()`. |
 
+### Download links
+With `STORE_ADAPTER=lemonsqueezy`, Lemon Squeezy hosts and delivers the files. The `mock` store issues one link per order on first delivery: `{DOWNLOAD_BASE_URL}/{order_id}/{token}` (default `https://downloads.example`). It is valid for `DOWNLOAD_LINK_DAYS` (default 7). Resending the access email reuses the same link while it is valid. Once the link expires, the next delivery issues a new token and writes the audit entry `download_link_reissued`; the token is never logged. `MockStore.verify_download(order_id, token)` is what a file server should call. It compares in constant time and rejects expired links and fully refunded orders. Partially refunded orders keep access. The link never shows `Product.asset_url`, which is the file location used by the server that serves the downloads.
+
 ### Lemon Squeezy (merchant of record)
 **What Lemon Squeezy does:** checkout, payment, EU VAT (charged and filed as merchant of record), licence key generation, download hosting, receipt and access emails, and refunds. Sales keep running when the app host (Pi) is off, and Lemon Squeezy retries webhooks.
 
