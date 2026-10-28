@@ -245,6 +245,10 @@ class Approval(Base):
     """Human-in-the-loop queue. The approved action is stored verbatim and executed exactly as approved."""
 
     __tablename__ = "ops_approvals"
+    # R8: two identical escalations racing each other can't both become pending (the loser reuses the winner's row)
+    __table_args__ = (Index("uq_approvals_pending_dedup", "dedup_key", unique=True,
+                            sqlite_where=text("status = 'pending' AND dedup_key IS NOT NULL"),
+                            postgresql_where=text("status = 'pending' AND dedup_key IS NOT NULL")),)
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("apr"))
     agent_id: Mapped[str] = mapped_column(String)
     tool_name: Mapped[str] = mapped_column(String)
@@ -281,6 +285,10 @@ class Incident(Base):
     """K2/B: one open problem per (monitor, subject), raised by deterministic monitors; alerts are sent from here."""
 
     __tablename__ = "ops_incidents"
+    # R12: at most one active (open/acknowledged) incident per (monitor, subject), even with concurrent raisers
+    __table_args__ = (Index("uq_incidents_active", "monitor", "subject", unique=True,
+                            sqlite_where=text("status IN ('open', 'acknowledged')"),
+                            postgresql_where=text("status IN ('open', 'acknowledged')")),)
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("inc"))
     monitor: Mapped[str] = mapped_column(String, index=True)  # e.g. undelivered_order, heartbeat, ledger_imbalance
     severity: Mapped[str] = mapped_column(String)  # P1 | P2 | P3
