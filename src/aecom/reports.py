@@ -32,14 +32,15 @@ _KIND = re.compile(r"[a-z][a-z0-9_]{0,39}")
 # Stripped before extraction: ISO dates/timestamps and list markers at the start of a line ("1." / "2)").
 _DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?\b")
 _LIST_MARKER = re.compile(r"^(\s*)\d{1,3}[.)](?=\s)", re.MULTILINE)
-# A number plus whatever is glued to it. Scale suffixes (k, m, bn, "million") multiply the value; any other letters
+# A number plus whatever is glued to it. Scale suffixes (k, M, mn, mio, bn, "million"; a lowercase "m" is
+# ambiguous with minutes/metres, so "5m" is just the number 5) multiply the value; any other letters
 # ("37x", "250EUR", "999orders") still leave the number checked. Never skip a number because letters follow it.
 _NUMBER = re.compile(
     r"(?<![\w.,])(?P<sign>[-−])?(?P<cur>(?:[€$£]|(?i:eur|usd|gbp)(?![a-z]))\s?)?(?P<num>\d+(?:[.,]\d+)*)"
-    r"(?P<scale>(?i:k|m|mn|b|bn)(?![A-Za-z])|\s?(?i:thousand|million|billion)\b)?"
+    r"(?P<scale>(?:[kK]|M|(?i:mn|mio|b|bn))(?![A-Za-z])|\s?(?i:thousand|million|billion)\b)?"
     r"(?P<pct>\s?%|\s?(?i:pct|percent)\b)?(?P<suffix>[A-Za-z]+)?"
 )
-_SCALES = {"k": 1e3, "thousand": 1e3, "m": 1e6, "mn": 1e6, "million": 1e6, "b": 1e9, "bn": 1e9, "billion": 1e9}
+_SCALES = {"k": 1e3, "thousand": 1e3, "m": 1e6, "mn": 1e6, "mio": 1e6, "million": 1e6, "b": 1e9, "bn": 1e9, "billion": 1e9}
 _COUNT_WORD = re.compile(r"[\s-]+[A-Za-z]")
 
 

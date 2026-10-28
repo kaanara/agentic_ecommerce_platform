@@ -14,11 +14,13 @@
     aecom drain | scheduler [--demo] | api | dashboard | mcp <domain>
     aecom events dead | retry [ID ...]     dead-lettered events; retry some or all after fixing the cause
     aecom incidents [list] [--all]         active incidents (--all: include resolved)
-    aecom incidents ack|resolve ID --by NAME [--note TEXT]
+    aecom incidents ack|resolve ID --by NAME [--note TEXT]   (--by is required)
     aecom incidents export ID [--live]     issue markdown to reports/issues/ID.md (--live: create the GitHub issue)
     aecom incidents postmortem ID          draft a postmortem report for a resolved P1 incident
     aecom memory [pending]                 shared memories waiting for review (with provenance and taint)
     aecom memory approve|reject ID --by NAME [--note TEXT]   only approved shared memories are recalled by agents
+    aecom registry list [--agent ID]       tool allowlists per agent
+    aecom registry revoke AGENT TOOL --by NAME [--note TEXT]   remove a tool grant (human-only; init re-adds TOOLS.md tools)
     aecom agents [list] | enable|disable ID   per-agent switch (reflexes such as delivery are unaffected)
     aecom monitors run                     run all monitors once, raise/resolve incidents, send due alerts
     aecom provisioning [list]              vendors waiting for a human, with their numbered checklist
@@ -101,7 +103,14 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("id", nargs="?")
     s.add_argument("--all", action="store_true", help="include resolved incidents")
     s.add_argument("--live", action="store_true", help="export: create the GitHub issue (GITHUB_REPO + GITHUB_TOKEN)")
-    s.add_argument("--by", default="cli-user")
+    s.add_argument("--by", default="", help="who is acting (required for ack/resolve)")
+    s.add_argument("--note", default="")
+    s = sub.add_parser("registry")
+    s.add_argument("action", choices=["list", "revoke"])
+    s.add_argument("agent_id", nargs="?")
+    s.add_argument("tool", nargs="?")
+    s.add_argument("--agent", default=None, help="list: only this agent")
+    s.add_argument("--by", default="")
     s.add_argument("--note", default="")
     s = sub.add_parser("memory")
     s.add_argument("action", nargs="?", default="pending", choices=["pending", "approve", "reject"])
@@ -227,15 +236,41 @@ def main(argv: list[str] | None = None) -> None:
                 if a.action == "export":
                     print(incident_export.export_issue(a.id, dry_run=not a.live))
                 else:
-                    _print(incident_export.draft_postmortem(a.id, created_by=f"human:{a.by}"))
+                    _print(incident_export.draft_postmortem(a.id, created_by=f"human:{a.by or 'cli'}"))
             except ValueError as e:
                 sys.exit(str(e))
+        elif a.action in ("ack", "resolve") and not a.by.strip():
+            print(f"usage: aecom incidents {a.action} ID --by NAME [--note TEXT]; --by is required", file=sys.stderr)
+            sys.exit(2)
         else:
             fn = incidents.acknowledge if a.action == "ack" else incidents.resolve
             try:
                 _print(fn(a.id, a.by, a.note))
             except ValueError as e:
                 sys.exit(str(e))
+    elif a.cmd == "registry":
+        from aecom.persona.loader import agent_ids
+        from aecom.registry import tools as registry_tools
+
+        known = sorted(agent_ids())
+        if a.action == "list":
+            if a.agent and a.agent not in known:
+                print(f"unknown agent {a.agent!r}; choose from: {', '.join(known)}", file=sys.stderr)
+                sys.exit(2)
+            _print(registry_tools.list_allowlists(a.agent))
+        else:
+            if not (a.agent_id and a.tool and a.by.strip()):
+                print("usage: aecom registry revoke AGENT TOOL --by NAME [--note TEXT]; --by is required",
+                      file=sys.stderr)
+                sys.exit(2)
+            if a.agent_id not in known:
+                print(f"unknown agent {a.agent_id!r}; choose from: {', '.join(known)}", file=sys.stderr)
+                sys.exit(2)
+            res = registry_tools.revoke(a.agent_id, a.tool, a.by, a.note)
+            if not res["removed"]:
+                print(f"{a.agent_id} has no grant for {a.tool!r}; nothing revoked", file=sys.stderr)
+                sys.exit(2)
+            _print(res)
     elif a.cmd == "memory":
         from aecom import memory_review
 

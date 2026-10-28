@@ -92,3 +92,36 @@ def test_monitors_run_prints_a_summary(capsys):
     cli.main(["monitors", "run"])
     out = capsys.readouterr().out
     assert '"failing"' in out and '"heartbeat"' in out
+
+
+def test_registry_list_and_revoke(capsys):
+    from aecom.db import Allowlist
+
+    with session() as s:
+        s.add(Allowlist(agent_id="support", tool_name="get_kpis"))  # runtime grant, not in TOOLS.md
+    cli.main(["registry", "list", "--agent", "support"])
+    assert "get_kpis" in json.loads(capsys.readouterr().out)["support"]
+    cli.main(["registry", "revoke", "support", "get_kpis", "--by", "kaan", "--note", "x"])
+    out = json.loads(capsys.readouterr().out)
+    assert out["removed"] is True and "warning" not in out
+    cli.main(["registry", "list", "--agent", "support"])
+    assert "get_kpis" not in json.loads(capsys.readouterr().out)["support"]
+
+
+def test_registry_revoke_of_tools_md_tool_is_restored_by_next_cli_run(capsys):
+    # Every CLI command runs init() first, which re-adds tools TOOLS.md lists. Documented behaviour.
+    cli.main(["registry", "revoke", "support", "reply_email", "--by", "kaan"])
+    assert "warning" in json.loads(capsys.readouterr().out)
+    cli.main(["registry", "list", "--agent", "support"])
+    assert "reply_email" in json.loads(capsys.readouterr().out)["support"]
+
+
+def test_registry_revoke_errors_exit_2(capsys):
+    for argv, msg in ((["registry", "revoke", "support", "reply_email"], "--by is required"),
+                      (["registry", "revoke", "nobody", "reply_email", "--by", "k"], "unknown agent"),
+                      (["registry", "revoke", "support", "no_such_tool", "--by", "k"], "no grant"),
+                      (["registry", "list", "--agent", "nobody"], "unknown agent")):
+        with pytest.raises(SystemExit) as e:
+            cli.main(argv)
+        assert e.value.code == 2
+        assert msg in capsys.readouterr().err

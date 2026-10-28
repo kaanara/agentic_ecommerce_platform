@@ -144,3 +144,47 @@ def test_cli_list_ack_resolve(capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["incidents", "resolve"])
     assert "incident id required" in str(e.value.code)
+
+
+def test_cli_ack_resolve_require_by(capsys):
+    a, _ = incidents.raise_incident("heartbeat", "P1", "scheduler", now=T0)
+    for action in ("ack", "resolve"):
+        with pytest.raises(SystemExit) as e:
+            cli.main(["incidents", action, a["id"]])
+        assert e.value.code == 2
+        assert "--by is required" in capsys.readouterr().err
+    assert incidents.get_incident(a["id"])["status"] == "open"
+
+
+def test_escalation_resets_alert_state():
+    a, _ = incidents.raise_incident("m", "P2", "s", now=T0)
+    incidents.mark_alerted(a["id"], T0)
+    same, _ = incidents.raise_incident("m", "P2", "s", now=T0 + timedelta(minutes=1))
+    assert same["last_alerted_at"] == T0
+    up, is_new = incidents.raise_incident("m", "P1", "s", now=T0 + timedelta(minutes=2))
+    assert not is_new and up["last_alerted_at"] is None
+    assert incidents.needs_alert(up, T0 + timedelta(minutes=2), REPEAT)
+
+
+def test_resolve_absent_rejects_bare_string():
+    incidents.raise_incident("m", "P2", "abc", now=T0)
+    with pytest.raises(TypeError, match="not a string"):
+        incidents.resolve_absent("m", "abc")
+    assert incidents.open_counts()["P2"] == 1
+
+
+def test_concurrent_raiser_losing_the_unique_index_race_updates_existing(monkeypatch):
+    winner, _ = incidents.raise_incident("m", "P3", "s", detail="old", now=T0)
+    real = incidents.select
+    calls = {"n": 0}
+
+    def blind_first(*a, **k):  # the first lookup runs "before" the other raiser committed: it sees nothing
+        calls["n"] += 1
+        q = real(*a, **k)
+        return q.where(incidents.Incident.id == "nope") if calls["n"] == 1 else q
+
+    monkeypatch.setattr(incidents, "select", blind_first)
+    out, is_new = incidents.raise_incident("m", "P2", "s", detail="new", now=T0 + timedelta(minutes=1))
+    assert is_new is False and out["id"] == winner["id"]
+    assert out["detail"] == "new" and out["severity"] == "P2"
+    assert len(incidents.list_incidents()) == 1

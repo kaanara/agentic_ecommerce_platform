@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from aecom.audit import audit
 from aecom.db import Incident, session
@@ -48,21 +49,34 @@ def raise_incident(monitor: str, severity: str, subject: str = "", detail: str =
         raise ValueError(f"severity must be one of {SEVERITIES}, got {severity!r}")
     t = now or db_now()
     escalated_from = None
+
+    def _active(s: Any) -> Incident | None:
+        return s.scalars(select(Incident).where(Incident.monitor == monitor, Incident.subject == subject,
+                                                Incident.status.in_(ACTIVE))
+                         .order_by(Incident.first_seen.desc())).first()
+
     with session() as s:
-        i = s.scalars(select(Incident).where(Incident.monitor == monitor, Incident.subject == subject,
-                                             Incident.status.in_(ACTIVE))
-                      .order_by(Incident.first_seen.desc())).first()
+        i = _active(s)
         is_new = i is None
         if i is None:
             i = Incident(monitor=monitor, severity=severity, subject=subject, detail=detail, status="open",
                          first_seen=t, last_seen=t, alert_count=0, notes="")
-            s.add(i)
-        else:
+            try:
+                with s.begin_nested():  # a concurrent raiser may win the uq_incidents_active race
+                    s.add(i)
+                    s.flush()
+            except IntegrityError:
+                i = _active(s)
+                if i is None:
+                    raise
+                is_new = False
+        if not is_new:
             i.last_seen = t
             if detail:
                 i.detail = detail
             if _rank(severity) < _rank(i.severity):
                 escalated_from, i.severity = i.severity, severity
+                i.last_alerted_at = None  # escalation alerts again at the next monitor run
         s.flush()
         out = _dict(i)
     if is_new:
@@ -75,6 +89,8 @@ def raise_incident(monitor: str, severity: str, subject: str = "", detail: str =
 
 def resolve_absent(monitor: str, active_subjects: Iterable[str], now: datetime | None = None) -> list[str]:
     """Auto-resolve active incidents of `monitor` whose subject is no longer failing. Returns the resolved ids."""
+    if isinstance(active_subjects, str):
+        raise TypeError("active_subjects must be an iterable of subjects, not a string")
     t, keep = now or db_now(), set(active_subjects)
     with session() as s:
         gone = [i for i in s.scalars(select(Incident).where(Incident.monitor == monitor, Incident.status.in_(ACTIVE)))

@@ -58,6 +58,41 @@ def allowed_tools(agent_id: str) -> list[str]:
         return list(s.scalars(select(Allowlist.tool_name).where(Allowlist.agent_id == agent_id)))
 
 
+def list_allowlists(agent_id: str | None = None) -> dict[str, list[str]]:
+    """{agent_id: [tool, ...]} for every agent with grants (or only `agent_id`)."""
+    with session() as s:
+        q = select(Allowlist.agent_id, Allowlist.tool_name).order_by(Allowlist.agent_id, Allowlist.tool_name)
+        if agent_id:
+            q = q.where(Allowlist.agent_id == agent_id)
+        out: dict[str, list[str]] = {}
+        for a, t in s.execute(q):
+            out.setdefault(a, []).append(t)
+        return out
+
+
+def revoke(agent_id: str, tool_name: str, by: str, note: str = "") -> dict:
+    """Human-only (CLI, no agent tool): delete the agent's allowlist row for `tool_name` and audit it.
+
+    Returns {"removed": bool, "agent_id", "tool", "warning"?}. The additive sync re-adds tools that the agent's
+    TOOLS.md still lists on the next `aecom init` (every CLI command runs it), so the warning says to remove it from TOOLS.md as well."""
+    with session() as s:
+        row = s.scalar(select(Allowlist).where(Allowlist.agent_id == agent_id, Allowlist.tool_name == tool_name))
+        removed = row is not None
+        if row is not None:
+            s.delete(row)
+    out: dict = {"removed": removed, "agent_id": agent_id, "tool": tool_name}
+    if removed:
+        audit(f"human:{by}", "allowlist_revoke", "revoked", {"agent": agent_id, "tool": tool_name, "note": note})
+        try:
+            listed = tool_name in load_spec(agent_id).tools
+        except Exception:  # unknown agent / unreadable persona: nothing to warn about
+            listed = False
+        if listed:
+            out["warning"] = (f"{agent_id}/TOOLS.md still lists {tool_name}; the next `aecom init` (every CLI command runs it) re-adds it. "
+                              "Remove it from TOOLS.md to keep it revoked.")
+    return out
+
+
 def skills_for(agent_id: str) -> list[str]:
     """Approved skills (instruction packs) granted to the agent — appended to its prompt."""
     with session() as s:

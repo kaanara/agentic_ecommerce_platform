@@ -104,3 +104,11 @@ def test_submit_report_through_the_gate(sale):
 
     assert _submit("marketing", "Net revenue €100.").startswith("DENIED by policy")
     assert [r["created_by"] for r in reports.list_reports()] == ["finance"]
+
+
+def test_lowercase_m_is_not_million_but_uppercase_and_words_scale():
+    data = {"x": 5.0, "y": 2_000_000.0, "z": 3_000_000.0, "w": 4_000_000.0}
+    assert reports.number_check("Took 5m, 2M, 3mn, 4mio.", data) == []
+    assert reports.number_check("Took 5m.", {"x": 5_000_000.0}) == ["5m"]  # read as 5, which is not in the data
+    assert reports.number_check("Revenue 2 million.", data) == []
+    assert reports.number_check("Revenue 1.2k.", {"x": 1200.0}) == []

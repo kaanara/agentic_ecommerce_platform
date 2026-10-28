@@ -44,7 +44,7 @@ Defined in `src/aecom/tools/catalog.py` with `@tool(domain, side_effect, termina
 ### Adding a built-in tool
 1. Add a typed, documented function with `@tool("domain", side_effect=True|False)` in `catalog.py`. The docstring becomes the model-facing description.
 2. Add a rule in `policy.yaml`. Without one, a side-effecting tool is T3 by default.
-3. Add it to the relevant agents' `TOOLS.md`. `uv run aecom init` syncs it into existing databases too: missing `TOOLS.md` tools are added to the allowlist and audited as `allowlist_sync`. The sync only adds. Removing a tool from `TOOLS.md` doesn't revoke it; init logs it as an extra grant, and you revoke it explicitly.
+3. Add it to the relevant agents' `TOOLS.md`. `uv run aecom init` syncs it into existing databases too: missing `TOOLS.md` tools are added to the allowlist and audited as `allowlist_sync`. The sync only adds. Removing a tool from `TOOLS.md` doesn't revoke it; init logs it as an extra grant, and you revoke it explicitly with `aecom registry revoke AGENT TOOL --by NAME [--note ...]` (`aecom registry list [--agent ID]` shows the grants). Revoking is human-only (CLI, audited as `allowlist_revoke`; agents have no tool for it). If the agent's `TOOLS.md` still lists the tool, the next `aecom init` (which every `aecom` command runs first) re-adds it, so remove it from `TOOLS.md` too (the command warns).
 4. Add a policy test case in `tests/test_core.py`.
 
 > **Naming gotchas:** don't name parameters `config` (LangChain reserves it for `RunnableConfig`) or `copy`/`json`/`schema` (these shadow pydantic `BaseModel` attributes).
