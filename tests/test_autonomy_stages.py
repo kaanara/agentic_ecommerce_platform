@@ -180,3 +180,11 @@ def test_system_demote_and_noop():
 def test_no_agent_tool_changes_a_stage():
     assert not [n for n in CATALOG if "stage" in n or "autonomy" in n or "promote" in n]
     assert load_policy()["rules"]["change_policy"]["tier"] == "T4"
+
+
+@pytest.mark.parametrize("who", ["system", "System", " SYSTEM "])
+def test_system_cannot_promote(who):
+    with pytest.raises(ValueError):
+        autonomy.set_stage("refund_order", 2, who, "sneaky", evidence=EVID)
+    assert autonomy.current_stage("refund_order") == 1
+    assert _audits() == []

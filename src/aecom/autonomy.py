@@ -84,10 +84,12 @@ def set_stage(tool: str, stage: int, by: str, reason: str = "", *, evidence: dic
     if stage > old:
         if not (by or "").strip():
             raise ValueError("raising a stage needs the name of the human (by)")
+        if by.strip().lower() == "system":
+            raise ValueError("only a human can raise a stage, not 'system'")
         if not evidence:
             raise ValueError("raising a stage needs recorded evidence")
     set_setting(STAGE_KEY.format(tool=tool), str(stage))
-    actor = "system" if by == "system" or not by else f"human:{by}"
+    actor = "system" if not by or by.strip().lower() == "system" else f"human:{by}"
     audit(actor, "autonomy_stage", "promoted" if stage > old else "demoted",
           {"tool": tool, "from": old, "to": stage, "reason": reason, "evidence": evidence})
     return stage
