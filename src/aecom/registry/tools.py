@@ -48,8 +48,12 @@ def seed_registry() -> dict[str, list[tuple[str, str]]]:
             extra += [(agent_id, t) for t in sorted(have - set(listed))]
     for agent_id, tool_name in added:  # after commit: audit() opens its own session
         audit("system", "allowlist_sync", "info", {"agent_id": agent_id, "tool": tool_name})
-    if extra:
-        log.warning("Allowlisted tools not in TOOLS.md (kept): %s", ", ".join(f"{a}/{t}" for a, t in extra))
+    # Skills and MCP servers are granted through the registry on purpose (e.g. the Sentinel's runbooks); only a
+    # leftover built-in TOOL deserves a warning, because that is what `aecom registry revoke` is for.
+    leftovers = [(a, t) for a, t in extra if t in CATALOG]
+    if leftovers:
+        log.warning("Allowlisted tools not in TOOLS.md (kept; remove with `aecom registry revoke AGENT TOOL --by NAME`): %s",
+                    ", ".join(f"{a}/{t}" for a, t in leftovers))
     return {"added": added, "extra": extra}
 
 

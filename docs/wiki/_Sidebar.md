@@ -11,6 +11,8 @@
 - [Integrations](Integrations)
 - [Configuration](Configuration)
 - [Operations and Troubleshooting](Operations-and-Troubleshooting)
+- [Raspberry Pi](Raspberry-Pi)
+- [Backups](Backups)
 - [Monitoring and Alerting](Monitoring-and-Alerting)
 - [Reporting](Reporting)
 - [Incident Response](Incident-Response)

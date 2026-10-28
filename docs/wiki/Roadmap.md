@@ -27,9 +27,9 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 ### C. Running on the Pi
 | # | Item | Notes |
 |---|---|---|
-| C1 | systemd units | `aecom-dashboard`, `aecom-scheduler`, `Restart=always` |
-| C2 | `scripts/update.sh` | Kill switch on → stop → back up `data/` → `git pull` → `uv sync` → `aecom init` (no `--demo`) → start → kill switch off |
-| C3 | Off-Pi backups | Daily copy of `data/` (both `aecom.db` and `aecom.checkpoints.db`) |
+| C1 ✅ 2026-10-28 (Pi) | systemd units | `aecom-dashboard`, `aecom-scheduler`, `Restart=always` |
+| C2 ✅ 2026-10-28 | `scripts/update.sh` | Kill switch on → stop → back up `data/` → `git pull` → `uv sync` → `aecom init` (no `--demo`) → start → kill switch off |
+| C3 ✅ 2026-10-28 (local + optional off-device target; restore drill `aecom backup verify`) | Off-Pi backups | Daily copy of `data/` (both `aecom.db` and `aecom.checkpoints.db`) |
 | C4 ✅ 2026-10-26 | Alembic migrations | `create_all` never alters existing tables |
 | C5 ✅ 2026-10-26 | Re-sync `TOOLS.md` | `seed_registry` ignores tool changes for agents that are already seeded |
 | C6 ✅ 2026-10-26 | Dashboard login | No authentication today; anyone on the LAN can approve. Remote access via Tailscale or an SSH tunnel only |
@@ -83,12 +83,12 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 | H3 | Rotate the AgentMail key | Revoke the shared org PAT; use the dedicated `aecom-poc` key |
 | H4 | Anthropic Console spend limit | Hard cap outside the app |
 | H5 ✅ 2026-10-26 | SSRF guard in `fetch_url` | Only checks for `http(s)://`; block loopback, private and link-local addresses |
-| H6 | Host hygiene | Log rotation, NTP, SD-card health or USB SSD |
+| H6 ✅ 2026-10-28 (journald limits, NTP, SSD advice in the Pi guide) | Host hygiene | Log rotation, NTP, SD-card health or USB SSD |
 | H7 ◐ templates (legal review + publishing by a human) | Legal pages | Legal notice (Impressum), privacy policy, terms |
 | H8 ✅ 2026-10-27 | Withdrawal consent | EU digital content: consent to immediate delivery and loss of the 14-day withdrawal right, recorded per order |
 | H9 ✅ procedure documented | GDPR requests | Human procedure for access and deletion; `delete_customer_data` stays T4 |
 | H10 ◐ table drafted (decisions open) | Data retention | Orders, emails, audit logs, LangSmith traces |
-| H11 | LangSmith | Tracing on, PII handled per H10 |
+| H11 ✅ 2026-10-28 (documented; enabling is a human decision after the lawyer review) | LangSmith | Tracing on, PII handled per H10 |
 
 ### I. Code review findings (2026-10-25)
 Confirmed by reading the code. The offline scenarios don't catch them because the simulator only exercises happy paths.
@@ -169,7 +169,7 @@ Today only the Researcher has web access: Anthropic's server-side `web_search` a
 |---|---|---|
 | M1 ✅ 2026-10-26 | Server-side web fetch | Replace `fetch_url` with Anthropic's server-side web fetch tool (confirm the current tool version in Anthropic's docs). It runs on Anthropic's side, so it can't reach the host's network. Keep H5 for any remaining local fetching |
 | M2 | Optional read-only browser | Playwright MCP through the registry, for JavaScript-heavy public pages. Researcher only; isolated container without access to the home or host network; fresh profile with no credentials or cookies; policy allows navigate, read and screenshot, and **denies** click-to-buy, form submit, login and download; output fenced; rate limited |
-| M3 | Scraping policy | Respect `robots.txt` and site terms, low request rates, prefer official APIs, never collect personal data (GDPR). Written into the Researcher's `POLICY.md` and a skill |
+| M3 ✅ 2026-10-28 | Scraping policy | Respect `robots.txt` and site terms, low request rates, prefer official APIs, never collect personal data (GDPR). Written into the Researcher's `POLICY.md` and a skill |
 | M4 ✅ 2026-10-26 | Explicit "no accounts, no logins" rule | Stated on the Policy and Approvals page; T4 deny rules in `policy.yaml` for sign-up, login and form-submit tools from any MCP server; a chaos test where a web page tries to make an agent sign up |
 
 ### W0 review follow-ups (2026-10-26)
@@ -189,10 +189,11 @@ Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves
 | R11 ✅ 2026-10-28 | W4 | `docs/wiki/Agents.md` still says TOOLS.md seeds only on the first init (C5 changed that); ruff `known-first-party` for the dashboard; replace SQLite's deprecated default datetime adapter; init_db lock against two processes initialising an empty DB at once |
 | R12 ✅ 2026-10-28 | W5 | Make `--by` required for `aecom incidents ack/resolve`; partial unique index for active incidents (concurrent raise); immediate alert when an incident escalates P2→P1; guard `resolve_absent` against a bare string; the number check reads a trailing `m` as million (e.g. "5m" minutes is rejected) |
 | R13 ◐ 2026-10-28 (atomic receipt+mirror, key quantity, consent monitor, docs and personas done; booking Lemon Squeezy fees/payouts waits for U1) | W7 | Webhook receipt and mirror not in one transaction (a hard crash between them drops that delivery until a later replay); book Lemon Squeezy fees/payouts as expenses; P3 monitor for `awaiting_consent` orders; take licence-key quantity from the order item; `Data-Model.md` lacks the newer tables; personas should say product/price changes are a human dashboard task with Lemon Squeezy |
-| R14 ◐ 2026-10-28 (lost-key recovery and global ledger-lines invariant done; download route waits for U2; unknown-vendor human tick is a product decision) | W8 | Recover lost `license_key_created` webhooks via the LS license-keys API; a download route that calls `verify_download`; unknown vendors become active on key presence only (consider a human tick); move `every_mirrored_order_has_ledger_lines` into the global invariants |
+| R14 ◐ 2026-10-28 (lost-key recovery and global ledger-lines invariant done; unknown-vendor confirmation solved by U3; the download route is still open - needs a public URL, i.e. the cloud move) | W8 | Recover lost `license_key_created` webhooks via the LS license-keys API; a download route that calls `verify_download`; unknown vendors become active on key presence only (consider a human tick); move `every_mirrored_order_has_ledger_lines` into the global invariants |
 | R15 ✅ 2026-10-28 | W11 | `aecom registry list|revoke` (human-only, audited). Note: every CLI command runs `init`, which re-adds tools still listed in `TOOLS.md`, so a revoke only sticks if the tool is also removed from `TOOLS.md` |
 | R16 ✅ 2026-10-28 (scheduler syncs at start and every 6 h when STORE_ADAPTER=lemonsqueezy; `aecom store sync`; doctor warns until the first sync) | W11 | Lost-key recovery only considers products of kind `license`, but a webhook for a not-yet-synced product creates a placeholder of kind `download`, so recovery is skipped for it. Run `LemonSqueezyStore.sync_catalog()` before the first sale and on a schedule (not wired yet) |
 | R17 | W11 | `chaos.run_scenario()` now refuses non-disposable databases (a direct call once wrote test orders into the company DB; repaired from a snapshot). Same care applies to other writing helpers (`simulator`, `seed_demo`): never call them without a throwaway `DATABASE_URL` |
+| R18 | W12 | Backups are not encrypted at rest (they hold customer personal data): rely on an encrypted target or add optional `age`/`gpg` encryption; `update.sh`/units were validated statically and with `--check` in a clone only - the first real run on the Pi is a human test; the Sentinel still holds `request_account_need` in the owner's database until `aecom registry revoke sentinel request_account_need --by NAME` is run |
 | R5 ✅ | — | Replace FastAPI's deprecated `@app.on_event("startup")` with a lifespan handler |
 
 #### Decisions owned by the product owner

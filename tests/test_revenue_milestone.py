@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import pytest
 from aecom import alerts, incidents, ledger, monitors
+from aecom.db import Order, session
 from aecom.db import now as db_now
 from aecom.secrets import secrets
 
@@ -25,7 +26,11 @@ def routed(monkeypatch):
     return sent
 
 
-def sale(order_id, net):
+def sale(order_id, net, real=True):
+    """Book a sale; a real store order carries a platform id (external_id), a demo/simulated one does not."""
+    with session() as s:
+        s.add(Order(id=order_id, customer_id="cus_t", product_id="prd_t", amount_eur=net, vat_eur=0.0, status="delivered",
+                    email_sent=True, external_id=f"ls-{order_id}" if real else None))
     ledger.record_sale(order_id, net, 0, 0)
 
 
@@ -132,3 +137,22 @@ def test_other_monitors_unaffected(routed):
     summary = monitors.evaluate()
     assert summary["monitor_errors"] == [] and summary["failing"] == {NAME: 1}
     assert {i["monitor"] for i in incidents.list_incidents()} == {NAME}
+
+
+def test_demo_and_simulated_revenue_never_triggers_it(routed):
+    """The seeded demo data (hundreds of euros, no store-platform ids) must not fire the reminder on day one."""
+    sale("demo1", 500.0, real=False)
+    sale("demo2", 900.0, real=False)
+    run(3)
+    assert mine() == [] and routed == []
+    assert monitors.real_net_revenue_eur() == 0.0
+    sale("o_real", 25.0)  # the first REAL sale at the threshold does
+    run(2)
+    assert len(mine()) == 1
+
+
+def test_refunds_of_real_orders_reduce_the_counted_revenue():
+    sale("o1", 40.0)
+    assert monitors.real_net_revenue_eur() == 40.0
+    ledger.record_refund("o1", 15.0)
+    assert monitors.real_net_revenue_eur() == pytest.approx(25.0, abs=0.01)

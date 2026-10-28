@@ -77,7 +77,7 @@ Extra invariants for G1: every delivered order has a sent email; refunds ≤ ord
 
 **Exit:** with a 30% injected delivery failure rate **and** a 30% injected email failure rate, 100% of orders are delivered *and emailed* within 2 reconciler cycles; zero duplicate keys; ledger balanced to the cent after every step; a pause-and-relaunch sequence can't exceed the monthly budget.
 
-## Phase 2: Pi production baseline ✅ exit gate passed 2026-10-26 (non-U2 parts; C1-C3, H6 wait for the hosting decision)
+## Phase 2: Pi production baseline ✅ exit gate passed 2026-10-26; Pi items (C1-C3, H6) built 2026-10-28 after the hosting decision
 **Goal:** runs unattended; you hear about problems before customers do.
 
 | ID | Task |

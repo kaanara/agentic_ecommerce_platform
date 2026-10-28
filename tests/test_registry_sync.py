@@ -112,3 +112,20 @@ def test_list_allowlists_filters_by_agent():
     assert "support" in everything and len(everything) > 1
     assert list(registry.list_allowlists("support")) == ["support"]
     assert registry.list_allowlists("nobody") == {}
+
+
+def test_only_leftover_builtin_tools_are_warned_about_not_granted_skills(caplog):
+    """Runbook/policy skills are granted via the registry on purpose; a leftover built-in tool is the real signal."""
+    import logging
+
+    from aecom.db import Allowlist, session
+    from aecom.registry.tools import seed_registry
+
+    with session() as s:
+        s.add(Allowlist(agent_id="sentinel", tool_name="request_account_need"))  # built-in, not in its TOOLS.md
+    with caplog.at_level(logging.WARNING, logger="aecom.registry.tools"):
+        out = seed_registry()
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "sentinel/request_account_need" in text and "registry revoke" in text
+    assert "runbook_" not in text and "scraping_policy" not in text
+    assert any(t.startswith("runbook_") for _, t in out["extra"])  # still reported in the return value

@@ -202,22 +202,35 @@ def _migration_threshold() -> float:
         return DEFAULT_MIGRATION_REVENUE_EUR
 
 
+def real_net_revenue_eur() -> float:
+    """Cumulative net revenue (after refunds) from REAL store sales only: ledger lines of orders that carry a
+    store-platform id (``external_id``). Demo and simulated orders, which have none, never count - otherwise the
+    seeded demo data would trigger the migration reminder on day one."""
+    from aecom.db import LedgerEntry
+
+    with session() as s:
+        real_orders = select(Order.id).where(Order.external_id.is_not(None))
+        revenue = s.scalar(select(func.coalesce(func.sum(LedgerEntry.credit - LedgerEntry.debit), 0.0)).where(
+            LedgerEntry.account == "revenue", LedgerEntry.ref.in_(real_orders))) or 0.0
+        refunds = s.scalar(select(func.coalesce(func.sum(LedgerEntry.debit - LedgerEntry.credit), 0.0)).where(
+            LedgerEntry.account == "refunds", LedgerEntry.ref.in_(real_orders))) or 0.0
+    return round(float(revenue) - float(refunds), 2)
+
+
 def revenue_milestone(now: datetime) -> list[Problem]:
     """One-time reminder to review the Pi -> cloud move and the accounting tool once cumulative net revenue
-    (after refunds) reaches MIGRATION_REVENUE_EUR (default 25).
+    from real store sales (after refunds) reaches MIGRATION_REVENUE_EUR (default 25).
 
     Never nags: once any incident for this monitor+subject is resolved, it stays silent for good. While the
     incident is open or acknowledged it keeps being reported even if refunds push revenue back below the
     threshold, so the monitor loop never auto-resolves it; only a human resolves it."""
-    from aecom import metrics
-
     with session() as s:
         states = set(s.scalars(select(Incident.status).where(
             Incident.monitor == "revenue_milestone", Incident.subject == MILESTONE_SUBJECT)))
     if "resolved" in states:
         return []
     threshold = _migration_threshold()
-    net = metrics.pnl()["net_revenue"]
+    net = real_net_revenue_eur()
     if net < threshold and not states & set(incidents.ACTIVE):
         return []
     return [(MILESTONE_SUBJECT,
