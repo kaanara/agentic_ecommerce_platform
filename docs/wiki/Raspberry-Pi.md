@@ -13,6 +13,8 @@ Files used here: `deploy/pi/aecom-scheduler.service`, `deploy/pi/aecom-api.servi
 
 ## 2. Base setup
 
+> **Shortcut:** `bash scripts/pi-bootstrap.sh --dry-run` shows, and without `--dry-run` performs, steps 2 and 3 for the user you are logged in as (packages, uv, dependencies, `.env` from the template, database, systemd units, log limits). It never starts the services, touches the firewall or changes sudo rules unless you add `--enable-services`, `--firewall` or `--allow-update-sudo`, and it never reads or prints `.env`. The manual steps below are what it does.
+
 ```bash
 sudo adduser --disabled-password --gecos "" aecom
 sudo timedatectl set-ntp true          # time sync matters for webhooks signatures and schedules
@@ -55,9 +57,11 @@ All three long-running units restart on failure (`Restart=always`, 5 s delay, an
 For `scripts/update.sh` to stop and start the services without a password, allow exactly that for the `aecom` user:
 
 ```bash
-echo 'aecom ALL=(root) NOPASSWD: /usr/bin/systemctl start aecom-*, /usr/bin/systemctl stop aecom-*' \
-  | sudo tee /etc/sudoers.d/aecom-update && sudo chmod 440 /etc/sudoers.d/aecom-update
-sudo visudo -c
+# exact commands only: a wildcard such as "aecom-*" would also match extra arguments (for example other services)
+S=/usr/bin/systemctl
+echo "aecom ALL=(root) NOPASSWD: $S start aecom-scheduler, $S stop aecom-scheduler, $S start aecom-api, $S stop aecom-api, $S start aecom-dashboard, $S stop aecom-dashboard" \
+  > /tmp/aecom-update.sudoers && sudo visudo -cf /tmp/aecom-update.sudoers \
+  && sudo install -m 440 -o root -g root /tmp/aecom-update.sudoers /etc/sudoers.d/aecom-update
 ```
 
 ### Journald limits
