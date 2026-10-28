@@ -71,6 +71,7 @@ def stats(tool: str, since: datetime | None = None) -> dict[str, Any]:
         "expired": sum(a.status == "expired" for a in rows), "pending": sum(a.status == "pending" for a in rows),
         "edited": edited,
         "unchanged_rate": round((len(approved) - edited) / decided, 4) if decided else None,
+        "unchanged_exact": (len(approved) - edited) / decided if decided else None,  # eligibility compares THIS, unrounded
         "reject_rate": round(len(rejected) / decided, 4) if decided else None,
         "median_decision_minutes": round(median(minutes), 1) if minutes else None,
         "autonomous_actions": len(_autonomous_rows(tool, since)),
@@ -114,9 +115,9 @@ def eligibility(tool: str, now: datetime | None = None) -> dict[str, Any]:
         missing.append(f"real sales {sales} < {th['AUTONOMY_MIN_REAL_SALES']:g}")
     if st["decided"] < th["AUTONOMY_MIN_DECISIONS"]:
         missing.append(f"decisions since the last stage change {st['decided']} < {th['AUTONOMY_MIN_DECISIONS']:g}")
-    rate = st["unchanged_rate"]
+    rate = st["unchanged_exact"]  # unrounded: 94.996% must not pass a 95% bar
     if rate is None or rate < th["AUTONOMY_MIN_UNCHANGED_RATE"]:
-        shown = "n/a" if rate is None else f"{rate:.0%}"
+        shown = "n/a" if rate is None else f"{rate:.1%}"
         missing.append(f"approve-unchanged rate {shown} < {th['AUTONOMY_MIN_UNCHANGED_RATE']:.0%}")
     if st["rejected"]:
         missing.append(f"{st['rejected']} rejection(s) since the last stage change")
@@ -166,6 +167,16 @@ def report() -> list[dict[str, Any]]:
     return [{**eligibility(t), "stages": autonomy.defined_stages(t), "stats": stats(t)} for t in promotable_tools()]
 
 
+def _safe_args(args: Any) -> str:
+    """Numbers and flags are shown (they are what a reviewer needs: amounts, percentages); every other value is
+    reduced to its key so customer emails, names or free text never end up in the autonomy log."""
+    if not isinstance(args, dict):
+        return ""
+    shown = {k: v for k, v in args.items() if isinstance(v, (int, float, bool)) and not isinstance(v, str)}
+    hidden = sorted(k for k in args if k not in shown)
+    return f"{shown}" + (f" (+ {', '.join(hidden)})" if hidden else "")
+
+
 def log(days: int = 7, now: datetime | None = None) -> list[dict[str, Any]]:
     """Stage changes and autonomous actions of the last ``days`` days, oldest first."""
     since = (now or db_now()) - timedelta(days=days)
@@ -178,5 +189,5 @@ def log(days: int = 7, now: datetime | None = None) -> list[dict[str, Any]]:
                             "detail": f"stage {d.get('from')} -> {d.get('to')}: {d.get('reason') or ''}".strip()})
             elif d.get("autonomous") is True:
                 out.append({"ts": r.ts.isoformat(), "kind": "autonomous", "tool": r.action, "actor": r.actor,
-                            "detail": f"stage {d.get('autonomy_stage')} {d.get('args')}"})
+                            "detail": f"stage {d.get('autonomy_stage')} {_safe_args(d.get('args'))}"})
     return out

@@ -102,7 +102,7 @@ def test_each_criterion_blocks_individually():
     assert trust.eligibility(TOOL)["eligible"]
     # unchanged rate
     _approvals(edited=2)
-    assert "approve-unchanged rate 91% < 95%" in missing()
+    assert "approve-unchanged rate 90.9% < 95%" in missing()
 
 
 def test_decision_count_blocks():
@@ -320,3 +320,25 @@ def test_trust_page_requires_login_first():
     else:
         pytest.fail("6_Trust.py never calls require_login()")
     assert "trust.promote" in src and "trust.demote" in src and "Hard caps never move" in src
+
+
+def test_a_rate_just_below_the_bar_does_not_round_up_into_eligibility(monkeypatch):
+    """94.996% displays as 95.00% when rounded to 4 places; eligibility must use the exact ratio."""
+    from aecom import trust
+
+    monkeypatch.setattr(trust, "stats", lambda tool, since=None: {
+        "decided": 25000, "approved": 24999, "rejected": 0, "expired": 0, "edited": 1250, "pending": 0, "escalations": 25000,
+        "unchanged_rate": 0.95, "unchanged_exact": 0.94996, "reject_rate": 0.0, "median_decision_minutes": 1.0,
+        "autonomous_actions": 0, "last_decision_at": None})
+    e = trust.eligibility("refund_order")
+    assert e["eligible"] is False and any("approve-unchanged rate" in m for m in e["missing"])
+
+
+def test_autonomy_log_never_shows_customer_text(fresh_company):
+    from aecom.audit import audit
+    from aecom import trust
+
+    audit("support", "refund_order", "allow", {"autonomous": True, "autonomy_stage": 2,
+                                               "args": {"order_id": "ord_1", "amount_eur": 120.0, "reason": "mail from jane@example.com"}})
+    shown = " ".join(r["detail"] for r in trust.log(days=1))
+    assert "jane@example.com" not in shown and "120.0" in shown and "reason" in shown  # amount visible, text reduced to a key

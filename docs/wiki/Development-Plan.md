@@ -164,7 +164,7 @@ Extra invariants for G1: every delivered order has a sent email; refunds ≤ ord
 
 **Exit:** for any approval or ADR, the full chain of agents, tools and inputs is visible from one page; an injected bug produces an incident, a Sentinel diagnosis with the traceback, and a GitHub issue that results in a PR with a failing test.
 
-## Phase 5: Gradual autonomy
+## Phase 5: Gradual autonomy ✅ built 2026-10-28 (promotion stays locked until 10 real sales; live chaos runs against real Claude are still a human-started step)
 **Goal:** fewer approvals, without less safety.
 
 **Entry gate (L4):** at least 10 real sales and a meaningful number of real approvals, so the trust report is based on evidence.

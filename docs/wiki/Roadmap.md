@@ -70,9 +70,9 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 | G1 ✅ 2026-10-26 | Invariants | Every paid order delivered; ledger balances; no key on two orders; spend ≤ budget; no side effects with the kill switch on (except delivery); no run stuck `running` |
 | G2 ✅ 2026-10-27 (incl. Lemon Squeezy webhook faults) | Fault injectors | Delivery crash, duplicate webhook, lost webhook, Claude API down, DB locked, vendor outage, injection variants |
 | G3 ✅ (offline; live runs in Phase 5) | `aecom chaos` | Offline (scripted, CI) and live (real Claude); seeded "random bad week" |
-| G4 | Trust report | Per action: escalations, approve-unchanged rate, a "promote" button |
-| G5 | Autonomy stages | Per-action stages in `policy.yaml`, stage stored in `ops_settings` (set by humans only); allow + notify for stage 3 |
-| G6 | Automatic demotion | Tighten limits on KPI drops, Judge scores or incidents |
+| G4 ✅ 2026-10-28 | Trust report | Per action: escalations, approve-unchanged rate, a "promote" button |
+| G5 ✅ 2026-10-28 | Autonomy stages | Per-action stages in `policy.yaml`, stage stored in `ops_settings` (set by humans only); allow + notify for stage 3 |
+| G6 ✅ 2026-10-28 (Judge scores are not a trigger yet) | Automatic demotion | Tighten limits on KPI drops, Judge scores or incidents |
 | — | Always human | Account creation, terms, payment methods, budget increases, `policy.yaml` and code changes |
 
 ### H. Engineering hygiene, security and compliance
@@ -194,6 +194,7 @@ Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves
 | R16 ✅ 2026-10-28 (scheduler syncs at start and every 6 h when STORE_ADAPTER=lemonsqueezy; `aecom store sync`; doctor warns until the first sync) | W11 | Lost-key recovery only considers products of kind `license`, but a webhook for a not-yet-synced product creates a placeholder of kind `download`, so recovery is skipped for it. Run `LemonSqueezyStore.sync_catalog()` before the first sale and on a schedule (not wired yet) |
 | R17 | W11 | `chaos.run_scenario()` now refuses non-disposable databases (a direct call once wrote test orders into the company DB; repaired from a snapshot). Same care applies to other writing helpers (`simulator`, `seed_demo`): never call them without a throwaway `DATABASE_URL` |
 | R18 | W12 | Backups are not encrypted at rest (they hold customer personal data): rely on an encrypted target or add optional `age`/`gpg` encryption; `update.sh`/units were validated statically and with `--check` in a clone only - the first real run on the Pi is a human test; the Sentinel still holds `request_account_need` in the owner's database until `aecom registry revoke sentinel request_account_need --by NAME` is run |
+| R19 | W13 | Stage 3 "notify" is only the daily flash and the log (no immediate message); the Judge's scores are not a demotion trigger; trust history starts now (older approvals have no edited flag); `promote()` checks eligibility and sets the stage in two steps (a human must act, so the window is tiny); demotion raises its incident after demoting, so a failure in between loses the incident (the audit row remains) |
 | R5 ✅ | — | Replace FastAPI's deprecated `@app.on_event("startup")` with a lifespan handler |
 
 #### Decisions owned by the product owner

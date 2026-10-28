@@ -4,6 +4,7 @@
 - [Architecture](Architecture)
 - [Agents](Agents)
 - [Policy and Approvals](Policy-and-Approvals)
+- [Autonomy](Autonomy)
 - [Workflows and Scenarios](Workflows-and-Scenarios)
 - [Tools, MCP and Skills](Tools-MCP-and-Skills)
 - [Data Model](Data-Model)

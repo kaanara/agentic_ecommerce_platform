@@ -2,6 +2,8 @@
 
 Every tool call is checked by `src/aecom/policy/gate.py`, using the escalation matrix in `src/aecom/policy/policy.yaml`.
 
+> Limits on `T2` actions can be raised per action, with evidence, by a human, and are lowered automatically: see [Autonomy](Autonomy).
+
 ## Tiers
 | Tier | Meaning | Result |
 |---|---|---|
