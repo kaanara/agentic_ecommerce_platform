@@ -34,6 +34,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 from aecom.config import get_settings
 
+log = logging.getLogger(__name__)
+
 
 def now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
@@ -456,9 +458,18 @@ _engine: Engine | None = None
 _Session: sessionmaker[Session] | None = None
 
 
+def _register_sqlite_adapters() -> None:
+    """Python 3.12 deprecates sqlite3's implicit datetime adapter (hit by raw text() queries with datetime params).
+    Register the same format explicitly (ISO with a space separator), so nothing stored or compared changes."""
+    import sqlite3
+
+    sqlite3.register_adapter(datetime, lambda d: d.isoformat(" "))
+
+
 def get_engine() -> Engine:
     global _engine, _Session
     if _engine is None:
+        _register_sqlite_adapters()
         url = get_settings().database_url
         if url.startswith("sqlite:///"):
             from pathlib import Path
@@ -508,19 +519,30 @@ def init_db() -> None:
     from alembic import command
     from sqlalchemy import inspect
 
+    from sqlalchemy.exc import OperationalError
+
     engine = get_engine()
-    tables = set(inspect(engine).get_table_names())
-    legacy = bool(tables) and "alembic_version" not in tables
-    if legacy:
-        Base.metadata.create_all(engine)
-        _add_missing_columns()
-        _align_legacy_schema()
-    with engine.begin() as conn:
-        cfg = _alembic_config(conn)
-        if legacy:
-            command.stamp(cfg, "head")
-        else:
-            command.upgrade(cfg, "head")
+    for attempt in (1, 2):
+        tables = set(inspect(engine).get_table_names())
+        legacy = bool(tables) and "alembic_version" not in tables
+        try:
+            if legacy:
+                Base.metadata.create_all(engine)
+                _add_missing_columns()
+                _align_legacy_schema()
+            with engine.begin() as conn:
+                cfg = _alembic_config(conn)
+                if legacy:
+                    command.stamp(cfg, "head")
+                else:
+                    command.upgrade(cfg, "head")
+            return
+        except OperationalError as exc:
+            # Another process initialised the same empty database a moment ago ("table ... already exists", or a
+            # lock): look again once - by now the database is versioned and the upgrade is a no-op.
+            if attempt == 2 or not any(w in str(exc).lower() for w in ("already exists", "locked")):
+                raise
+            log.warning("init_db raced with another process (%s); retrying once", str(exc).splitlines()[0])
 
 
 # Legacy path only (pre-Alembic databases, see init_db). New schema changes and data fixes go into Alembic

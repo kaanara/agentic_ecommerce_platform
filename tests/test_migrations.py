@@ -1,5 +1,6 @@
 """C4: Alembic owns the schema. init_db upgrades empty/versioned databases and stamps pre-Alembic ones."""
 
+import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
@@ -94,3 +95,51 @@ def test_legacy_database_ends_identical_to_head(tmp_path):
     with db.get_engine().connect() as conn:
         assert compare_metadata(MigrationContext.configure(conn), db.Base.metadata) == []
         assert conn.execute(text("SELECT attempts, dead FROM ops_events")).one() == (0, 0)
+
+
+def test_two_processes_initialising_an_empty_database_do_not_crash(tmp_path, monkeypatch):
+    """The loser of the race sees 'table already exists' from the winner; it must retry on the versioned path."""
+    from alembic import command as alembic_command
+    from sqlalchemy.exc import OperationalError
+
+    db.reset_engine(f"sqlite:///{tmp_path / 'race.db'}")
+    real_upgrade, calls = alembic_command.upgrade, []
+
+    def racing_upgrade(cfg, rev):
+        calls.append(rev)
+        if len(calls) == 1:  # the 'other process' (its own connection, committed) wins; our attempt then collides
+            with db.get_engine().connect() as other:
+                real_upgrade(db._alembic_config(other), rev)
+                other.commit()
+            raise OperationalError("CREATE TABLE x", {}, Exception("table x already exists"))
+        return real_upgrade(cfg, rev)
+
+    monkeypatch.setattr(alembic_command, "upgrade", racing_upgrade)
+    db.init_db()
+    assert len(calls) == 2 and _version() == _head()
+
+
+def test_other_operational_errors_are_not_swallowed(tmp_path, monkeypatch):
+    from alembic import command as alembic_command
+    from sqlalchemy.exc import OperationalError
+
+    db.reset_engine(f"sqlite:///{tmp_path / 'boom.db'}")
+    monkeypatch.setattr(alembic_command, "upgrade",
+                        lambda *a: (_ for _ in ()).throw(OperationalError("S", {}, Exception("disk I/O error"))))
+    with pytest.raises(OperationalError):
+        db.init_db()
+
+
+def test_datetime_params_in_raw_queries_do_not_warn_and_keep_the_stored_format(tmp_path):
+    import warnings
+    from datetime import datetime as dt
+
+    from sqlalchemy import text
+
+    db.reset_engine(f"sqlite:///{tmp_path / 'adapter.db'}")
+    db.init_db()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        with db.get_engine().connect() as conn:
+            conn.execute(text("SELECT :t"), {"t": dt(2026, 10, 28, 9, 30, 15, 123456)})
+            assert conn.execute(text("SELECT :t"), {"t": dt(2026, 10, 28, 9, 30, 15)}).scalar() == "2026-10-28 09:30:15"
