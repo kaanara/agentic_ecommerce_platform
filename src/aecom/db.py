@@ -272,6 +272,10 @@ class Approval(Base):
     # I10: identical pending escalations share a dedup key; stale ones expire instead of executing late
     dedup_key: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # G4: did the human change the agent's arguments before approving? An unchanged approval means the review added
+    # nothing; an edited one means the agent was wrong. `original_args` keeps what the agent asked for when edited.
+    args_edited: Mapped[bool] = mapped_column(Boolean, default=False)
+    original_args: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
 class WebhookReceipt(Base):

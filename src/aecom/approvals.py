@@ -71,6 +71,8 @@ def approve(approval_id: str, by: str, note: str = "", args_override: dict[str, 
             a.status = "expired"
         else:
             a.status, a.decided_by, a.decision_note, a.decided_at = "approved", by, note, now()
+        if args_override and any(k not in a.args or a.args[k] != v for k, v in args_override.items()):
+            a.args_edited, a.original_args = True, dict(a.args)  # the trust report counts edits (G4)
         if args_override:
             a.args = {**a.args, **args_override}
         tool_name, agent_id, args, run_id = a.tool_name, a.agent_id, dict(a.args), a.run_id

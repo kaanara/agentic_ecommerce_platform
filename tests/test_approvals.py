@@ -42,3 +42,26 @@ def test_reject_allowed_while_kill_switch_on(parked):
     set_setting("kill_switch", "on")
     assert approvals.reject(apr_id, "tester", "no")["status"] == "rejected"
     assert _status(apr_id) == "rejected" and calls == []
+
+
+def test_edits_before_approval_are_recorded_for_the_trust_report():
+    """G4: an approval the human changed is counted as 'edited' and keeps what the agent originally asked for."""
+    from aecom.db import Approval, session
+
+    def park(amount):
+        with session() as s:
+            a = Approval(agent_id="support", tool_name="record_expense", args={"account": "vendor_expense", "amount_eur": amount, "memo": "m"},
+                         risk_tier="T2", reason="r", context="")
+            s.add(a)
+            s.flush()
+            return a.id
+
+    unchanged, edited, same_value = park(250.0), park(300.0), park(260.0)
+    approvals.approve(unchanged, "kaan")
+    approvals.approve(edited, "kaan", args_override={"amount_eur": 200.0})
+    approvals.approve(same_value, "kaan", args_override={"amount_eur": 260.0})  # 'edited' to the same value: not an edit
+    with session() as s:
+        u, e, sv = (s.get(Approval, i) for i in (unchanged, edited, same_value))
+        assert (u.args_edited, u.original_args) == (False, None)
+        assert e.args_edited is True and e.original_args["amount_eur"] == 300.0 and e.args["amount_eur"] == 200.0
+        assert sv.args_edited is False
