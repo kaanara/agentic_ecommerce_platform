@@ -52,6 +52,15 @@ def monitors() -> None:
         log.info("monitors: %s", r)
 
 
+def expire_approvals() -> int:
+    """R8: mark pending approvals past their ``expires_at`` as expired even when nobody opens the dashboard."""
+    from aecom import approvals
+
+    n = approvals.expire_stale()
+    log.info("approvals: %d expired", n)
+    return n
+
+
 def provisioning_check() -> None:
     """E1: activate vendors whose credential a human has put in the env, and hand them to the Foreman."""
     from aecom.provisioning import check_credentials
@@ -103,6 +112,7 @@ def build_scheduler(demo: bool = False) -> BlockingScheduler:
     sched.add_job(reconcile_orders, "interval", minutes=15, id="reconcile")
     sched.add_job(monitors, "interval", minutes=5, id="monitors")
     sched.add_job(provisioning_check, "interval", minutes=15, id="provisioning")
+    sched.add_job(expire_approvals, "interval", minutes=30, id="expire_approvals")
     if secrets.has("AGENTMAIL_API_KEY"):
         sched.add_job(poll_email, "interval", seconds=60, id="poll_email")
     if demo:

@@ -23,6 +23,18 @@ def _campaign(budget: float, status: str = "draft", spent: float = 0.0, created_
         return c.id
 
 
+def _book(campaign_id: str, amount: float, when: datetime | None = None) -> None:
+    """Book ad spend to the ledger (as the simulator does), optionally back-dated."""
+    from aecom import ledger
+    from aecom.db import LedgerEntry
+
+    txn = ledger.record_expense("marketing_expense", amount, "ad spend", campaign_id)
+    if when:
+        with session() as s:
+            for e in s.scalars(select(LedgerEntry).where(LedgerEntry.txn_id == txn)):
+                e.created_at = when
+
+
 def _launch(campaign_id: str, budget: float) -> str:
     verdict = evaluate("marketing", "launch_campaign", {"campaign_id": campaign_id, "budget_eur": budget})
     if verdict.decision == "allow":
@@ -35,7 +47,8 @@ def _launch(campaign_id: str, budget: float) -> str:
 
 def test_under_budget_launch_is_allowed():
     set_setting("marketing_budget_month_eur", "300")
-    _campaign(100, "live", spent=40)
+    c = _campaign(100, "live", spent=40)
+    _book(c, 40)
     assert _launch(_campaign(0), 100) == "allow"  # 40 spent + 60 remaining + 100 = 200
 
 
@@ -46,6 +59,7 @@ def test_pause_then_relaunch_cannot_exceed_budget():
     CATALOG["pause_campaign"].fn(campaign_id=a)
     with session() as s:
         s.get(Campaign, a).spent_eur = 110.0
+    _book(a, 110)
     assert _launch(b, 140) == "escalate"  # pausing doesn't hide a's 110 spent: 110 + 140 = 250 > 200
     assert _launch(b, 80) == "allow"  # 110 + 80 = 190
     assert _launch(a, 120) == "allow"  # 110 spent + 80 live remaining + 10 still unspent of a = 200
@@ -62,10 +76,39 @@ def test_relaunch_does_not_double_count_own_budget():
 def test_last_months_live_campaign_counts_its_remaining_budget():
     set_setting("marketing_budget_month_eur", "200")
     last_month = db.now().replace(day=1) - timedelta(days=3)
-    _campaign(140, "live", spent=20, created_at=last_month)
-    _campaign(500, "ended", spent=500, created_at=last_month)  # old and finished: no longer counts
-    assert _launch(_campaign(0), 100) == "escalate"  # 20 + 120 remaining + 100 = 240
-    assert _launch(_campaign(0), 50) == "allow"  # 20 + 120 + 50 = 190
+    old = _campaign(140, "live", spent=20, created_at=last_month)
+    _book(old, 20, last_month)  # R9: last month's spend no longer counts (was lifetime spent_eur)
+    ended = _campaign(500, "ended", spent=500, created_at=last_month)  # old and finished: no longer counts
+    _book(ended, 500, last_month)
+    assert _launch(_campaign(0), 100) == "escalate"  # 0 this month + 120 remaining + 100 = 220
+    assert _launch(_campaign(0), 70) == "allow"  # 0 + 120 + 70 = 190
+
+
+def test_campaign_spanning_months_counts_only_this_months_spend():
+    set_setting("marketing_budget_month_eur", "160")
+    last_month = db.now().replace(day=1) - timedelta(days=3)
+    c = _campaign(120, "paused", spent=120, created_at=last_month)
+    _book(c, 100, last_month)
+    _book(c, 20)
+    # budget 160: 20 this month (not 120) + 130 = 150 allowed (lifetime would be 250); 20 + 150 = 170 escalated
+    assert _launch(_campaign(0), 130) == "allow"
+    assert _launch(_campaign(0), 150) == "escalate"
+
+
+def test_paused_campaign_spend_this_month_still_counts():
+    set_setting("marketing_budget_month_eur", "200")
+    c = _campaign(100, "paused", spent=100)
+    _book(c, 100)
+    assert _launch(_campaign(0), 100) == "allow"
+    assert _launch(_campaign(0), 101) == "escalate"
+
+
+def test_relaunch_of_live_campaign_counts_once():
+    set_setting("marketing_budget_month_eur", "200")
+    c = _campaign(150, "live", spent=50)
+    _book(c, 50)
+    assert evaluate("marketing", "launch_campaign", {"campaign_id": c, "budget_eur": 150}).decision == "allow"  # 50 + 100
+    assert evaluate("marketing", "launch_campaign", {"campaign_id": c, "budget_eur": 201}).decision == "escalate"
 
 
 def test_vendor_budget_still_applies():

@@ -30,12 +30,13 @@ from typing import Any, Awaitable, Callable
 import yaml
 from langchain_core.tools import BaseTool, StructuredTool
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 
 from aecom.audit import audit, mask_detail
 from aecom.company_settings import agents_paused_on, get_setting, kill_switch_on, safe_mode_on
 from aecom.config import get_settings
 from aecom.context import current_agent, current_counterparty, current_run, email_address
-from aecom.db import Approval, Campaign, ToolCallLog, Vendor, now, session
+from aecom.db import Approval, Campaign, LedgerEntry, ToolCallLog, Vendor, now, session
 from aecom.money import quantize, to_decimal
 
 TIER_ORDER = ["T0", "T1", "T2", "T3", "T4"]
@@ -75,25 +76,24 @@ def _month_start() -> datetime:
 
 
 def _marketing_committed(args: dict[str, Any]) -> Decimal:
-    """Marketing money committed this month if this launch goes through (I9).
+    """Marketing money committed this calendar month if this launch goes through (I9, R9).
 
-    = spend this month of every campaign created this month or still live/paused (any status, so pausing
-      does not hide it)
-    + remaining budget (budget - spent) of the *other* currently live campaigns (last month's included)
-    + the requested budget; on a relaunch only the part not already spent is new."""
+    = marketing spend *booked this month* (ledger ``marketing_expense`` lines created since the UTC month start, so a
+      campaign spanning months only counts what it spent this month; paused/ended campaigns still count)
+    + remaining budget (budget - spent) of the *other* currently live campaigns
+    + the requested budget; on a relaunch only the part not already spent (lifetime) is new."""
     own_id, requested = args.get("campaign_id"), to_decimal(args.get("budget_eur", 0) or 0)
-    spent = remaining = Decimal(0)
-    own_spent = Decimal(0)
+    remaining = own_spent = Decimal(0)
     with session() as s:
-        rows = s.scalars(select(Campaign).where(or_(Campaign.created_at >= _month_start(),
-                                                    Campaign.status.in_(["live", "paused"])))).all()
-        for c in rows:
-            spent += to_decimal(c.spent_eur or 0)
+        booked = s.scalar(select(func.coalesce(func.sum(LedgerEntry.debit - LedgerEntry.credit), 0))
+                          .where(LedgerEntry.account == "marketing_expense", LedgerEntry.created_at >= _month_start())) or 0
+        for c in s.scalars(select(Campaign).where(Campaign.status == "live")):
             if c.id == own_id:
-                own_spent = to_decimal(c.spent_eur or 0)
-            elif c.status == "live":
-                remaining += max(to_decimal(c.budget_eur or 0) - to_decimal(c.spent_eur or 0), Decimal(0))
-    return quantize(spent + remaining + max(requested - own_spent, Decimal(0)))
+                continue
+            remaining += max(to_decimal(c.budget_eur or 0) - to_decimal(c.spent_eur or 0), Decimal(0))
+        if own_id and (own := s.get(Campaign, own_id)) is not None:
+            own_spent = to_decimal(own.spent_eur or 0)
+    return quantize(to_decimal(booked) + remaining + max(requested - own_spent, Decimal(0)))
 
 
 def _committed(setting_key: str, args: dict[str, Any]) -> Decimal:
@@ -168,6 +168,12 @@ def dedup_key(agent_id: str, tool_name: str, args: dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _pending_row(s: Any, key: str) -> Approval | None:
+    return s.scalars(select(Approval).where(Approval.dedup_key == key, Approval.status == "pending",
+                                            or_(Approval.expires_at.is_(None), Approval.expires_at > now()))
+                     .order_by(Approval.created_at)).first()
+
+
 def _to_text(result: Any) -> str:
     text = result if isinstance(result, str) else json.dumps(result, default=str)
     return text if len(text) < 12000 else text[:12000] + " …[truncated]"
@@ -225,23 +231,31 @@ async def run_gated(agent_id: str, tool_name: str, args: dict[str, Any], execute
     if verdict.decision == "escalate":
         key = dedup_key(agent_id, tool_name, args)
         ttl = float(load_policy()["defaults"].get("approval_ttl_hours", 72))
+        def already(a_id: str) -> str:
+            return (f"ESCALATED to human approval ({verdict.tier}, id={a_id}): {verdict.reason} "
+                    "This exact request is already pending - do not retry it; continue with the rest of your task "
+                    "and mention the pending approval in your final answer.")
+
         with session() as s:
-            existing = s.scalars(select(Approval).where(Approval.dedup_key == key, Approval.status == "pending",
-                                                        or_(Approval.expires_at.is_(None), Approval.expires_at > now()))
-                                 .order_by(Approval.created_at)).first()
+            existing = _pending_row(s, key)
             if existing is not None:
-                message = (f"ESCALATED to human approval ({verdict.tier}, id={existing.id}): {verdict.reason} "
-                           "This exact request is already pending - do not retry it; continue with the rest of your task "
-                           "and mention the pending approval in your final answer.")
+                message = already(existing.id)
             else:
                 a = Approval(agent_id=agent_id, tool_name=tool_name, args=args, risk_tier=verdict.tier,
                              reason=verdict.reason, context=context[:4000], run_id=run_id, dedup_key=key,
                              expires_at=now() + timedelta(hours=ttl))
-                s.add(a)
-                s.flush()
-                message = (f"ESCALATED to human approval ({verdict.tier}, id={a.id}): {verdict.reason} "
-                           "It will execute exactly as requested if approved. Do not retry it; continue with the rest of "
-                           "your task and mention the pending approval in your final answer.")
+                try:
+                    with s.begin_nested():  # R8: a racing identical escalation hits the unique pending index
+                        s.add(a)
+                        s.flush()
+                    message = (f"ESCALATED to human approval ({verdict.tier}, id={a.id}): {verdict.reason} "
+                               "It will execute exactly as requested if approved. Do not retry it; continue with the rest of "
+                               "your task and mention the pending approval in your final answer.")
+                except IntegrityError:
+                    winner = _pending_row(s, key)
+                    if winner is None:
+                        raise
+                    message = already(winner.id)
         _log_result(call_id, message)
         return message
     try:

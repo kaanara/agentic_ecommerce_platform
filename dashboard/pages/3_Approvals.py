@@ -57,6 +57,6 @@ for a in pending:
 
 st.divider()
 st.subheader("History")
-st.dataframe(sql("""SELECT decided_at, status, risk_tier, agent_id, tool_name, decided_by, decision_note, substr(result,1,200) AS result
-                    FROM ops_approvals WHERE status <> 'pending' ORDER BY decided_at DESC LIMIT 100"""),
+st.dataframe(sql("""SELECT coalesce(decided_at, expires_at) AS decided_at, expires_at, status, risk_tier, agent_id, tool_name, decided_by, decision_note, substr(result,1,200) AS result
+                    FROM ops_approvals WHERE status <> 'pending' ORDER BY coalesce(decided_at, expires_at) DESC LIMIT 100"""),
              hide_index=True, width="stretch")

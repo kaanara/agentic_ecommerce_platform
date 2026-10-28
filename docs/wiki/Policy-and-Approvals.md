@@ -47,6 +47,8 @@ No built-in catalog tool may match a pattern (enforced by `tests/test_policy_den
 | `approve_tool`, `grant_tool` (foreman) | T3 | never | human |
 | `delete_customer_data`, `change_policy` | T4 | never | denied |
 
+The marketing budget is exact per calendar month (R9): committed = marketing spend booked this UTC month (ledger `marketing_expense` lines created since the month start; campaign spend from earlier months does not count, paused or ended campaigns still count) + remaining budget (budget - spent) of the other live campaigns + the requested budget (on a relaunch only the part not yet spent). Escalates when that exceeds `marketing_budget_month_eur`.
+
 Monthly budgets live in `ops_settings` (`marketing_budget_month_eur` = 1500, `vendor_budget_month_eur` = 400 by default).
 
 ## What the agent sees
@@ -64,6 +66,8 @@ agent tool call ──gate: escalate──▶ ops_approvals (pending: tool, args
                        both ──▶ audit log + event `approval.resolved`
 ```
 - **Edit before approving**: change JSON args in the dashboard, or pass `args_override` via the API. Only changed keys are overridden.
+- **Race-safe de-duplication (R8)**: a partial unique index on `ops_approvals.dedup_key WHERE status='pending'` makes a second pending approval for the same call impossible. If two identical escalations race, the loser's insert is rolled back and it returns the same "already pending" message with the winner's id.
+- **Expiry (R8)**: pending approvals expire after `approval_ttl_hours`. The scheduler sweeps every 30 minutes (`expire_approvals`, logs how many); listing also sweeps. `GET /approvals?status=expired` lists them; every approval carries `expires_at`. The dashboard history table shows expired rows with their `expires_at`.
 - Approved actions skip re-evaluation. The human *is* the gate for that call.
 - MCP calls (`mcp:<server>/<tool>`) are re-invoked through `langchain-mcp-adapters` on approval.
 
