@@ -42,6 +42,7 @@ SAFE_MODE_AFTER = timedelta(hours=2)  # an open (unacknowledged) P1 older than t
 ORDER_TOPIC_PREFIXES = ("order.", "inventory.")
 UNDELIVERED_STATUSES = ("paid", "failed")
 UNEMAILED_STATUSES = ("delivered", "partially_refunded")
+AWAITING_CONSENT_AFTER = timedelta(hours=24)
 KILL_SWITCH_SINCE = "kill_switch_since"  # ops setting: ISO time the monitors first saw the kill switch on
 
 Problem = tuple[str, str]  # (subject, detail)
@@ -67,6 +68,15 @@ def unemailed_order(now: datetime) -> list[Problem]:
         ids = s.scalars(select(Order.id).where(Order.status.in_(UNEMAILED_STATUSES), Order.email_sent.is_not(True),
                                                Order.created_at < now - ORDER_GRACE).order_by(Order.id)).all()
     return [(oid, f"order {oid} was delivered but its access email was not sent") for oid in ids]
+
+
+def awaiting_consent_order(now: datetime) -> list[Problem]:
+    """R13b: an order held for the withdrawal-right consent is not undelivered by fault, but nobody is moving it."""
+    with session() as s:
+        ids = s.scalars(select(Order.id).where(Order.status == "awaiting_consent",
+                                               Order.created_at < now - AWAITING_CONSENT_AFTER).order_by(Order.id)).all()
+    return [(oid, f"order {oid} has waited over 24 h for the customer's withdrawal consent; "
+                  "a human must obtain consent or refund it") for oid in ids]
 
 
 def ledger_imbalance(now: datetime) -> list[Problem]:
@@ -185,7 +195,7 @@ MONITORS: dict[str, tuple[str, Monitor]] = {fn.__name__: (sev, fn) for sev, fn i
     ("P1", undelivered_order), ("P1", unemailed_order), ("P1", ledger_imbalance), ("P1", duplicate_key),
     ("P1", order_dead_letter), ("P1", restock_failed),
     ("P2", other_dead_letter), ("P2", event_backlog), ("P2", stuck_run), ("P2", errors), ("P2", approval_ageing),
-    ("P2", kill_switch_long))}
+    ("P2", kill_switch_long), ("P3", awaiting_consent_order))}
 MONITOR_ERROR = "monitor_error"
 
 

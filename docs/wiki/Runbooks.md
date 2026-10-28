@@ -131,6 +131,15 @@ Inspect the database with `sqlite3 data/aecom.db` (or the file in `DATABASE_URL`
 | **Do NOT** | Resolve that monitor's other incidents by hand: their state is unknown. |
 | **Auto-resolves** | On the first run where the monitor completes. |
 
+## awaiting_consent_order (P3)
+| | |
+|---|---|
+| **Means** | An order has been `awaiting_consent` for more than 24 h (subject = order id): the customer paid but never gave the express consent to immediate delivery (withdrawal right), so nothing was delivered. This is held on purpose, not a delivery fault. |
+| **First checks** | `sqlite3 data/aecom.db "select id,customer_id,created_at,withdrawal_consent_at from orders where id='<ID>'"`, Dashboard → Orders, and the customer's email thread. |
+| **Safe actions** | Ask the customer for consent; once recorded the order is `paid` again and `uv run aecom reconcile` delivers it. If the customer will not consent, refund the order. |
+| **Do NOT** | Set the order to `delivered` or fill `withdrawal_consent_at` by hand without the customer's actual consent; hand out a key manually. |
+| **Auto-resolves** | When the order leaves `awaiting_consent` (consent recorded, delivered, or refunded). |
+
 ## Safe mode is on
 | | |
 |---|---|

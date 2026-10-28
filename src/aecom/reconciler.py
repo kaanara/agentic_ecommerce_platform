@@ -17,6 +17,7 @@ from aecom.config import get_settings
 from aecom.db import Customer, EventRow, Order, Product, now, session
 
 UNDELIVERED = ("paid", "failed")  # failed = no licence keys at delivery time
+UNEMAILED = ("delivered", "partially_refunded")  # entitled orders whose access email may still be owed
 DELIVERY_TOPICS = ("order.paid", "inventory.out_of_stock")  # both end in deliver_order
 PROVIDER_WINDOW = timedelta(days=2)  # how far back provider orders are compared with the mirror
 
@@ -36,7 +37,7 @@ def reconcile(older_than: timedelta = timedelta(minutes=15)) -> dict[str, int]:
                 .join(Product, Product.id == Order.product_id).join(Customer, Customer.id == Order.customer_id)
                 .where(Order.created_at < cutoff).order_by(Order.created_at))
         orders = s.execute(base.where(Order.status.in_(UNDELIVERED))).all()
-        unemailed = s.execute(base.where(Order.status == "delivered", Order.email_sent.is_not(True))).all()
+        unemailed = s.execute(base.where(Order.status.in_(UNEMAILED), Order.email_sent.is_not(True))).all()
         pending = {(e.payload or {}).get("order_id") for e in s.scalars(select(EventRow).where(
             EventRow.topic.in_(DELIVERY_TOPICS), EventRow.processed.is_(False), EventRow.dead.is_not(True)))}
         dead = {(e.payload or {}).get("order_id"): e.id for e in s.scalars(select(EventRow).where(

@@ -156,6 +156,20 @@ class MockStore:
             if o is None:
                 raise ValueError(f"order {order_id} not found")
             p = s.get(Product, o.product_id)
+            if o.status == "partially_refunded" and not o.email_sent:
+                # R10: a partial refund keeps the entitlement; if the access email never went out, hand the same
+                # secret back as 'delivered' (status untouched) so the email is sent once. Never a new key.
+                key = s.scalars(select(LicenseKey).where(LicenseKey.order_id == order_id)).first()
+                if key is not None or o.download_token:
+                    entitled: dict[str, Any] = {"order_id": order_id, "status": "delivered", "sku": p.sku,
+                                                "already": True}
+                    if key is not None:
+                        entitled["license_key"] = key.key
+                    if p.kind != "license" and o.download_token:
+                        entitled["download_url"], reissued = _download_link(o)
+                        if reissued:
+                            entitled["_link_reissued"] = str(o.download_expires_at)
+                    return entitled
             if o.status in ("partially_refunded", "refunded"):  # refunds end the lifecycle: no new key, no status change
                 return {"order_id": order_id, "status": o.status, "already": True}
             if o.status == "delivered":  # idempotent; the access details let the caller (re)send the email

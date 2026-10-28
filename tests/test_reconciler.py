@@ -94,3 +94,14 @@ def test_failed_order_without_pending_restock_is_requeued():
     assert reconcile()["requeued"] == 1
     drain()
     assert get_store().get_order(order["id"])["status"] == "delivered"
+
+
+def test_partially_refunded_unemailed_order_is_requeued():
+    store = get_store()
+    order = store.create_order("pr@example.com", SKU, "DE")["id"]
+    drain()
+    store.refund_order(order, 10.0, "partial")
+    with session() as s:
+        s.get(Order, order).email_sent = False
+    age(order)
+    assert reconcile().get("requeued_email") == 1

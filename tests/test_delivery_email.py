@@ -127,3 +127,48 @@ def test_refunded_order_gets_no_new_key():
     assert store.get_order(order["id"])["status"] == "refunded"
     with session() as s:
         assert [k.status for k in s.scalars(select(LicenseKey).where(LicenseKey.order_id == order["id"]))] == ["revoked"]
+
+
+def test_partially_refunded_unemailed_order_gets_its_email_once_with_the_same_key():
+    store = get_store()
+    order = store.create_order(EMAIL, SKU, "DE")
+    store.deliver_order(order["id"])
+    store.refund_order(order["id"], 10.0, "partial")
+    with session() as s:
+        s.get(Order, order["id"]).email_sent = False  # crash before the access email
+    key = keys_of(order["id"])
+    assert len(key) == 1
+
+    invoke_as("store_ops", "deliver_order", {"order_id": order["id"]})
+    invoke_as("store_ops", "deliver_order", {"order_id": order["id"]})
+    sent = emails_to(EMAIL)
+    assert len(sent) == 1 and key[0] in sent[0].body
+    assert order_row(order["id"])[:2] == ("partially_refunded", True)
+    assert keys_of(order["id"]) == key
+
+
+def test_refunded_unemailed_order_is_still_refused():
+    store = get_store()
+    order = store.create_order(EMAIL, SKU, "DE")
+    store.deliver_order(order["id"])
+    store.refund_order(order["id"], order["amount_eur"], "full")
+    with session() as s:
+        s.get(Order, order["id"]).email_sent = False
+    assert store.deliver_order(order["id"])["status"] == "refunded"
+    invoke_as("store_ops", "deliver_order", {"order_id": order["id"]})
+    assert emails_to(EMAIL) == []
+
+
+def test_partially_refunded_never_delivered_order_is_refused():
+    store = get_store()
+    order = store.create_order(EMAIL, SKU, "DE", withdrawal_consent=False)
+    with session() as s:
+        s.get(Order, order["id"]).status = "partially_refunded"
+    assert store.deliver_order(order["id"])["status"] == "partially_refunded"
+    assert keys_of(order["id"]) == []
+
+
+def test_agentmail_has_no_idempotency_parameter_so_none_is_sent():
+    """R10(2): AgentMail's send-message API documents no idempotency key; send() must not invent one."""
+    import inspect
+    assert "idempotency_key" not in inspect.signature(AgentMail.send).parameters
