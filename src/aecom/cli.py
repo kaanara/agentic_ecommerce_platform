@@ -22,6 +22,7 @@
     aecom registry list [--agent ID]       tool allowlists per agent
     aecom registry revoke AGENT TOOL --by NAME [--note TEXT]   remove a tool grant (human-only; init re-adds TOOLS.md tools)
     aecom agents [list] | enable|disable ID   per-agent switch (reflexes such as delivery are unaffected)
+    aecom store sync                       sync the store platform's products/variants into the local catalog
     aecom monitors run                     run all monitors once, raise/resolve incidents, send due alerts
     aecom provisioning [list]              vendors waiting for a human, with their numbered checklist
     aecom provisioning done VENDOR STEP_NO --by NAME | snooze VENDOR --days N
@@ -122,6 +123,8 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("agent_id", nargs="?")
     s = sub.add_parser("monitors")
     s.add_argument("action", nargs="?", default="run", choices=["run"])
+    s = sub.add_parser("store")
+    s.add_argument("action", choices=["sync"])
     s = sub.add_parser("provisioning")
     s.add_argument("action", nargs="?", default="list", choices=["list", "done", "snooze"])
     s.add_argument("vendor", nargs="?")
@@ -314,6 +317,13 @@ def main(argv: list[str] | None = None) -> None:
                 _print(provisioning.snooze(a.vendor, a.days, by=a.by or "cli-user"))
         except ValueError as e:
             sys.exit(str(e))
+    elif a.cmd == "store":
+        from aecom.store.adapter import get_store
+
+        store = get_store()
+        if not hasattr(store, "sync_catalog"):
+            sys.exit(f"store adapter {store.name!r} has no catalog to sync (only STORE_ADAPTER=lemonsqueezy does)")
+        _print(store.sync_catalog())
     elif a.cmd == "monitors":
         from aecom.monitors import run_monitors
 

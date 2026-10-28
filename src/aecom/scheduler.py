@@ -36,6 +36,25 @@ def reconcile_orders() -> None:
     drain()
 
 
+def sync_store_catalog() -> None:
+    """Keep the local product table in step with the store platform (variants, prices, licence/download kind).
+    Licence-key recovery only considers products of kind 'license', which only a sync sets (R16). Never raises."""
+    from aecom.config import get_settings
+
+    if get_settings().store_adapter != "lemonsqueezy" or not secrets.has("LEMONSQUEEZY_API_KEY"):
+        return
+    try:
+        from aecom.store.adapter import get_store
+
+        r = get_store().sync_catalog()
+        log.info("catalog sync: %s", r)
+    except Exception as exc:  # noqa: BLE001 - a store outage must not stop the scheduler
+        from aecom.observability import record_error
+
+        record_error("scheduler", exc, context={"job": "sync_store_catalog"})
+        log.warning("catalog sync failed: %s", exc)
+
+
 def poll_email() -> None:
     from aecom.integrations.agentmail import poll_inbox
 
@@ -113,6 +132,7 @@ def build_scheduler(demo: bool = False) -> BlockingScheduler:
     sched.add_job(monitors, "interval", minutes=5, id="monitors")
     sched.add_job(provisioning_check, "interval", minutes=15, id="provisioning")
     sched.add_job(expire_approvals, "interval", minutes=30, id="expire_approvals")
+    sched.add_job(sync_store_catalog, "interval", hours=6, id="sync_store_catalog")
     if secrets.has("AGENTMAIL_API_KEY"):
         sched.add_job(poll_email, "interval", seconds=60, id="poll_email")
     if demo:
@@ -133,5 +153,6 @@ def main(demo: bool = False) -> None:
     logging.basicConfig(level=logging.INFO)
     init()
     sched = build_scheduler(demo)
+    sync_store_catalog()  # before any sale can arrive: a webhook for an unsynced product creates a placeholder (R16)
     log.info("scheduler started (demo=%s)", demo)
     sched.start()

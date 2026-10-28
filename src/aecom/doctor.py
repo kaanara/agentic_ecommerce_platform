@@ -188,6 +188,22 @@ def check_backup() -> Check:
     return _c("backup", OK, "skipped: latest backup age is not checked yet (hosting decision pending)")
 
 
+def check_catalog_sync() -> Check:
+    """With Lemon Squeezy as the store, the local catalog must have been synced at least once (R16)."""
+    from sqlalchemy import func, select
+
+    from aecom.db import Product, session
+
+    if get_settings().store_adapter != "lemonsqueezy":
+        return _c("catalog_sync", OK, f"not applicable (store adapter: {get_settings().store_adapter})")
+    with session() as s:
+        n = s.scalar(select(func.count(Product.id)).where(Product.external_id.is_not(None), Product.kind != "download")) or 0
+        total = s.scalar(select(func.count(Product.id)).where(Product.external_id.is_not(None))) or 0
+    if total == 0:
+        return _c("catalog_sync", WARN, "no store products yet: run `aecom store sync` before the first sale")
+    return _c("catalog_sync", OK, f"{total} store product(s) known, {n} licence/subscription")
+
+
 CHECKS: list[tuple[str, Callable[[], Check]]] = [
     ("database", check_database),
     ("schema", check_schema),
@@ -199,6 +215,7 @@ CHECKS: list[tuple[str, Callable[[], Check]]] = [
     ("stuck_runs", check_stuck_runs),
     ("credentials", check_credentials),
     ("agentmail_live", check_agentmail_live),
+    ("catalog_sync", check_catalog_sync),
     ("disk", check_disk),
     ("backup", check_backup),
 ]

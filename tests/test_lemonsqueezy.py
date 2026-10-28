@@ -324,3 +324,62 @@ def test_reconcile_recent_recovers_a_lost_licence_key_once(api):
     second = api.reconcile_recent(since)
     assert second["keys"] == 0 and seen == ["5001"]  # nothing missing any more: no API call
     assert check_all() == []
+
+
+# --------------------------------------------------------------------------- R16: keep the catalog synced
+@pytest.fixture
+def ls_store(api, monkeypatch, fresh_company):
+    """STORE_ADAPTER=lemonsqueezy, and get_store() hands out the fixture's store (the one wired to the fake API)."""
+    monkeypatch.setattr(fresh_company, "store_adapter", "lemonsqueezy")
+    monkeypatch.setattr("aecom.store.adapter.get_store", lambda: api)
+    return api
+
+
+def test_scheduler_syncs_the_catalog_and_registers_the_job(ls_store):
+    from aecom import scheduler
+
+    scheduler.sync_store_catalog()
+    kinds = {p["sku"]: p["kind"] for p in ls_store.list_products()}
+    assert kinds["LS-101"] == "license"  # a sync marks licence variants, which key recovery relies on
+    assert "sync_store_catalog" in {j.id for j in scheduler.build_scheduler().get_jobs()}
+
+
+def test_scheduler_sync_is_a_noop_for_other_adapters(api, monkeypatch, fresh_company):
+    from aecom import scheduler
+
+    monkeypatch.setattr(fresh_company, "store_adapter", "mock")
+    monkeypatch.setattr("aecom.store.adapter.get_store", lambda: (_ for _ in ()).throw(AssertionError("must not be used")))
+    scheduler.sync_store_catalog()  # would raise if it tried to sync
+
+
+def test_catalog_sync_failure_never_escapes_the_scheduler(monkeypatch, fresh_company):
+    from aecom import scheduler
+    from aecom.db import ErrorRow
+    from aecom.store.lemonsqueezy import LemonSqueezyStore
+
+    monkeypatch.setenv("LEMONSQUEEZY_API_KEY", "test-ls-key")
+    monkeypatch.setattr(fresh_company, "store_adapter", "lemonsqueezy")
+    monkeypatch.setattr(LemonSqueezyStore, "sync_catalog", lambda self: (_ for _ in ()).throw(httpx.ConnectError("down")))
+    scheduler.sync_store_catalog()  # must not raise
+    with session() as s:
+        assert s.scalar(select(func.count()).select_from(ErrorRow)) == 1
+
+
+def test_doctor_warns_until_the_catalog_was_synced(ls_store, monkeypatch, fresh_company):
+    from aecom import doctor
+
+    assert doctor.check_catalog_sync()["status"] == doctor.WARN
+    ls_store.sync_catalog()
+    assert doctor.check_catalog_sync()["status"] == doctor.OK
+    monkeypatch.setattr(fresh_company, "store_adapter", "mock")
+    assert doctor.check_catalog_sync()["status"] == doctor.OK
+
+
+def test_cli_store_sync(ls_store, monkeypatch, fresh_company, capsys):
+    from aecom import cli
+
+    cli.main(["store", "sync"])
+    assert '"created": 4' in capsys.readouterr().out
+    monkeypatch.undo()  # back to the default mock adapter: it has no catalog to sync
+    with pytest.raises(SystemExit):
+        cli.main(["store", "sync"])

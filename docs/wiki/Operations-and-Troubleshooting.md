@@ -8,6 +8,7 @@
 | See failed events (dead letter) | `uv run aecom events dead` |
 | Retry dead-lettered events after fixing the cause | `uv run aecom events retry` (all) or `uv run aecom events retry 121 122` |
 | Fetch new customer email now | `uv run aecom agentmail poll` |
+| Sync the store platform's catalog (Lemon Squeezy) | `uv run aecom store sync` |
 | Simulate traffic | `uv run aecom simulate --days 3 --support-emails` |
 | Emergency stop | `uv run aecom kill-switch on` |
 | Pause agents (bookkeeping continues where `continue_while_paused` allows) | `uv run aecom agents-pause on` / `off` |
