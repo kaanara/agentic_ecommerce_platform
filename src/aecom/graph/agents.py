@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -16,10 +17,10 @@ from sqlalchemy import func, select
 
 from aecom import ledger
 from aecom.audit import audit
-from aecom.company_settings import agent_enabled, get_setting, set_setting
+from aecom.company_settings import agent_enabled, get_setting
 from aecom.config import get_settings
 from aecom.context import current_agent, current_run, reset_taint
-from aecom.db import AgentRun, Lesson, new_id, now, session
+from aecom.db import AgentRun, Lesson, Setting, new_id, now, session
 from aecom.llm import get_model, server_tool_specs, server_tool_usage
 from aecom.money import CENT, quantize, to_decimal
 from aecom.observability import mask, record_error
@@ -61,6 +62,7 @@ def daily_budget(agent_id: str) -> float:
 
 
 AI_COST_CARRY = "ai_cost_carry_eur"
+CARRY_PRECISION = Decimal("0.00000001")
 
 
 def book_ai_costs() -> str | None:
@@ -77,12 +79,27 @@ def book_ai_costs() -> str | None:
     if not runs or total < CENT:
         return None
     amount = quantize(total)
-    txn = ledger.record_expense("ai_expense", amount, f"LLM usage ({len(runs)} runs)", runs[-1][0])
+    # one transaction: ledger line + cost_booked flags + carry either all commit or none do
     with session() as s:
+        txn = ledger.post([("ai_expense", amount, 0), ("cash", 0, amount)], f"LLM usage ({len(runs)} runs)",
+                          runs[-1][0], session=s)
         for row in s.scalars(select(AgentRun).where(AgentRun.id.in_([r for r, _ in runs]))):
             row.cost_booked = True
-    set_setting(AI_COST_CARRY, str(total - amount))
+        value = str((total - amount).quantize(CARRY_PRECISION))
+        setting = s.get(Setting, AI_COST_CARRY)
+        if setting:
+            setting.value = value
+        else:
+            s.add(Setting(key=AI_COST_CARRY, value=value))
     return txn
+
+
+def _book_ai_costs_safe(run_id: str, agent_id: str) -> None:
+    """Booking must never turn a finished run into a failure; unbooked costs are picked up by the next call."""
+    try:
+        book_ai_costs()
+    except Exception as exc:
+        record_error("agent", exc, run_id=run_id, context={"agent_id": agent_id, "step": "book_ai_costs"})
 
 
 async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str | None = None) -> AgentResult:
@@ -92,6 +109,8 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
     t_run, t_agent = current_run.set(run_id), current_agent.set(agent_id)
     reset_taint(task, context)  # I15: a run starts clean unless its task already carries fenced (untrusted) content
     row_id: str | None = None
+    result = AgentResult(agent_id, "", status="max_steps")
+    tin = tout = steps = 0  # kept outside the try: a crash after the model ran still has to pay for its tokens
     try:
         if not agent_enabled(agent_id):  # no LLM call and no AgentRun row; reflexes don't come through here
             audit("system", "agent_run", "deny", {"reason": "agent disabled", "agent_id": agent_id, "task": task[:200]}, run_id)
@@ -121,7 +140,6 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
         def searches_left() -> int:
             return max(0, settings.web_search_max_per_run - result.web_searches)
 
-        result = AgentResult(agent_id, "", status="max_steps")
         server_tools = list(spec.server_tools)
         bound_left = searches_left()
         bound = bind(server_tools, bound_left)
@@ -131,7 +149,6 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
             else [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}])  # cache the long persona prompt
         messages: list[BaseMessage] = [system, HumanMessage(content=task + (f"\n\n# Context\n{context}" if context else ""))]
 
-        tin = tout = steps = 0
         for steps in range(1, settings.agent_max_steps + 1):
             # max_uses only limits one API call; clip it to what is left of the run cap (rebinding when that shrinks
             # below the per-call max_uses) and drop web_search entirely once the cap is reached.
@@ -181,7 +198,7 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
             row.output, row.status, row.steps, row.tool_calls = result.output[:8000], result.status, steps, result.tool_calls
             row.web_searches, row.web_fetches = result.web_searches, result.web_fetches
             row.input_tokens, row.output_tokens, row.cost_eur, row.ended_at = tin, tout, result.cost_eur, now()
-        book_ai_costs()
+        _book_ai_costs_safe(run_id, agent_id)
         return result
     except Exception as exc:
         error = mask(f"{type(exc).__name__}: {exc}")
@@ -191,6 +208,15 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
             with session() as s:
                 row = s.get(AgentRun, row_id)
                 row.status, row.output, row.ended_at = "error", f"ERROR: {error}"[:8000], now()
+                if tin or tout or result.web_searches or result.web_fetches:
+                    try:
+                        row.cost_eur = (settings.cost_eur(spec.model_tier, tin, tout)
+                                        + settings.web_cost_eur(result.web_searches, result.web_fetches))
+                        row.input_tokens, row.output_tokens = tin, tout
+                        row.web_searches, row.web_fetches = result.web_searches, result.web_fetches
+                    except Exception as cost_exc:
+                        record_error("agent", cost_exc, run_id=run_id, context={"agent_id": agent_id, "step": "crash_cost"})
+            _book_ai_costs_safe(run_id, agent_id)
         return AgentResult(agent_id, f"ERROR: {error}", status="error")
     finally:
         current_agent.reset(t_agent)
