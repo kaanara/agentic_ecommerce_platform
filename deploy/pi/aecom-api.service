@@ -1,0 +1,26 @@
+# Replace the placeholders before installing (see docs/wiki/Raspberry-Pi.md):
+#   sed -e 's|@USER@|aecom|g' -e 's|@APP_DIR@|/home/aecom/agentic_ecommerce_platform|g' aecom-api.service
+[Unit]
+Description=aecom API (webhooks, listens on 127.0.0.1:8000 only)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=20
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@APP_DIR@
+ExecStart=/home/@USER@/.local/bin/uv run aecom api --port 8000
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+ProtectSystem=full
+ReadWritePaths=@APP_DIR@
+
+[Install]
+WantedBy=multi-user.target

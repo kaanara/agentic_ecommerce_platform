@@ -1,0 +1,18 @@
+# Replace @USER@ and @APP_DIR@ before installing (see docs/wiki/Raspberry-Pi.md).
+[Unit]
+Description=aecom backup (database, config snapshot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@USER@
+WorkingDirectory=@APP_DIR@
+ExecStart=/home/@USER@/.local/bin/uv run aecom backup
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+ProtectSystem=full
+ReadWritePaths=@APP_DIR@

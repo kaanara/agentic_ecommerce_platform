@@ -1,0 +1,26 @@
+# Replace the placeholders before installing (see docs/wiki/Raspberry-Pi.md):
+#   sed -e 's|@USER@|aecom|g' -e 's|@APP_DIR@|/home/aecom/agentic_ecommerce_platform|g' aecom-dashboard.service
+[Unit]
+Description=aecom dashboard (Streamlit, 127.0.0.1:8501 only)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=20
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@APP_DIR@
+ExecStart=/home/@USER@/.local/bin/uv run aecom dashboard --host 127.0.0.1 --port 8501
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+ProtectSystem=full
+ReadWritePaths=@APP_DIR@
+
+[Install]
+WantedBy=multi-user.target
