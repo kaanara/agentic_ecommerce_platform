@@ -50,10 +50,10 @@ Each agent is a folder `agents/<id>/`:
 | `IDENTITY.md` | Loader, dashboards | YAML frontmatter: `id`, `display_name`, `role`, `layer`, `model_tier` (opus/sonnet/haiku), `reports_to`, `emoji`, `color`, `version` |
 | `SOUL.md` | System prompt | Personality, values, tone, what it refuses |
 | `AGENTS.md` | System prompt | Mission, responsibilities, KPIs, step-by-step procedures, escalation and handoffs |
-| `TOOLS.md` | Registry (first `init`) | Frontmatter `tools: [...]` seeds the allowlist; `server_tools: [web_search]` enables Anthropic server tools |
+| `TOOLS.md` | Registry (every `init`) | Frontmatter `tools: [...]` lists the allowlist; `init` adds missing tools to the database; `server_tools: [web_search]` enables Anthropic server tools |
 | `POLICY.md` | Agent runner | Frontmatter `budget_eur_per_day`; body documents agent-specific limits |
 
-> After the first `init`, the **database allowlist** is the source of truth. Changes made through `grant_tool` (human-approved) persist and aren't overwritten by `TOOLS.md`.
+> The **database allowlist** is the source of truth. `aecom init` only ever **adds** tools from `TOOLS.md` to existing allowlists (each addition is audited); it never removes rows, and it logs tools that are in the database but no longer in `TOOLS.md`. Grants made through `grant_tool` (human-approved) persist. Removal needs the explicit human command `aecom registry revoke AGENT TOOL --by NAME`.
 
 ### Example `IDENTITY.md`
 ```markdown
@@ -108,7 +108,8 @@ Rejected memories stay in the table for the record but are never recalled. Appro
 2. List only tools that exist in the catalog (`uv run pytest` checks this).
 3. If policy rules should allow it, add the id to the relevant `agents:` lists in `policy.yaml`.
 4. Let the Foreman dispatch to it: add the id to `DEPARTMENTS` in `graph/supervisor.py` and to the Foreman's dispatch guide in `agents/foreman/AGENTS.md`.
-5. On an existing DB, grant tools via the approval flow or by inserting into `registry_allowlist`. TOOLS.md seeding only happens for agents with no allowlist rows yet.
+5. On an existing DB, run `uv run aecom init`: it adds the tools listed in the new agent's `TOOLS.md` (and any newly listed for existing agents) to the allowlist and audits each addition. It never removes rows; to take a tool away, use `uv run aecom registry revoke AGENT TOOL --by NAME`. Further grants go through the approval flow.
+6. New agents are enabled by default; switch one off with the `agent_enabled:<id>` flag (see above).
 
 ## Model tiers and cost
 Tier → model id comes from config (`MODEL_OPUS`, `MODEL_SONNET`, `MODEL_HAIKU`). Prices (`PRICE_*`, USD per million tokens) and `USD_TO_EUR` drive the cost dashboards and budgets. **Set them to your contract prices.**

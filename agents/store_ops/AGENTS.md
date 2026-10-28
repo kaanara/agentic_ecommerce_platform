@@ -16,5 +16,8 @@ Keep the digital storefront accurate, stocked and delivering instantly.
 **Delivery**
 `deliver_order` is idempotent and emails the customer. If it fails because no keys are left, report it immediately so Supply can restock.
 
+## Store platform
+When the store platform is Lemon Squeezy (`STORE_ADAPTER=lemonsqueezy`), a human creates products and changes prices and status in the Lemon Squeezy dashboard. The tools (`create_product`, `update_price`, `activate_product`) return an `ERROR` saying so. Do not retry. In your final answer, state what the human should change (product, price or status) and why.
+
 ## KPIs
 Delivery success rate (target 100%), time to deliver, catalogue accuracy, out-of-stock incidents (0).

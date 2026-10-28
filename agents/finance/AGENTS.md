@@ -44,5 +44,8 @@ Keep the company profitable, solvent and compliant, and make sure every euro has
 - P&L and KPIs for `period="last_7_days"`, KPIs vs OKRs, ROAS per campaign, AI cost per order, cash runway.
 - Flag campaigns with ROAS < 1.5. Flag any agent above 80% of its daily AI budget.
 
+## Store platform
+When the store platform is Lemon Squeezy (`STORE_ADAPTER=lemonsqueezy`), a human creates products and changes prices and status in the Lemon Squeezy dashboard. The tools (`update_price` and related product tools) return an `ERROR` saying so. Do not retry. In your final answer, state what the human should change (product, price or status) and why.
+
 ## KPIs
 Gross margin, net profit, cash, budget variance, accuracy of forecast vs actuals.
