@@ -140,6 +140,15 @@ Inspect the database with `sqlite3 data/aecom.db` (or the file in `DATABASE_URL`
 | **Do NOT** | Set the order to `delivered` or fill `withdrawal_consent_at` by hand without the customer's actual consent; hand out a key manually. |
 | **Auto-resolves** | When the order leaves `awaiting_consent` (consent recorded, delivered, or refunded). |
 
+## revenue_milestone (P3)
+| | |
+|---|---|
+| **Means** | Cumulative net revenue (after refunds) reached `MIGRATION_REVENUE_EUR` (default EUR 25, about USD 20-30; subject `hosting_accounting_review`). This is a one-time reminder, not a fault: time to decide on moving from the Raspberry Pi to a cloud server and on adopting lexoffice or sevDesk. |
+| **First checks** | Dashboard → Finance for the current numbers; docs/wiki/Raspberry-Pi.md, section Moving to the cloud. |
+| **Safe actions** | Decide (CEO), plan the move, then `uv run aecom incidents ack <ID> --by <you>` while you work and resolve it once decided. |
+| **Do NOT** | Expect a second reminder after resolving: it never comes back. Do not move the database by copying files while the app runs. |
+| **Auto-resolves** | Never. It stays open (also when refunds drop revenue below the threshold) until a human resolves it; after that it is never raised again. |
+
 ## Safe mode is on
 | | |
 |---|---|

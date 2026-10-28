@@ -23,7 +23,7 @@ LATER = timedelta(minutes=20)  # past the 15-min order grace
 @pytest.fixture(autouse=True)
 def config(monkeypatch):
     """No alert config from the environment or a developer's .env; tests opt in via `config.set`."""
-    values: dict[str, str] = {}
+    values: dict[str, str] = {"MIGRATION_REVENUE_EUR": "1000000"}  # demo sales must not trip revenue_milestone
     monkeypatch.setattr(secrets, "get", lambda name: values.get(name))
     return values
 

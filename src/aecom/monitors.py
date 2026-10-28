@@ -23,7 +23,7 @@ from typing import Any
 from sqlalchemy import func, or_, select
 
 from aecom import alerts, incidents
-from aecom.db import AgentRun, Approval, ErrorRow, EventRow, LicenseKey, Order, session
+from aecom.db import AgentRun, Approval, ErrorRow, EventRow, Incident, LicenseKey, Order, session
 from aecom.db import now as db_now
 from aecom.observability import record_error
 
@@ -43,6 +43,8 @@ ORDER_TOPIC_PREFIXES = ("order.", "inventory.")
 UNDELIVERED_STATUSES = ("paid", "failed")
 UNEMAILED_STATUSES = ("delivered", "partially_refunded")
 AWAITING_CONSENT_AFTER = timedelta(hours=24)
+MILESTONE_SUBJECT = "hosting_accounting_review"
+DEFAULT_MIGRATION_REVENUE_EUR = 25.0  # owner decision: move off the Raspberry Pi at about USD 20-30 revenue
 KILL_SWITCH_SINCE = "kill_switch_since"  # ops setting: ISO time the monitors first saw the kill switch on
 
 Problem = tuple[str, str]  # (subject, detail)
@@ -191,11 +193,46 @@ def kill_switch_long(now: datetime) -> list[Problem]:
     return []
 
 
+def _migration_threshold() -> float:
+    from aecom.secrets import secrets
+
+    try:
+        return float(secrets.get("MIGRATION_REVENUE_EUR") or DEFAULT_MIGRATION_REVENUE_EUR)
+    except ValueError:  # a typo in .env must not blind the monitor
+        return DEFAULT_MIGRATION_REVENUE_EUR
+
+
+def revenue_milestone(now: datetime) -> list[Problem]:
+    """One-time reminder to review the Pi -> cloud move and the accounting tool once cumulative net revenue
+    (after refunds) reaches MIGRATION_REVENUE_EUR (default 25).
+
+    Never nags: once any incident for this monitor+subject is resolved, it stays silent for good. While the
+    incident is open or acknowledged it keeps being reported even if refunds push revenue back below the
+    threshold, so the monitor loop never auto-resolves it; only a human resolves it."""
+    from aecom import metrics
+
+    with session() as s:
+        states = set(s.scalars(select(Incident.status).where(
+            Incident.monitor == "revenue_milestone", Incident.subject == MILESTONE_SUBJECT)))
+    if "resolved" in states:
+        return []
+    threshold = _migration_threshold()
+    net = metrics.pnl()["net_revenue"]
+    if net < threshold and not states & set(incidents.ACTIVE):
+        return []
+    return [(MILESTONE_SUBJECT,
+             f"Net revenue reached EUR {net:.2f} (threshold EUR {threshold:.2f}): time to review the move from the "
+             "Raspberry Pi to a cloud server and to adopt an accounting tool (lexoffice or sevDesk). "
+             "See docs/wiki/Raspberry-Pi.md, section Moving to the cloud. "
+             "Acknowledge this incident when you have decided.")]
+
+
 MONITORS: dict[str, tuple[str, Monitor]] = {fn.__name__: (sev, fn) for sev, fn in (
     ("P1", undelivered_order), ("P1", unemailed_order), ("P1", ledger_imbalance), ("P1", duplicate_key),
     ("P1", order_dead_letter), ("P1", restock_failed),
     ("P2", other_dead_letter), ("P2", event_backlog), ("P2", stuck_run), ("P2", errors), ("P2", approval_ageing),
-    ("P2", kill_switch_long), ("P3", awaiting_consent_order))}
+    ("P2", kill_switch_long), ("P3", awaiting_consent_order),
+    ("P3", revenue_milestone))}
 MONITOR_ERROR = "monitor_error"
 
 
