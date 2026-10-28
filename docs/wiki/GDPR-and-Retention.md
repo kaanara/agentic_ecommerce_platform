@@ -200,6 +200,26 @@ and the suppression row even after erasure (it holds only the address, to keep h
   customer id.
 * An objection to marketing (Art. 21(2)) is handled with `consent.unsubscribe(email)` (see section 6).
 
+## LangSmith tracing
+
+LangSmith is optional and **off by default**. Enabling it is a conscious decision, taken only after the lawyer review.
+
+**What is sent.** Every traced run: full prompts, model outputs, tool arguments and tool results. These can contain
+customer emails, names, order details and support messages. Masking of secrets does not remove personal data.
+
+**How to enable** (environment, exported automatically): `LANGSMITH_TRACING=true`, `LANGSMITH_API_KEY=<key>`,
+`LANGSMITH_PROJECT=<project>`. To disable, unset `LANGSMITH_TRACING` (or set it to `false`) and restart.
+
+**Open questions to settle first** [DECISION: lawyer / owner]
+- Data location: LangSmith offers an EU and a US region. Choose the EU region if available for the account; if US is
+  used, a transfer basis (e.g. SCCs / DPF) and a data processing agreement are needed, and the privacy policy must name LangSmith.
+- Retention in LangSmith: set the project retention (see the retention table, e.g. 14-30 days); the default may be longer.
+- Whether tracing is allowed on production data at all, or only on synthetic/test runs.
+
+**Erasure request.** Search the project for the customer's email and delete the matching traces (LangSmith UI: filter
+runs by the email text, select, delete; or the API's delete-runs call). Record this in the erasure checklist (step 5).
+Traces also expire with the project retention setting.
+
 ## H10 - Retention
 
 Periods are proposals to be decided; "10 years" for accounting records follows German tax and commercial law

@@ -28,7 +28,9 @@ All settings live in `src/aecom/config.py` (pydantic-settings). They're read fro
 | `STORE_ADAPTER` | `mock` | Storefront adapter |
 | `MCP_AUTOLOAD` | `true` | Load registry MCP servers into agents |
 | `MCP_LOAD_TIMEOUT_S` | `20` | Per-server load timeout |
-| `LANGSMITH_*` | — | Tracing (exported to the environment automatically) |
+| `LANGSMITH_TRACING` | `false` | LangSmith tracing. **Off by default**; turning it on sends prompts, tool arguments and results (may include customer emails) to LangSmith. Only after the lawyer review, see [GDPR and Retention](GDPR-and-Retention.md#langsmith-tracing) |
+| `LANGSMITH_API_KEY` | — | LangSmith key (secret; exported to the environment automatically) |
+| `LANGSMITH_PROJECT` | — | LangSmith project name; retention is set per project there |
 
 Runtime settings (`ops_settings`, changeable without a restart): `kill_switch`, `marketing_budget_month_eur`, `vendor_budget_month_eur`.
 
