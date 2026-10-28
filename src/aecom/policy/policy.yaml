@@ -15,6 +15,11 @@
 #   monthly_budget_setting: escalate if this spend pushes the month past ops_settings[<key>]
 #   recipient_must_be_counterparty: escalate unless args["to"] is the customer the current run serves
 #   reason:      shown to the human in the approvals dashboard
+#   stages:      Phase 5 autonomy stages (T2 rules with limits only). Stage 1 = the rule as written; stages 2 and 3 are
+#                earned per action (ops_settings "autonomy_stage:<tool>", raised only by a human with recorded evidence,
+#                lowered automatically or by a human, always back to 1). A stage may override ONLY "limits" (merged over
+#                the base limits), "price_change_pct_max" and (stage 3) "notify: true". HARD CAPS NEVER MOVE: a stage
+#                never touches monthly_budget_setting, recipient_must_be_counterparty, tier, agents or any T3/T4 rule.
 
 defaults:
   unknown_tool_tier: T3          # MCP tools nobody classified yet are treated as high-stakes
@@ -130,11 +135,17 @@ rules:
     tier: T2
     agents: [store_ops, finance]
     price_change_pct_max: 20
+    stages:
+      2: {price_change_pct_max: 30}
+      3: {price_change_pct_max: 50, notify: true}
     reason: "Price changes above 20% affect margin and customer trust."
   refund_order:
     tier: T2
     agents: [support, finance]
     limits: {amount_eur: 50}
+    stages:
+      2: {limits: {amount_eur: 150}}
+      3: {limits: {amount_eur: 500}, notify: true}
     reason: "Refunds above €50 need a human."
 
   # ---------------------------------------------------------------- communication
@@ -162,6 +173,9 @@ rules:
     tier: T2
     agents: [marketing]
     limits: {budget_eur: 150}
+    stages:
+      2: {limits: {budget_eur: 300}}
+      3: {limits: {budget_eur: 600}, notify: true}
     monthly_budget_setting: marketing_budget_month_eur
     reason: "Ad spend above €150 per campaign or beyond the monthly marketing budget."
 
@@ -170,10 +184,16 @@ rules:
     tier: T2
     agents: [finance]
     limits: {amount_eur: 200}
+    stages:
+      2: {limits: {amount_eur: 400}}
+      3: {limits: {amount_eur: 800}, notify: true}
   register_vendor:
     tier: T2
     agents: [supply, foreman]
     limits: {monthly_cost_eur: 50}
+    stages:
+      2: {limits: {monthly_cost_eur: 100}}
+      3: {limits: {monthly_cost_eur: 200}, notify: true}
     monthly_budget_setting: vendor_budget_month_eur
     reason: "New recurring vendor cost."
 

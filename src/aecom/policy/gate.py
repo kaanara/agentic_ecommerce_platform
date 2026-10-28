@@ -49,6 +49,8 @@ class GateResult:
     decision: str  # allow | deny | escalate
     tier: str
     reason: str
+    autonomy_stage: int = 1  # Phase 5: stage of the action when it was judged (T2 only)
+    autonomous: bool = False  # allowed only thanks to a raised stage (the stage-1 rule would have escalated)
 
 
 @lru_cache
@@ -109,6 +111,22 @@ def _committed(setting_key: str, args: dict[str, Any]) -> Decimal:
     return quantize(amount)
 
 
+def _t2_escalation(rule: dict[str, Any], args: dict[str, Any]) -> str | None:
+    """Per-call limit / price-change check of a T2 rule (base or stage-effective). Returns the escalation reason or None."""
+    for arg, maximum in (rule.get("limits") or {}).items():
+        if arg in args and float(args[arg]) > float(maximum):
+            return f"{arg}={args[arg]} exceeds limit {maximum}. {rule.get('reason', '')}".strip()
+    if (pct := rule.get("price_change_pct_max")) is not None and "sku" in args:
+        from aecom.store.adapter import get_store
+
+        current = (get_store().get_product(args["sku"]) or {}).get("price_eur")
+        if current:
+            change = abs(float(args["price_eur"]) - current) / current * 100
+            if change > pct:
+                return f"price change {change:.0f}% exceeds {pct}%. {rule.get('reason', '')}".strip()
+    return None
+
+
 def evaluate(agent_id: str, tool_name: str, args: dict[str, Any], *, side_effect: bool = True,
              sandboxed: bool = False) -> GateResult:
     policy = load_policy()
@@ -143,23 +161,20 @@ def evaluate(agent_id: str, tool_name: str, args: dict[str, Any], *, side_effect
         if not counterparty or to != counterparty:
             whom = f"the customer of this case ({counterparty})" if counterparty else "no customer case in this run"
             return GateResult("escalate", tier, f"recipient {to or '?'} is not {whom}. {rule.get('reason', '')}".strip())
-    for arg, maximum in (rule.get("limits") or {}).items():
-        if arg in args and float(args[arg]) > float(maximum):
-            return GateResult("escalate", tier, f"{arg}={args[arg]} exceeds limit {maximum}. {rule.get('reason', '')}".strip())
-    if (pct := rule.get("price_change_pct_max")) is not None and "sku" in args:
-        from aecom.store.adapter import get_store
+    from aecom.autonomy import current_stage, effective_rule
 
-        current = (get_store().get_product(args["sku"]) or {}).get("price_eur")
-        if current:
-            change = abs(float(args["price_eur"]) - current) / current * 100
-            if change > pct:
-                return GateResult("escalate", tier, f"price change {change:.0f}% exceeds {pct}%. {rule.get('reason', '')}".strip())
+    stage = current_stage(tool_name)
+    over = _t2_escalation(effective_rule(tool_name, rule, stage), args)
+    if over:
+        return GateResult("escalate", tier, over, stage)
     if key := rule.get("monthly_budget_setting"):
         budget = float(get_setting(key) or policy["company_settings_defaults"][key])
         committed = _committed(key, args)
         if committed > to_decimal(budget):
-            return GateResult("escalate", tier, f"would bring {key} to €{committed:.0f} of €{budget:.0f}.")
-    return GateResult("allow", tier, "within limits")
+            return GateResult("escalate", tier, f"would bring {key} to €{committed:.0f} of €{budget:.0f}.", stage)
+    # autonomous = this call only passes because of the earned stage; the base rule would have escalated it
+    autonomous = stage > 1 and _t2_escalation(rule, args) is not None
+    return GateResult("allow", tier, "within limits", stage, autonomous)
 
 
 def dedup_key(agent_id: str, tool_name: str, args: dict[str, Any]) -> str:
@@ -222,7 +237,10 @@ async def run_gated(agent_id: str, tool_name: str, args: dict[str, Any], execute
     verdict = evaluate(agent_id, tool_name, args, side_effect=side_effect, sandboxed=sandboxed)
     call_id = _log_call(run_id, agent_id, tool_name, verdict.decision, args)  # D3: before executing, result added below
     if verdict.tier != "T0" or verdict.decision != "allow":
-        audit(agent_id, tool_name, verdict.decision, {"args": args, "tier": verdict.tier, "reason": verdict.reason}, run_id)
+        detail = {"args": args, "tier": verdict.tier, "reason": verdict.reason}
+        if verdict.decision == "allow":
+            detail |= {"autonomy_stage": verdict.autonomy_stage, "autonomous": verdict.autonomous}
+        audit(agent_id, tool_name, verdict.decision, detail, run_id)
 
     if verdict.decision == "deny":
         message = f"DENIED by policy ({verdict.tier}): {verdict.reason}"
