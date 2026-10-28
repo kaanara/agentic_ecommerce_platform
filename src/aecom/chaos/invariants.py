@@ -118,7 +118,7 @@ def no_dead_letters() -> list[Violation]:
 
 
 def every_mirrored_order_has_ledger_lines() -> list[Violation]:
-    """In STORE_CHECKS. A store-platform order (``external_id`` set, e.g. mirrored from Lemon Squeezy) has exactly one sale booked
+    """A store-platform order (``external_id`` set, e.g. mirrored from Lemon Squeezy) has exactly one sale booked
     for its amount, and the cash its refund lines pay out equals its Refund rows: replays never book twice."""
     with session() as s:
         orders = s.execute(select(Order.id, Order.external_id, Order.amount_eur)
@@ -148,7 +148,7 @@ def every_mirrored_order_has_ledger_lines() -> list[Violation]:
 
 def refund_mirror_matches_provider(provider: dict[str, int]) -> list[Violation]:
     """Every provider order is mirrored and its local refunded total equals the provider's ``refunded_amount``
-    (``provider`` maps the provider order id to that amount in cents). Not in CHECKS: it needs the provider's view."""
+    (``provider`` maps the provider order id to that amount in cents). Not in CHECKS (the ls-* scenarios add it): it needs the provider's view."""
     with session() as s:
         local = dict(s.execute(select(Order.external_id, Order.id).where(Order.external_id.in_(list(provider)))).all())
         refunded = dict(s.execute(select(Refund.order_id, func.sum(Refund.amount_eur))
@@ -166,10 +166,7 @@ def refund_mirror_matches_provider(provider: dict[str, int]) -> list[Violation]:
 CHECKS: dict[str, Callable[[], list[Violation]]] = {fn.__name__: fn for fn in (
     every_paid_order_delivered, every_delivered_order_emailed, ledger_balanced, no_key_on_two_orders,
     refunds_not_above_order_amount, no_order_without_ledger_lines, marketing_spend_within_budget, no_run_stuck_running,
-    no_dead_letters)}
-# checks for runs against a store platform; the Lemon Squeezy chaos scenarios add them to check_all()
-STORE_CHECKS: dict[str, Callable[[], list[Violation]]] = {fn.__name__: fn for fn in (
-    every_mirrored_order_has_ledger_lines,)}
+    no_dead_letters, every_mirrored_order_has_ledger_lines)}
 
 
 def check_all() -> list[Violation]:

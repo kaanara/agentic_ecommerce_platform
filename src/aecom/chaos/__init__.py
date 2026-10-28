@@ -13,7 +13,7 @@ from datetime import timedelta
 from typing import Any, Callable, Iterator
 
 from aecom.chaos import injectors
-from aecom.chaos.invariants import STORE_CHECKS, Violation, check_all, refund_mirror_matches_provider
+from aecom.chaos.invariants import Violation, check_all, refund_mirror_matches_provider
 
 MAX_ROUNDS = 10
 RECONCILER_CYCLES = 2  # phase1-exit: how many reconciler runs may be needed to repair what retries could not
@@ -201,9 +201,9 @@ def _ls_deliver(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _ls_checks(orders: list[dict[str, Any]], undelivered: list[dict[str, Any]]) -> list[Violation]:
-    """Store-platform invariants plus the provider comparison; a webhook the provider gave up on is a violation."""
+    """The provider comparison (the rest is in check_all()); a webhook the provider gave up on is a violation."""
     provider = {o["id"]: o["attributes"]["refunded_amount"] for o in orders}
-    out = [v for check in STORE_CHECKS.values() for v in check()] + refund_mirror_matches_provider(provider)
+    out = refund_mirror_matches_provider(provider)  # the global invariants (check_all) run at the end
     out += [{"invariant": "webhooks_delivered", "detail": f"{p['meta']['event_name']} {p['data']['id']} was never "
              f"processed after {LS_RETRIES} attempts"} for p in undelivered]
     return out

@@ -139,7 +139,7 @@ def test_dead_letter_is_a_violation(no_backoff, monkeypatch):
 
 
 def test_every_check_runs_in_check_all():
-    assert len(CHECKS) == 9 and all(fn() == [] for fn in CHECKS.values())
+    assert len(CHECKS) == 10 and "every_mirrored_order_has_ledger_lines" in CHECKS and all(fn() == [] for fn in CHECKS.values())
 
 
 # ----------------------------------------------------------------------------- injectors

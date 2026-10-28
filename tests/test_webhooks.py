@@ -108,7 +108,7 @@ def test_lemonsqueezy_failed_mirror_is_500_and_retry_succeeds(client, monkeypatc
     raw = body_of("order_created")
     real = ls.EVENT_HANDLERS["order_created"]
 
-    def broken(payload):
+    def broken(payload, session=None):
         raise RuntimeError("database hiccup")
 
     monkeypatch.setitem(ls.EVENT_HANDLERS, "order_created", broken)
@@ -223,3 +223,33 @@ def test_old_unauthenticated_agentmail_payload_is_rejected(client):
     client.configured.clear()
     assert client.post("/webhooks/agentmail", json={"from": "a@b.c"}).status_code == 503
     assert count(EventRow) == 0
+
+
+# --------------------------------------------------------------------------- R13a: receipt + mirror in one transaction
+def test_lemonsqueezy_mirror_that_raises_leaves_no_receipt_and_no_partial_rows(client, monkeypatch):
+    raw = body_of("order_created")
+    real = ls._create_mirror
+
+    def half_done(s, ext, a, payload, country):
+        real(s, ext, a, payload, country)  # customer, order, ledger lines and event are written ...
+        raise RuntimeError("crash after the writes")  # ... and then the process dies before the commit
+
+    monkeypatch.setattr(ls, "_create_mirror", half_done)
+    assert post_ls(client, raw).status_code == 500
+    assert (count(WebhookReceipt), count(Order), count(LedgerEntry), count(EventRow)) == (0, 0, 0, 0)
+    monkeypatch.setattr(ls, "_create_mirror", real)
+    r = post_ls(client, raw)  # the provider's retry
+    assert r.status_code == 200 and r.json()["duplicate"] is False
+    assert (count(WebhookReceipt), count(Order)) == (1, 1) and count(LedgerEntry) > 0
+
+
+def test_lemonsqueezy_handler_failed_rolls_back_the_receipt(client):
+    assert post_ls(client, body_of("license_key_created")).status_code == 500
+    assert count(WebhookReceipt) == 0
+
+
+def test_lemonsqueezy_two_identical_deliveries_second_is_duplicate(client):
+    raw = body_of("order_created")
+    first, second = post_ls(client, raw), post_ls(client, raw)
+    assert (first.json()["duplicate"], second.json()["duplicate"]) == (False, True)
+    assert (count(Order), count(WebhookReceipt)) == (1, 1)

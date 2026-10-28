@@ -11,7 +11,8 @@ Not behind the bearer token (providers can't send it). Instead every route check
   https://docs.svix.com/receiving/verifying-payloads/how-manual).
 
 No secret configured -> 503; bad or missing signature -> 401; nothing is written in either case.
-Each delivery is recorded once in ``WebhookReceipt`` (unique ``(provider, event_key)``); a repeat returns
+Each delivery is recorded once in ``WebhookReceipt`` (unique ``(provider, event_key)``) in the same transaction as
+its side effects (a failure rolls back both, so the provider's retry is processed); a repeat returns
 200 ``{"duplicate": true}`` without side effects. Only these routes may be reachable from the internet (via a
 tunnel); the dashboard and the rest of the API must never be exposed.
 """
@@ -27,7 +28,6 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
-from sqlalchemy import delete
 from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
@@ -57,24 +57,6 @@ def _json(raw: bytes) -> dict[str, Any]:
     return payload
 
 
-def _claim(provider: str, event_key: str, topic: str) -> int | None:
-    """Insert the receipt in its own committed transaction. None = this delivery was already received."""
-    try:
-        with session() as s:
-            row = WebhookReceipt(provider=provider, event_key=event_key, topic=topic)
-            s.add(row)
-            s.flush()
-            return row.id
-    except IntegrityError:
-        return None
-
-
-def _release(receipt_id: int) -> None:
-    """Undo a claim after a failed delivery so the provider's retry is processed."""
-    with session() as s:
-        s.execute(delete(WebhookReceipt).where(WebhookReceipt.id == receipt_id))
-
-
 # --------------------------------------------------------------------------- Lemon Squeezy
 def _lemonsqueezy(raw: bytes, signature: str | None, event_header: str | None) -> dict[str, Any]:
     secret = secrets.get("LEMONSQUEEZY_WEBHOOK_SECRET")
@@ -90,13 +72,16 @@ def _lemonsqueezy(raw: bytes, signature: str | None, event_header: str | None) -
     meta["event_name"] = event
     # Lemon Squeezy sends no delivery id; a retry carries the identical body, so its hash is the key
     event_key = str(meta.get("event_id") or hashlib.sha256(raw).hexdigest())
-    receipt_id = _claim(ls.PROVIDER, event_key, event)
-    if receipt_id is None:
-        return {"duplicate": True, "event": event}
     try:
-        result = ls.dispatch(payload)
+        with session() as s:  # receipt and mirror commit together: a failure records neither, so the retry is processed
+            s.add(WebhookReceipt(provider=ls.PROVIDER, event_key=event_key, topic=event))
+            try:
+                s.flush()
+            except IntegrityError:
+                s.rollback()
+                return {"duplicate": True, "event": event}
+            result = ls.dispatch(payload, session=s)
     except Exception as exc:
-        _release(receipt_id)
         record_error("webhook.lemonsqueezy", exc, context={"event": event, "event_key": event_key})
         raise HTTPException(500, "processing failed; retry") from exc
     return {"duplicate": False, **result}

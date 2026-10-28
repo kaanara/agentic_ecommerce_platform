@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from aecom import db
 from aecom.bus.events import HandlerFailed, drain
 from aecom.chaos.invariants import check_all
-from aecom.db import Customer, EventRow, LedgerEntry, LicenseKey, Order, Product, Refund, session
+from aecom.db import AuditLog, Customer, ErrorRow, EventRow, LedgerEntry, LicenseKey, Order, Product, Refund, session
 from aecom.store import lemonsqueezy as ls
 from aecom.store.adapter import get_store
 
@@ -259,3 +259,68 @@ def test_webhook_signature_and_dispatch():
     assert ls.dispatch({"meta": {"event_name": "subscription_created"}, "data": {}}) == {
         "event": "subscription_created", "status": "ignored"}
     assert ls.dispatch(copy.deepcopy(fixture("order_created")))["status"] == "delivered"
+
+
+def key_payload(key_id: int, last4: str = "0001") -> dict:
+    p = copy.deepcopy(fixture("license_key_created"))
+    p["data"]["id"] = str(key_id)
+    p["data"]["attributes"]["key"] = f"TEST0000-aaaa-4bbb-8ccc-fake0000{last4}"
+    return p
+
+
+def test_mirror_order_takes_quantity_from_the_order_item(api):
+    api.sync_catalog()
+    p = fixture("order_created")
+    p["data"]["attributes"]["first_order_item"]["quantity"] = 2
+    oid = ls.mirror_order(p)["order_id"]
+    ls.mirror_license_key(key_payload(3001, "0001"))
+    ls.mirror_license_key(key_payload(3002, "0002"))
+    with session() as s:
+        assert s.get(Order, oid).quantity == 2
+        assert s.scalar(select(func.count(LicenseKey.id)).where(LicenseKey.order_id == oid)) == 2
+    assert check_all() == []
+
+
+def test_licence_key_beyond_the_quantity_is_rejected_and_audited(api):
+    api.sync_catalog()
+    oid = ls.mirror_order(fixture("order_created"))["order_id"]  # quantity 1
+    ls.mirror_license_key(key_payload(3001))
+    r = ls.mirror_license_key(key_payload(3002, "0002"))
+    assert (r["status"], r["reason"]) == ("rejected", "license_key_over_quantity")
+    with session() as s:
+        assert s.get(Order, oid).quantity == 1
+        assert s.scalars(select(LicenseKey.key).where(LicenseKey.order_id == oid)).all() == ["ls:3001:****0001"]
+        assert s.scalar(select(func.count(AuditLog.id)).where(AuditLog.action == "license_key_over_quantity")) == 1
+        assert s.scalars(select(ErrorRow.component)).all() == ["lemonsqueezy.license_key"]
+    assert ls.mirror_license_key(key_payload(3001))["already"] is True  # the stored key stays idempotent
+    assert check_all() == []
+
+
+def test_mirror_functions_write_into_the_callers_session(fresh_company):
+    with session() as s:
+        ls.dispatch(fixture("order_created"), session=s)
+        assert s.scalar(select(func.count(Order.id))) == 1
+        s.rollback()  # nothing was committed behind the caller's back
+    assert counts()["Order"] == 0 and counts()["EventRow"] == 0
+
+
+def test_reconcile_recent_recovers_a_lost_licence_key_once(api):
+    api.sync_catalog()
+    ls.mirror_order(fixture("order_created"))  # its license_key_created webhook was lost
+    seen = []
+    key = fixture("license_key_created")["data"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.params.get("filter[order_id]"))
+        return httpx.Response(200, json={"data": [key], "meta": {"page": {"lastPage": 1}}})
+
+    api._transport = httpx.MockTransport(handler)
+    api.recent_orders = lambda since: [fixture("order_created")["data"]]
+    since = ls._ts("2026-10-26T00:00:00Z")
+    first = api.reconcile_recent(since)
+    assert (first["keys"], first["key_errors"]) == (1, 0) and seen == ["5001"]
+    with session() as s:
+        assert s.scalars(select(LicenseKey.key)).all() == ["ls:3001:****9f3c"]
+    second = api.reconcile_recent(since)
+    assert second["keys"] == 0 and seen == ["5001"]  # nothing missing any more: no API call
+    assert check_all() == []

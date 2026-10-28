@@ -7,8 +7,9 @@ into its own tables and ledger, so agents, monitors and reports keep working unc
 * ``sync_catalog()`` reads products and variants over the REST API and upserts one local ``Product`` per variant
   (``Product.external_id`` = variant id).
 * ``mirror_order`` / ``mirror_refund`` / ``mirror_license_key`` are pure functions on webhook payloads
-  (``meta`` + JSON:API ``data``). The webhook route calls them, and tests can call them on their own. Each one
-  commits its writes and its event in one transaction and is idempotent on the Lemon Squeezy id.
+  (``meta`` + JSON:API ``data``). The webhook route calls them with its own ``session=`` so the receipt and the
+  mirror commit (or roll back) together. Without ``session`` each one commits its writes and its event in one
+  transaction. All are idempotent on the Lemon Squeezy id.
 * Mirrored orders are already ``delivered`` with ``email_sent`` set, because Lemon Squeezy delivers keys and files
   and sends the receipt itself. They publish ``order.mirrored``, never ``order.paid``, so nothing is delivered twice.
 
@@ -26,19 +27,22 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Iterator
 
 import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from aecom import ledger
+from aecom.audit import mask_detail
 from aecom.bus.events import HandlerFailed, outbox, publish
 from aecom.config import get_settings
-from aecom.db import Customer, LicenseKey, Order, Product, Refund, now, session
+from aecom.db import AuditLog, Customer, ErrorRow, LicenseKey, Order, Product, Refund, now, session
 from aecom.money import cents, quantize
+from aecom.observability import mask
 from aecom.secrets import secrets
 from aecom.store.mock import MockStore
 
@@ -109,6 +113,17 @@ def _o(o: Order) -> dict[str, Any]:
             "vat_eur": o.vat_eur}
 
 
+@contextmanager
+def _tx(s: Session | None) -> Iterator[Session]:
+    """The caller's session (it commits) or a fresh committed one; events go through the outbox of that session."""
+    if s is not None:
+        with outbox(s):
+            yield s
+    else:
+        with session() as own, outbox(own):
+            yield own
+
+
 def verify_signature(raw_body: bytes, signature: str | None, secret: str | None = None) -> bool:
     """``X-Signature`` is the hex HMAC-SHA256 of the raw body under the webhook signing secret
     (https://docs.lemonsqueezy.com/help/webhooks/signing-requests). No secret configured -> reject."""
@@ -150,7 +165,8 @@ def _create_mirror(s: Session, ext: str, a: dict[str, Any], payload: dict[str, A
     if _opted_in(custom.get(CUSTOM_MARKETING_CONSENT)) and not c.marketing_consent:
         c.marketing_consent, c.marketing_consent_source = True, "checkout"
         c.marketing_consent_at = _ts(a.get("created_at")) or now()
-    o = Order(customer_id=c.id, product_id=p.id, amount_eur=float(gross), vat_eur=float(vat), campaign_id=campaign,
+    o = Order(customer_id=c.id, product_id=p.id, quantity=max(int(item.get("quantity") or 1), 1),
+              amount_eur=float(gross), vat_eur=float(vat), campaign_id=campaign,
               status="delivered", email_sent=True, email_sent_at=now(), external_id=ext,
               withdrawal_consent_at=_ts(custom.get(CUSTOM_CONSENT_AT)),
               withdrawal_consent_version=custom.get(CUSTOM_CONSENT_VERSION) if custom.get(CUSTOM_CONSENT_AT) else None,
@@ -160,22 +176,23 @@ def _create_mirror(s: Session, ext: str, a: dict[str, Any], payload: dict[str, A
     # VAT exactly as Lemon Squeezy charged it (merchant of record), never recomputed from our rate table
     ledger.record_sale(o.id, float(gross), float(vat), p.unit_cost_eur, country=tax_country, vat_rate=rate, session=s)
     publish("order.mirrored", {"order_id": o.id, "external_id": ext, "sku": p.sku, "email": email,
-                               "amount_eur": o.amount_eur, "vat_eur": o.vat_eur}, source=PROVIDER)
+                               "amount_eur": o.amount_eur, "vat_eur": o.vat_eur}, source=PROVIDER, session=s)
     return o
 
 
-def mirror_order(payload: dict[str, Any], country: str | None = None) -> dict[str, Any]:
+def mirror_order(payload: dict[str, Any], country: str | None = None, *, session: Session | None = None) -> dict[str, Any]:
     """Mirror an ``order_created`` payload of a paid order. Idempotent on the Lemon Squeezy order id.
 
     ``country`` (ISO alpha-2) overrides ``meta.custom_data.country``. The order object carries no customer country.
     ``meta.custom_data.marketing_consent`` true (the checkout opt-in) records marketing consent on the customer
     (source ``checkout``); absent or false changes nothing. Orders that are not ``paid`` (pending, failed,
-    fraudulent) are ignored. Refund states go through ``mirror_refund``.
+    fraudulent) are ignored. Refund states go through ``mirror_refund``. The order quantity is
+    ``first_order_item.quantity``. With ``session`` everything is written there and the caller commits.
     """
     ext, a = _resource(payload, "orders")
     if a.get("status") != "paid":
         return {"external_id": ext, "status": "ignored", "reason": f"order status {a.get('status')}"}
-    with session() as s, outbox(s):
+    with _tx(session) as s:
         existing = _mirrored(s, ext)
         if existing is not None:
             return {**_o(existing), "already": True}
@@ -198,12 +215,12 @@ def _post_refund(s: Session, o: Order, refund_c: int, cumulative_c: int) -> None
 
 
 def mirror_refund(payload: dict[str, Any], country: str | None = None,
-                  reason: str = "refunded in Lemon Squeezy") -> dict[str, Any]:
+                  reason: str = "refunded in Lemon Squeezy", *, session: Session | None = None) -> dict[str, Any]:
     """Mirror an ``order_refunded`` payload (full or partial). Lemon Squeezy's cumulative ``refunded_amount`` is
     authoritative: only the part not mirrored yet is booked, so replays and out-of-order deliveries change nothing.
     An order seen for the first time here is mirrored first."""
     ext, a = _resource(payload, "orders")
-    with session() as s, outbox(s):
+    with _tx(session) as s:
         o = _mirrored(s, ext) or _create_mirror(s, ext, a, payload, country)
         total_c = cents(o.amount_eur)
         target_c = min(int(a.get("refunded_amount") or 0), total_c)
@@ -221,21 +238,36 @@ def mirror_refund(payload: dict[str, Any], country: str | None = None,
                 key.status = "revoked"
         _post_refund(s, o, delta_c, target_c)
         publish("order.refunded", {"order_id": o.id, "external_id": ext, "amount_eur": delta_c / 100,
-                                   "status": o.status}, source=PROVIDER)
+                                   "status": o.status}, source=PROVIDER, session=s)
         return {**_o(o), "refunded_eur": delta_c / 100, "remaining_eur": (total_c - target_c) / 100}
 
 
-def mirror_license_key(payload: dict[str, Any]) -> dict[str, Any]:
+def _reject_extra_key(s: Session, o: Order, key_id: str, held: int) -> dict[str, Any]:
+    """A licence key beyond the order's quantity is not stored: error row and audit entry, written into ``s``
+    (the caller's transaction, so no second writer is opened on SQLite)."""
+    detail = {"license_key_id": key_id, "order_id": o.id, "external_id": o.external_id, "quantity": o.quantity or 1,
+              "keys_held": held}
+    msg = f"licence key {key_id} rejected: order {o.id} already holds {held} of {o.quantity or 1} key(s)"
+    s.add(ErrorRow(component="lemonsqueezy.license_key", exc_type="ValueError", message=mask(msg),
+                   context=mask_detail(detail)))
+    s.add(AuditLog(actor=PROVIDER, action="license_key_over_quantity", decision="rejected", detail=mask_detail(detail)))
+    return {"license_key_id": key_id, "order_id": o.id, "status": "rejected", "reason": "license_key_over_quantity",
+            "already": False}
+
+
+def mirror_license_key(payload: dict[str, Any], *, session: Session | None = None) -> dict[str, Any]:
     """Mirror ``license_key_created`` / ``license_key_updated``. Only the key id and the last 4 characters are kept
     (``ls:<key id>:****<last4>``). The customer gets the key from Lemon Squeezy. Raises ``HandlerFailed``
-    (retryable) while the order is not mirrored yet, because Lemon Squeezy sends this event alongside ``order_created``."""
+    (retryable) while the order is not mirrored yet, because Lemon Squeezy sends this event alongside ``order_created``.
+    ``Order.quantity`` comes from the order item and is never raised here: a key beyond it is rejected
+    (``license_key_over_quantity``, error row + audit entry)."""
     key_id, a = _resource(payload, "license-keys")
     ext = str(a.get("order_id") or "")
     raw = str(a.get("key") or a.get("key_short") or "")
     last4 = raw[-4:]
     del raw  # never keep, log or return the full key
     revoked = bool(a.get("disabled")) or a.get("status") in REVOKED_KEY_STATUSES
-    with session() as s:
+    with _tx(session) as s:
         o = _mirrored(s, ext)
         if o is None:
             raise HandlerFailed(f"licence key {key_id}: Lemon Squeezy order {ext} is not mirrored yet")
@@ -244,9 +276,10 @@ def mirror_license_key(payload: dict[str, Any]) -> dict[str, Any]:
         already = row is not None
         if row is None:
             held = s.scalar(select(func.count(LicenseKey.id)).where(LicenseKey.order_id == o.id)) or 0
+            if held >= (o.quantity or 1):
+                return _reject_extra_key(s, o, key_id, held)
             row = LicenseKey(product_id=o.product_id, key=f"{prefix}****{last4}", order_id=o.id)
             s.add(row)
-            o.quantity = max(o.quantity or 1, held + 1)  # Lemon Squeezy issues one key per unit bought
         row.status = "revoked" if revoked or o.status == "refunded" else "assigned"
         return {"license_key_id": key_id, "order_id": o.id, "key_last4": last4, "status": row.status,
                 "already": already}
@@ -260,13 +293,14 @@ EVENT_HANDLERS = {
 }
 
 
-def dispatch(payload: dict[str, Any]) -> dict[str, Any]:
-    """Route a verified webhook body by ``meta.event_name``. Events we do not mirror are acknowledged and ignored."""
+def dispatch(payload: dict[str, Any], *, session: Session | None = None) -> dict[str, Any]:
+    """Route a verified webhook body by ``meta.event_name``. Events we do not mirror are acknowledged and ignored.
+    With ``session`` the handler writes into it and the caller commits (the webhook route: receipt + mirror)."""
     event = (payload.get("meta") or {}).get("event_name", "")
     handler = EVENT_HANDLERS.get(event)
     if handler is None:
         return {"event": event, "status": "ignored"}
-    return {"event": event, **handler(payload)}
+    return {"event": event, **handler(payload, session=session)}
 
 
 # --------------------------------------------------------------------------- adapter
@@ -392,7 +426,8 @@ class LemonSqueezyStore:
         from aecom.observability import record_error
 
         orders = self.recent_orders(since)
-        counts = {"listed": len(orders), "mirrored": 0, "refunds": 0, "unchanged": 0, "ignored": 0, "errors": 0}
+        counts = {"listed": len(orders), "mirrored": 0, "refunds": 0, "unchanged": 0, "ignored": 0, "errors": 0,
+                  "keys": 0, "key_errors": 0}
         for data in orders:
             ext, a = str(data.get("id")), data.get("attributes") or {}
             try:
@@ -423,7 +458,38 @@ class LemonSqueezyStore:
             except Exception as exc:
                 counts["errors"] += 1
                 record_error("lemonsqueezy.reconcile", exc, context={"external_id": ext})
+        for ext in self._orders_missing_keys([str(d.get("id")) for d in orders]):
+            try:
+                counts["keys"] += self._recover_keys(ext)
+            except Exception as exc:  # a failing key lookup never blocks order recovery
+                counts["key_errors"] += 1
+                record_error("lemonsqueezy.reconcile_keys", exc, context={"external_id": ext})
         return counts
+
+    @staticmethod
+    def _orders_missing_keys(externals: list[str]) -> list[str]:
+        """Mirrored orders of licence products that hold fewer ``LicenseKey`` rows than their quantity."""
+        if not externals:
+            return []
+        with session() as s:
+            rows = s.execute(select(Order.external_id, Order.quantity, func.count(LicenseKey.id))
+                             .join(Product, Product.id == Order.product_id)
+                             .outerjoin(LicenseKey, LicenseKey.order_id == Order.id)
+                             .where(Order.external_id.in_(externals), Product.kind == "license",
+                                    Order.status != "refunded")
+                             .group_by(Order.id, Order.external_id, Order.quantity).order_by(Order.id)).all()
+        return [ext for ext, qty, held in rows if held < (qty or 1)]
+
+    def _recover_keys(self, ext: str) -> int:
+        """Mirror the licence keys of one order from ``GET /v1/license-keys?filter[order_id]=`` (a lost
+        ``license_key_created`` webhook). Idempotent by Lemon Squeezy key id; keys stay masked. Returns keys added."""
+        with self._client() as c:
+            keys = self._get_all(c, "/license-keys", {"filter[order_id]": ext})
+        added = 0
+        for key in keys:
+            r = mirror_license_key({"meta": {"event_name": "license_key_created"}, "data": key})
+            added += 0 if r.get("already") or r.get("status") == "rejected" else 1
+        return added
 
     def _country_or_none(self, ls_customer_id: Any) -> str | None:
         if not ls_customer_id:
