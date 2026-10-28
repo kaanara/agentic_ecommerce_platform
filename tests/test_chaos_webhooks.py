@@ -220,3 +220,20 @@ def test_marketing_consent_absent_or_false_stays_false(fresh_company, value):
     with session() as s:
         c = s.scalars(select(Customer).where(Customer.email == "eva@example.nl")).one()
         assert (c.marketing_consent, c.marketing_consent_at, c.marketing_consent_source) == (False, None, None)
+
+
+def test_reconcile_recovers_lost_licence_keys_through_the_fake_api(tmp_path):
+    """ls-lost serves GET /license-keys, so the key-recovery path of reconcile_recent is exercised for real.
+    Each seed gets its own database: scenario worlds reuse the same provider ids and must not meet each other."""
+    from aecom import db
+    from aecom.bootstrap import init
+    from aecom.chaos import run_scenario
+
+    recovered = 0
+    for seed in range(6):
+        db.reset_engine(f"sqlite:///{tmp_path / f'lost{seed}.db'}")
+        init()
+        out = run_scenario("ls-lost", seed=seed, orders=24)
+        assert out["violations"] == [], (seed, out["violations"])
+        recovered += out["stats"]["recovered"].get("keys", 0)
+    assert recovered > 0, "no seed ever exercised the licence-key recovery path"

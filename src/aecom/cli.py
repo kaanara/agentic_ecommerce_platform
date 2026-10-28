@@ -410,7 +410,7 @@ def _chaos(name: str, seed: int, use_configured_db: bool) -> None:
                 if not use_configured_db:  # a fresh throwaway DB per scenario so they can't affect each other
                     db.reset_engine(f"sqlite:///{tmp}/{n}.db")
                 init()
-                r = run_scenario(n, seed)
+                r = run_scenario(n, seed, allow_company_db=use_configured_db)
                 v = r["violations"]
                 failed |= bool(v)
                 details = "; ".join(f"{x['invariant']}: {x['detail']}" for x in v)

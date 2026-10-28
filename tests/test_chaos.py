@@ -280,3 +280,27 @@ def test_scenarios_are_deterministic_for_a_seed(no_backoff, tmp_path):
         return result, len(skus), countries
 
     assert fresh_run(1) == fresh_run(2)
+
+
+@pytest.mark.parametrize("url", ["sqlite:////Users/someone/project/data/aecom.db", "sqlite:///data/aecom.db",
+                                 "postgresql+psycopg://aecom:aecom@localhost:5432/aecom"])
+def test_chaos_refuses_to_run_against_a_non_disposable_database(url, monkeypatch):
+    """Scenarios write test orders/refunds/ledger lines: never into the company DB by accident (it happened once)."""
+    from aecom import db
+    from aecom.chaos import run_scenario
+    from aecom.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "database_url", url)
+    db.reset_engine()  # no connection is made: the guard must trip before anything touches the database
+    with pytest.raises(RuntimeError, match="refusing to run chaos scenario"):
+        run_scenario("delivery-crash")
+
+
+def test_chaos_runs_on_temp_databases_and_on_request_anywhere(tmp_path):
+    from aecom import db
+    from aecom.chaos import _is_disposable_db, run_scenario
+
+    assert _is_disposable_db(f"sqlite:///{tmp_path / 'x.db'}") and _is_disposable_db("sqlite:////tmp/anything.db")
+    assert not _is_disposable_db("sqlite:////Users/someone/data/aecom.db")
+    assert run_scenario("delivery-crash", orders=4)["violations"] == []  # the fixture DB lives under the temp dir
+    assert "allow_company_db" in run_scenario.__kwdefaults__

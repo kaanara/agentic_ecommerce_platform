@@ -34,7 +34,7 @@ def test_chaos_exits_1_on_violation(fresh_company, capsys, monkeypatch):
     import aecom.chaos
 
     url = fresh_company.database_url
-    monkeypatch.setattr(aecom.chaos, "run_scenario", lambda n, seed: {
+    monkeypatch.setattr(aecom.chaos, "run_scenario", lambda n, seed, **kw: {
         "scenario": n, "seed": seed, "stats": {},
         "violations": [{"invariant": "ledger_balanced", "detail": "off by 1"}]})
     with pytest.raises(SystemExit) as e:

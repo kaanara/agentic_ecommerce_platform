@@ -227,6 +227,19 @@ def _ls_out_of_order(rng: random.Random, seed: int, orders: int) -> dict[str, An
     return {"orders": len(world), "webhooks": len(hooks), **stats, "store_violations": violations}
 
 
+def _sync_licence_kinds() -> None:
+    """Stand-in for ``LemonSqueezyStore.sync_catalog()``: webhooks create placeholder products of kind 'download';
+    only a catalog sync marks licence variants as 'license' (which licence-key recovery relies on)."""
+    from sqlalchemy import select
+
+    from aecom.db import Product, session
+
+    licensed = {str(variant) for variant, _name, _price, is_licence in LS_VARIANTS if is_licence}
+    with session() as s:
+        for product in s.scalars(select(Product).where(Product.external_id.in_(licensed))):
+            product.kind = "license"
+
+
 def _ls_lost(rng: random.Random, seed: int, orders: int) -> dict[str, Any]:
     """30% of webhooks are lost. The reconciler (reconcile_recent against the provider API) repairs the mirror, then
     the provider's later retries of deliveries that failed meanwhile (licence keys of a lost order) go through."""
@@ -237,7 +250,9 @@ def _ls_lost(rng: random.Random, seed: int, orders: int) -> dict[str, Any]:
         with injectors.lost_webhooks(LS_LOST_RATE, seed) as stats:
             retry_later = _ls_deliver(hooks)
         settle()
-        with injectors.lemonsqueezy_api(world, countries) as api:
+        _sync_licence_kinds()
+        keys = [h["data"] for h in hooks if h["meta"]["event_name"] == "license_key_created"]
+        with injectors.lemonsqueezy_api(world, countries, license_keys=keys) as api:
             counts = reconcile(older_than=timedelta(0))
         undelivered = _ls_deliver(retry_later)
         settle()
@@ -264,11 +279,36 @@ SCENARIOS: dict[str, tuple[str, Callable[[random.Random, int, int], dict[str, An
 }
 
 
-def run_scenario(name: str, seed: int = 0, orders: int = 20) -> dict[str, Any]:
+def _is_disposable_db(url: str) -> bool:
+    """True only for a SQLite file under the system temp directory (the CLI's throwaway DB, test and scratch DBs).
+    Anything else - the company database, Postgres, an unknown URL - is not disposable."""
+    import tempfile
+    from pathlib import Path
+
+    if not url.startswith("sqlite:///"):
+        return False
+    path = Path(url.removeprefix("sqlite:///")).resolve()
+    temp_roots = {Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve()}
+    return any(root == path or root in path.parents for root in temp_roots)
+
+
+def run_scenario(name: str, seed: int = 0, orders: int = 20, *, allow_company_db: bool = False) -> dict[str, Any]:
     """Run one chaos scenario on the configured DB; returns {scenario, seed, violations, stats}.
-    Store-platform scenarios add their own checks (``stats["store_violations"]``) to the violations."""
+    Store-platform scenarios add their own checks (``stats["store_violations"]``) to the violations.
+
+    Scenarios WRITE orders, refunds, ledger lines and events, so this refuses to run against a database that is
+    not disposable (see ``_is_disposable_db``) unless ``allow_company_db=True``. ``aecom chaos`` uses a throwaway DB;
+    from Python, point DATABASE_URL at a temp file first."""
     if name not in SCENARIOS:
         raise ValueError(f"unknown chaos scenario {name!r}; choose from {', '.join(SCENARIOS)}")
+    from aecom.config import get_settings
+
+    url = get_settings().database_url
+    if not allow_company_db and not _is_disposable_db(url):
+        raise RuntimeError(
+            f"refusing to run chaos scenario {name!r} against {url}: scenarios write test orders, refunds and ledger "
+            "lines. Use `aecom chaos` (throwaway database), set DATABASE_URL to a file under /tmp, or pass "
+            "allow_company_db=True if you really mean it.")
     with _chaos_run():
         stats = SCENARIOS[name][1](random.Random(seed), seed, orders)
     return {"scenario": name, "seed": seed, "violations": check_all() + stats.pop("store_violations", []),

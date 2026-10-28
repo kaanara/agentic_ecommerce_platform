@@ -212,15 +212,16 @@ def lost_webhooks(rate: float, seed: int = 0) -> Iterator[dict[str, int]]:
 
 @contextmanager
 def lemonsqueezy_api(orders: list[dict[str, Any]], countries: dict[str, str] | None = None,
-                     page_size: int = 2) -> Iterator[dict[str, int]]:
+                     page_size: int = 2, license_keys: list[dict[str, Any]] | None = None) -> Iterator[dict[str, int]]:
     """An in-process Lemon Squeezy API: ``GET /v1/orders`` serves ``orders`` (JSON:API order objects) newest first,
-    ``page_size`` per page; ``GET /v1/customers/:id`` serves ``countries``. No API key and no network:
+    ``page_size`` per page; ``GET /v1/customers/:id`` serves ``countries``;
+    ``GET /v1/license-keys?filter[order_id]=`` serves ``license_keys`` (JSON:API licence-key objects). No API key and no network:
     ``LemonSqueezyStore._client`` is swapped for a client on an ``httpx.MockTransport``."""
     import httpx
 
     from aecom.store.lemonsqueezy import LemonSqueezyStore
 
-    stats = {"requests": 0, "order_pages": 0}
+    stats = {"requests": 0, "order_pages": 0, "key_lookups": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
         stats["requests"] += 1
@@ -232,6 +233,11 @@ def lemonsqueezy_api(orders: list[dict[str, Any]], countries: dict[str, str] | N
             last = max(1, -(-len(ordered) // page_size))
             page = ordered[(number - 1) * page_size:number * page_size]
             return httpx.Response(200, json={"data": page, "meta": {"page": {"currentPage": number, "lastPage": last}}})
+        if path == "/license-keys":
+            stats["key_lookups"] += 1
+            wanted = request.url.params.get("filter[order_id]")
+            found = [k for k in (license_keys or []) if str(k["attributes"]["order_id"]) == str(wanted)]
+            return httpx.Response(200, json={"data": found, "meta": {"page": {"currentPage": 1, "lastPage": 1}}})
         cid = path.removeprefix("/customers/")
         if cid != path and cid in (countries or {}):
             return httpx.Response(200, json={"data": {"type": "customers", "id": cid,
