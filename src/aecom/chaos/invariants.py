@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Callable
+from typing import Any, Callable
 
 from sqlalchemy import func, select
 
-from aecom.db import AgentRun, Campaign, EventRow, LedgerEntry, LicenseKey, Order, Refund, now, session
+from aecom.db import AgentRun, AuditLog, Campaign, EventRow, LedgerEntry, LicenseKey, Order, Refund, now, session
 
 Violation = dict[str, str]
 STUCK_AFTER = timedelta(minutes=30)
@@ -163,10 +163,34 @@ def refund_mirror_matches_provider(provider: dict[str, int]) -> list[Violation]:
     return out
 
 
+def no_unearned_promotion() -> list[Violation]:
+    """Every tool above stage 1 got there by a human promotion with evidence: the latest ``autonomy_stage`` audit
+    row of the tool is a ``promoted`` by ``human:<name>`` to the stage now in force. A stage written straight into
+    ops_settings (or kept after a later demotion) has no such row."""
+    from aecom import autonomy
+
+    promoted = autonomy.promoted_tools()
+    if not promoted:
+        return []
+    latest: dict[str, Any] = {}
+    with session() as s:
+        for row in s.scalars(select(AuditLog).where(AuditLog.action == "autonomy_stage").order_by(AuditLog.id)):
+            latest[(row.detail or {}).get("tool")] = row
+    out = []
+    for tool, stage in sorted(promoted.items()):
+        row = latest.get(tool)
+        detail = (row.detail or {}) if row else {}
+        if row is None or row.decision != "promoted" or not row.actor.startswith("human:") \
+                or not detail.get("evidence") or detail.get("to") != stage:
+            out.append(_v("no_unearned_promotion", f"{tool} is at stage {stage} without a human promotion "
+                          "with evidence in the audit log"))
+    return out
+
+
 CHECKS: dict[str, Callable[[], list[Violation]]] = {fn.__name__: fn for fn in (
     every_paid_order_delivered, every_delivered_order_emailed, ledger_balanced, no_key_on_two_orders,
     refunds_not_above_order_amount, no_order_without_ledger_lines, marketing_spend_within_budget, no_run_stuck_running,
-    no_dead_letters, every_mirrored_order_has_ledger_lines)}
+    no_dead_letters, every_mirrored_order_has_ledger_lines, no_unearned_promotion)}
 
 
 def check_all() -> list[Violation]:

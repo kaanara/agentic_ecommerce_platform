@@ -262,6 +262,57 @@ def _ls_lost(rng: random.Random, seed: int, orders: int) -> dict[str, Any]:
             "recovered": recovered, "api_requests": api["requests"], "store_violations": violations}
 
 
+# --------------------------------------------------------------------------- autonomy demotion (G6)
+AUTONOMY_ORDERS = 12
+AUTONOMY_REFUNDS = 3
+
+
+def _autonomy_demotion(rng: random.Random, seed: int, orders: int) -> dict[str, Any]:
+    """refund_order is promoted to stage 2 by a (fake) human; a refund wave pushes the 7-day refund rate over 10%;
+    the monitor loop must demote it to stage 1 with an audit row and a P2 incident, so EUR 120 escalates again."""
+    from sqlalchemy import select
+
+    from aecom import alerts, autonomy, monitors
+    from aecom.db import AuditLog, Incident, session
+    from aecom.policy.gate import evaluate
+    from aecom.store.adapter import get_store
+
+    def large_refund() -> str:
+        return evaluate("support", "refund_order", {"order_id": "x", "amount_eur": 120.0, "reason": "chaos"}).decision
+
+    ids = _place_orders(rng, AUTONOMY_ORDERS)
+    settle()
+    autonomy.set_stage("refund_order", 2, "chaos", "chaos scenario",
+                       evidence={"real_sales": 12, "approvals": 8, "approve_unchanged_rate": 0.95})
+    violations: list[Violation] = []
+
+    def expect(ok: bool, detail: str) -> None:
+        if not ok:
+            violations.append({"invariant": "autonomy_demotion", "detail": detail})
+
+    expect(large_refund() == "allow", "a EUR 120 refund should be allowed at stage 2")
+    for oid in rng.sample(ids, AUTONOMY_REFUNDS):
+        get_store().refund_order(oid, 1.0, "chaos refund wave")
+    settle()
+    saved = alerts.route, alerts.heartbeat, monitors.AUTO_DIAGNOSE
+    alerts.route, alerts.heartbeat, monitors.AUTO_DIAGNOSE = (lambda *a, **k: None), (lambda *a, **k: None), False
+    try:
+        summary = monitors.run_monitors()
+    finally:
+        alerts.route, alerts.heartbeat, monitors.AUTO_DIAGNOSE = saved
+    expect(autonomy.current_stage("refund_order") == 1, "refund_order is still above stage 1 after the monitors ran")
+    with session() as s:
+        demoted = s.scalars(select(AuditLog).where(AuditLog.action == "autonomy_stage", AuditLog.decision == "demoted",
+                                                   AuditLog.actor == "system")).all()
+        incident = s.scalars(select(Incident).where(Incident.monitor == "autonomy_demotion",
+                                                    Incident.subject == "refund_order")).all()
+    expect(len(demoted) == 1, f"expected one system demotion in the audit log, found {len(demoted)}")
+    expect(len(incident) == 1 and incident[0].severity == "P2", "expected one P2 autonomy_demotion incident")
+    expect(large_refund() == "escalate", "a EUR 120 refund should escalate again after the demotion")
+    return {"orders": len(ids), "refunds": AUTONOMY_REFUNDS, "demoted": summary.get("demoted", []),
+            "store_violations": violations}
+
+
 SCENARIOS: dict[str, tuple[str, Callable[[random.Random, int, int], dict[str, Any]]]] = {
     "delivery-crash": ("30% of deliveries crash; at-least-once retries must still deliver every order", _delivery_crash),
     "duplicate-paid": ("every order.paid arrives twice; no order may get two keys", _duplicate_paid),
@@ -276,6 +327,8 @@ SCENARIOS: dict[str, tuple[str, Callable[[random.Random, int, int], dict[str, An
                         "up matching the provider", _ls_out_of_order),
     "ls-lost": ("30% of Lemon Squeezy webhooks are lost; the reconciler's reconcile_recent recovers them from the "
                 "API", _ls_lost),
+    "autonomy-demotion": ("a promoted refund_order meets a refund wave (rate over 10%); the monitors demote it to "
+                          "stage 1 and a EUR 120 refund escalates again", _autonomy_demotion),
 }
 
 

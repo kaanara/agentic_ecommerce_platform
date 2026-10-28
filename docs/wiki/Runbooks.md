@@ -122,6 +122,33 @@ Inspect the database with `sqlite3 data/aecom.db` (or the file in `DATABASE_URL`
 | **Do NOT** | Use the kill switch as a long-term pause; edit `kill_switch_since`. |
 | **Auto-resolves** | When the kill switch is off. |
 
+## refund_abuse (P2)
+| | |
+|---|---|
+| **Means** | More than 10% of the orders of the last 7 days (at least 10 orders) have a refund (subject = `refunds`), or one customer has more than 2 refunds in 30 days (subject = the customer id). Promoted `refund_order` is demoted to stage 1 at the same time. |
+| **First checks** | `sqlite3 data/aecom.db "select r.id,r.order_id,r.amount_eur,r.reason,r.created_at,o.customer_id from commerce_refunds r join commerce_orders o on o.id=r.order_id order by r.created_at desc limit 30"`, the refund reasons, `uv run aecom incidents`. |
+| **Safe actions** | Find the cause (a broken product, a fraud ring, an agent refunding too freely) and fix it at the source. Keep `refund_order` at stage 1 until the rate is normal again; promote only with fresh evidence. `uv run aecom agents-pause on` if an agent keeps refunding. |
+| **Do NOT** | Re-promote `refund_order` while this is open; delete refunds to push the rate down. |
+| **Auto-resolves** | When the refund rate is back under 10% (or the customer drops out of the 30-day window). |
+
+## policy_deny_spike (P2)
+| | |
+|---|---|
+| **Means** | One actor was denied by the policy gate 20 or more times in the last hour (subject = the actor). An agent is looping on a forbidden action or probing the limits. All promoted actions are demoted to stage 1 at the same time. |
+| **First checks** | `sqlite3 data/aecom.db "select ts,action,detail from ops_audit_log where actor='<ACTOR>' and decision='deny' order by id desc limit 20"`, the agent's last runs on the Dashboard. |
+| **Safe actions** | Read the reasons. A prompt or persona bug becomes a fix with a regression test; a suspected prompt injection: `uv run aecom agents-pause on` and review the inputs. |
+| **Do NOT** | Loosen the policy to stop the denials. |
+| **Auto-resolves** | One hour after the actor's denials drop under 20. |
+
+## autonomy_demotion (P2)
+| | |
+|---|---|
+| **Means** | The system sent a promoted action (subject = the tool) back to stage 1 on its own; the detail has the reason: containment (safe mode or kill switch in the last 24 h), an open P1, refund abuse, a policy-deny spike, ROAS under 1.0 on EUR 100+ spend, or gross margin under 50% over 10+ orders. Per-call limits are back to the written policy; budgets and other hard caps never changed. |
+| **First checks** | `sqlite3 data/aecom.db "select ts,actor,decision,detail from ops_audit_log where action='autonomy_stage' order by id desc limit 10"`, `uv run aecom incidents`, the incident of the trigger named in the reason. |
+| **Safe actions** | Fix the cause, then acknowledge this incident. Promote again only through the normal human promotion with fresh evidence. |
+| **Do NOT** | Write `autonomy_stage:<tool>` into the settings by hand (the `no_unearned_promotion` chaos check flags it); promote while the cause is still there (it is demoted again on the next monitor run). |
+| **Auto-resolves** | Never; a human acknowledges or resolves it. |
+
 ## monitor_error (P2)
 | | |
 |---|---|

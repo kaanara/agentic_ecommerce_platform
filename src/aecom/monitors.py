@@ -240,11 +240,25 @@ def revenue_milestone(now: datetime) -> list[Problem]:
              "Acknowledge this incident when you have decided.")]
 
 
+def refund_abuse(now: datetime) -> list[Problem]:
+    """G6: refund rate over 10% (7 days, 10+ orders) or a customer with 3+ refunds in 30 days."""
+    from aecom import autonomy_guard
+
+    return autonomy_guard.refund_abuse_findings(now)
+
+
+def policy_deny_spike(now: datetime) -> list[Problem]:
+    """G6: one actor was denied by the policy gate 20+ times in the last hour (subject = the actor)."""
+    from aecom import autonomy_guard
+
+    return autonomy_guard.deny_spike_findings(now)
+
+
 MONITORS: dict[str, tuple[str, Monitor]] = {fn.__name__: (sev, fn) for sev, fn in (
     ("P1", undelivered_order), ("P1", unemailed_order), ("P1", ledger_imbalance), ("P1", duplicate_key),
     ("P1", order_dead_letter), ("P1", restock_failed),
     ("P2", other_dead_letter), ("P2", event_backlog), ("P2", stuck_run), ("P2", errors), ("P2", approval_ageing),
-    ("P2", kill_switch_long), ("P3", awaiting_consent_order),
+    ("P2", kill_switch_long), ("P2", refund_abuse), ("P2", policy_deny_spike), ("P3", awaiting_consent_order),
     ("P3", revenue_milestone))}
 MONITOR_ERROR = "monitor_error"
 
@@ -322,6 +336,18 @@ def diagnose_new(new_incidents: list[dict[str, Any]]) -> list[str]:
     return ran
 
 
+def _demote_check(now: datetime) -> list[dict[str, Any]]:
+    """G6: automatic demotion of promoted actions. Isolated: a failure is recorded, never raised."""
+    try:
+        from aecom import autonomy_guard
+
+        return autonomy_guard.check_and_demote(now)
+    except Exception as exc:
+        log.exception("autonomy demotion failed")
+        record_error("monitors", exc, context={"step": "autonomy_demotion"})
+        return []
+
+
 def run_monitors(now: datetime | None = None) -> dict[str, Any]:
     """Evaluate the monitors, alert for incidents that need it, then ping the external heartbeat."""
     t = now or db_now()
@@ -338,6 +364,7 @@ def run_monitors(now: datetime | None = None) -> dict[str, Any]:
     summary["alerted"] = alerted
     summary["safe_mode"] = _safe_mode_check(t)  # containment before diagnosis
     summary["diagnosed"] = diagnose_new(new)
+    summary["demoted"] = _demote_check(t)  # G6, last: it only lowers stages
     summary["open"] = incidents.open_counts()
     summary["heartbeat"] = alerts.heartbeat()
     return summary
