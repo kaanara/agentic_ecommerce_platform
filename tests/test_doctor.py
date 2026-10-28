@@ -118,3 +118,63 @@ def test_schema_reports_missing_column():
         conn.execute(text("ALTER TABLE ops_errors DROP COLUMN sentry_event_id"))
     c = by_name(doctor.run_checks())["schema"]
     assert c["status"] == "fail" and "ops_errors.sentry_event_id" in c["detail"]
+
+
+
+# --- C3: backup check ---------------------------------------------------------------------------------------
+
+def _backup_env(tmp_path, monkeypatch, target=None):
+    from aecom.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "backup_dir", tmp_path / "bk")
+    monkeypatch.setattr(get_settings(), "backup_target", target)
+
+
+def _make(age_h):
+    from datetime import UTC, datetime
+
+    from aecom import backup
+
+    return backup.create_backup(now=datetime.now(UTC) - timedelta(hours=age_h))
+
+
+def test_backup_check_no_backups_no_orders_is_ok(tmp_path, monkeypatch):
+    _backup_env(tmp_path, monkeypatch)
+    c = doctor.check_backup()
+    assert c["status"] == "ok" and "no data yet" in c["detail"]
+
+
+def test_backup_check_no_backups_with_orders_warns(demo, tmp_path, monkeypatch):
+    _backup_env(tmp_path, monkeypatch)
+    assert doctor.check_backup()["status"] == "warn"
+
+
+def test_backup_check_age_thresholds(demo, tmp_path, monkeypatch):
+    import shutil
+
+    _backup_env(tmp_path, monkeypatch, target=str(tmp_path / "usb"))
+    _make(1)
+    assert doctor.check_backup()["status"] == "ok"
+    shutil.rmtree(tmp_path / "bk")
+    _make(30)
+    assert doctor.check_backup()["status"] == "warn"
+    shutil.rmtree(tmp_path / "bk")
+    _make(80)
+    assert doctor.check_backup()["status"] == "fail"
+
+
+def test_backup_check_corrupted_newest_fails(demo, tmp_path, monkeypatch):
+    _backup_env(tmp_path, monkeypatch, target=str(tmp_path / "usb"))
+    p = _make(1)
+    with (p / "aecom.db").open("r+b") as f:
+        f.seek(300)
+        f.write(b"\xff" * 32)
+    c = doctor.check_backup()
+    assert c["status"] == "fail" and "damaged" in c["detail"]
+
+
+def test_backup_check_without_target_warns_when_orders(demo, tmp_path, monkeypatch):
+    _backup_env(tmp_path, monkeypatch)
+    _make(1)
+    c = doctor.check_backup()
+    assert c["status"] == "warn" and "only on this device" in c["detail"]

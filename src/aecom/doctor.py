@@ -184,8 +184,38 @@ def check_disk() -> Check:
     return _c("disk", WARN if free < DISK_WARN_BYTES else OK, detail)
 
 
+BACKUP_WARN_AGE = timedelta(hours=26)
+BACKUP_FAIL_AGE = timedelta(hours=72)
+
+
 def check_backup() -> Check:
-    return _c("backup", OK, "skipped: latest backup age is not checked yet (hosting decision pending)")
+    from datetime import UTC, datetime
+
+    from sqlalchemy import func, select
+
+    from aecom import backup
+    from aecom.db import Order, session
+
+    with session() as s:
+        has_orders = (s.scalar(select(func.count()).select_from(Order)) or 0) > 0
+    backups = backup.list_backups()
+    if not backups:
+        if has_orders:
+            return _c("backup", WARN, "no backups yet but orders exist: run `aecom backup` (or enable the timer)")
+        return _c("backup", OK, "no data yet, nothing to back up")
+    newest = backups[0]
+    problems = backup.check_hashes(newest)
+    if problems:
+        return _c("backup", FAIL, f"newest backup {newest.name} is damaged: {'; '.join(problems)}")
+    age = datetime.now(UTC) - backup.created_at(newest)
+    detail = f"newest backup {newest.name} is {_age(age)} old ({len(backups)} kept)"
+    status = FAIL if age > BACKUP_FAIL_AGE else WARN if age > BACKUP_WARN_AGE else OK
+    if status != OK:
+        detail += " (expected at least daily)"
+    if has_orders and not get_settings().backup_target:
+        detail += "; backups are only on this device (set BACKUP_TARGET)"
+        status = WARN if status == OK else status
+    return _c("backup", status, detail)
 
 
 def check_catalog_sync() -> Check:

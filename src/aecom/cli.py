@@ -23,6 +23,8 @@
     aecom registry revoke AGENT TOOL --by NAME [--note TEXT]   remove a tool grant (human-only; init re-adds TOOLS.md tools)
     aecom agents [list] | enable|disable ID   per-agent switch (reflexes such as delivery are unaffected)
     aecom store sync                       sync the store platform's products/variants into the local catalog
+    aecom backup [create] [--label NAME] [--dest DIR]   online backup; prints the backup directory as the last line
+    aecom backup list | verify [PATH] | restore PATH --yes   verify = restore drill in a temp dir, never the live DB
     aecom monitors run                     run all monitors once, raise/resolve incidents, send due alerts
     aecom provisioning [list]              vendors waiting for a human, with their numbered checklist
     aecom provisioning done VENDOR STEP_NO --by NAME | snooze VENDOR --days N
@@ -125,6 +127,12 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("action", nargs="?", default="run", choices=["run"])
     s = sub.add_parser("store")
     s.add_argument("action", choices=["sync"])
+    s = sub.add_parser("backup")
+    s.add_argument("action", nargs="?", default="create", choices=["create", "list", "verify", "restore"])
+    s.add_argument("path", nargs="?", help="verify/restore: backup directory (verify defaults to the newest)")
+    s.add_argument("--label", default=None, help="create: label such as pre-update (kept separately, newest 5)")
+    s.add_argument("--dest", default=None, help="backup directory (default BACKUP_DIR, data/backups)")
+    s.add_argument("--yes", action="store_true", help="restore: confirm replacing the live database")
     s = sub.add_parser("provisioning")
     s.add_argument("action", nargs="?", default="list", choices=["list", "done", "snooze"])
     s.add_argument("vendor", nargs="?")
@@ -332,6 +340,12 @@ def main(argv: list[str] | None = None) -> None:
         if not hasattr(store, "sync_catalog"):
             sys.exit(f"store adapter {store.name!r} has no catalog to sync (only STORE_ADAPTER=lemonsqueezy does)")
         _print(store.sync_catalog())
+    elif a.cmd == "backup":
+        from aecom import backup
+
+        code = backup.run_cli(a.action, a.path, label=a.label, dest=a.dest, yes=a.yes)
+        if code:
+            sys.exit(code)
     elif a.cmd == "monitors":
         from aecom.monitors import run_monitors
 

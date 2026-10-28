@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # SQLite by default so the PoC runs anywhere; set to postgresql+psycopg://... for docker-compose.
     database_url: str = f"sqlite:///{ROOT / 'data' / 'aecom.db'}"
 
+    # Backups (aecom backup): directory, and an optional off-device copy (local path or user@host:/path via rsync)
+    backup_dir: Path = ROOT / "data" / "backups"
+    backup_target: str | None = None
+
     # --- Integrations --------------------------------------------------------
     agentmail_api_key: str | None = None
     agentmail_base_url: str = "https://api.agentmail.to/v0"
