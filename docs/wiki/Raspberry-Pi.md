@@ -125,7 +125,7 @@ scripts/update.sh --check     # dry run: shows incoming commits and whether the 
 scripts/update.sh             # real update
 ```
 
-The update stops the three services for the whole window, takes a `pre-update` backup, pulls (fast-forward only), runs `uv sync` and `aecom init`, starts the services and waits up to 60 s for `aecom doctor`. On any failure it rolls back to the previous commit, restores the database from the backup if the schema revision changed, restarts the services and exits non-zero. Webhooks that arrive meanwhile are retried by Lemon Squeezy. `--force` allows a dirty tree; `--no-systemd` skips service control.
+The update stops the three services for the whole window, takes a `pre-update` backup, pulls (fast-forward only), runs `uv sync` and `aecom init`, and runs `aecom doctor` while the services are still stopped; only then does it start them. Because nothing accepts orders until the checks pass, a rollback (previous commit, database restored from the backup if the schema revision changed) can never discard orders; the replaced database is kept as `data/aecom.db.before-restore-<timestamp>`. If the rollback itself fails (checkout, `uv sync`, restore or service start), the script says exactly which step failed, says so plainly when the database was NOT restored, leaves the services stopped, and exits non-zero. Once the services are running again a late doctor failure is only reported, never rolled back, because the database already holds new orders. Webhooks that arrive meanwhile are retried by Lemon Squeezy. `--force` allows a dirty tree; `--no-systemd` skips service control.
 
 ## 9. After a power cut
 

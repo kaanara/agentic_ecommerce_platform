@@ -112,3 +112,14 @@ def test_docs_page_mentions_units_and_cloud_trigger():
     assert "Moving to the cloud" in t and "USD 20-30" in t
     assert "lexoffice" in t and "sevDesk" in t
     assert "update.sh --check" in t and "backup verify" in t and "aecom doctor" in t
+
+
+def test_update_rollback_is_honest_and_never_discards_new_orders():
+    t = (ROOT / "scripts" / "update.sh").read_text()
+    body = t[t.index("rollback() {"):t.index("# Services stay stopped")]
+    assert "NOT RESTORED" in body and "before-restore" in body
+    assert "ROLLBACK INCOMPLETE" in body and "left STOPPED" in body
+    assert "if ! svc start" in body
+    # doctor gates the service start; no ERR trap (no DB restore) once services run
+    assert t.index('STAGE="doctor"') < t.index("trap - ERR\nif ! svc start")
+    assert "NOT rolling back" in t

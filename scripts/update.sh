@@ -75,17 +75,33 @@ STAGE="start"
 rollback() {
   set +e
   trap - ERR
+  local problems=() restored="n/a (schema unchanged)"
   say "FAILED during: $STAGE - rolling back" >&2
-  svc stop
-  git checkout --quiet "$FROM_COMMIT"
-  uv sync
+  svc stop || problems+=("could not stop all services")
+  git checkout --quiet "$FROM_COMMIT" || problems+=("checkout of ${FROM_COMMIT:0:7} FAILED")
+  uv sync || problems+=("uv sync FAILED")
   TO_REV=$(alembic_rev)
   if [ -n "$BACKUP_PATH" ] && [ "$TO_REV" != "$FROM_REV" ]; then
-    say "schema revision changed ($FROM_REV -> $TO_REV): restoring database from $BACKUP_PATH"
-    uv run aecom backup restore "$BACKUP_PATH" --yes
+    say "schema revision changed ($FROM_REV -> $TO_REV): restoring database from $BACKUP_PATH" >&2
+    if uv run aecom backup restore "$BACKUP_PATH" --yes; then
+      restored="restored (the replaced DB is kept as data/aecom.db.before-restore-<timestamp>)"
+    else
+      restored="NOT RESTORED"
+      problems+=("database restore FAILED: the database was NOT restored from $BACKUP_PATH")
+    fi
   fi
-  svc start
-  say "ROLLED BACK to ${FROM_COMMIT:0:7}; backup: ${BACKUP_PATH:-none}; doctor: $DOCTOR" >&2
+  if [ "${#problems[@]}" -gt 0 ]; then
+    say "ROLLBACK INCOMPLETE; services left STOPPED. Problems:" >&2
+    printf '[update]   - %s\n' "${problems[@]}" >&2
+    say "backup: ${BACKUP_PATH:-none}; database: $restored; fix by hand, then start the aecom-* services" >&2
+    exit 1
+  fi
+  if ! svc start; then
+    say "ROLLED BACK to ${FROM_COMMIT:0:7} but starting the services FAILED; start them by hand" >&2
+    say "backup: ${BACKUP_PATH:-none}; database: $restored; doctor: $DOCTOR" >&2
+    exit 1
+  fi
+  say "ROLLED BACK to ${FROM_COMMIT:0:7}; backup: ${BACKUP_PATH:-none}; database: $restored; doctor: $DOCTOR" >&2
   exit 1
 }
 
@@ -116,21 +132,30 @@ STAGE="uv sync"
 uv sync
 STAGE="aecom init"
 uv run aecom init
-STAGE="starting services"
-svc start
-
+# Doctor runs while the services are still stopped, so nothing can write orders,
+# payments or licence keys between the check and a possible database restore.
 STAGE="doctor"
-OK=0
-for _ in $(seq 1 12); do
-  if uv run aecom doctor >/dev/null 2>&1; then OK=1; break; fi
-  sleep 5
-done
-if [ "$OK" -eq 1 ]; then
+if uv run aecom doctor >/dev/null 2>&1; then
   DOCTOR="ok"
 else
   DOCTOR="FAILED"
   false
 fi
 
+# Past this point the services accept webhooks again: never restore the database
+# after this (it would discard orders), only report.
 trap - ERR
+if ! svc start; then
+  say "doctor passed but starting the services FAILED; start them by hand (database NOT rolled back)" >&2
+  exit 1
+fi
+OK=0
+for _ in $(seq 1 12); do
+  if uv run aecom doctor >/dev/null 2>&1; then OK=1; break; fi
+  sleep 5
+done
+if [ "$OK" -ne 1 ]; then
+  say "services started but doctor FAILED within 60 s. NOT rolling back: the database now holds new orders. Run 'uv run aecom doctor', check the logs; backup: $BACKUP_PATH" >&2
+  exit 1
+fi
 say "summary: ${FROM_COMMIT:0:7} -> $(git rev-parse --short HEAD); backup: $BACKUP_PATH; doctor: $DOCTOR"
