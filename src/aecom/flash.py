@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from aecom import incidents, metrics, reports
@@ -30,6 +30,21 @@ DIGEST_SEVERITIES = ("P2", "P3")  # P1s alert on their own; P2s already emailed 
 
 def _title(i: dict[str, Any]) -> str:
     return f"{i['monitor']}: {i['subject']}" if i.get("subject") else i["monitor"]
+
+
+def _autonomy(ref: datetime) -> dict[str, Any]:
+    from sqlalchemy import select
+
+    from aecom import autonomy, trust
+    from aecom.db import AuditLog, session
+
+    since = ref - timedelta(hours=24)
+    with session() as s:
+        demotions = sum(1 for r in s.scalars(select(AuditLog).where(AuditLog.action == "autonomy_stage",
+                                                                    AuditLog.decision == "demoted",
+                                                                    AuditLog.ts >= since, AuditLog.ts <= ref)))
+    acts = sum(trust.stats(t, since)["autonomous_actions"] for t in trust.promotable_tools())
+    return {"autonomous_actions_24h": acts, "demotions_24h": demotions, "promoted": autonomy.promoted_tools()}
 
 
 def build_flash(now: datetime | None = None) -> dict[str, Any]:
@@ -55,6 +70,7 @@ def build_flash(now: datetime | None = None) -> dict[str, Any]:
         "incidents": {"open": {sev: len(titles) for sev, titles in by_sev.items()}, "titles": by_sev},
         "approvals": {"pending": len(pending),
                       "oldest_age_hours": round((ref - oldest).total_seconds() / 3600, 1) if oldest else None},
+        "autonomy": _autonomy(ref),
         "event_bus": bus_status(),
         "flags": {"kill_switch": kill_switch_on(), "agents_paused": agents_paused_on(),
                   "safe_mode": get_setting("safe_mode", "off") == "on"},
@@ -131,11 +147,19 @@ def _digest(data: dict[str, Any]) -> str:
     return "\n".join(lines) if lines else "None."
 
 
+def _autonomy_section(data: dict[str, Any]) -> str:
+    a = data["autonomy"]
+    promoted = ", ".join(f"{t} stage {n}" for t, n in sorted(a["promoted"].items())) or "none"
+    return (f"Autonomous actions (24h): {a['autonomous_actions_24h']}\nDemotions (24h): {a['demotions_24h']}\n"
+            f"Promoted actions: {promoted}")
+
+
 def _body(commentary: str, data: dict[str, Any], fallback_reason: str | None) -> str:
     parts = [commentary]
     if fallback_reason:
         parts.append(f"(Commentary unavailable: {fallback_reason}.)")
-    parts += ["", f"Numbers for {data['date']}", _table(data), "", "Open issues (P2/P3)", _digest(data)]
+    parts += ["", f"Numbers for {data['date']}", _table(data), "", "Open issues (P2/P3)", _digest(data),
+              "", "Autonomy", _autonomy_section(data)]
     return mask("\n".join(parts))
 
 

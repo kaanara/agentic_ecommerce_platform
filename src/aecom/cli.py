@@ -28,6 +28,9 @@
     aecom monitors run                     run all monitors once, raise/resolve incidents, send due alerts
     aecom provisioning [list]              vendors waiting for a human, with their numbered checklist
     aecom provisioning done VENDOR STEP_NO --by NAME | snooze VENDOR --days N | confirm VENDOR --by NAME
+    aecom autonomy [report]                trust report: stage, approval record and promotion eligibility per action
+    aecom autonomy promote|demote TOOL --by NAME [--reason TEXT]   evidence-gated promotion / demotion to stage 1
+    aecom autonomy log [--days N]          stage changes and autonomous actions
     aecom doctor [--json]                  health report (paste into an issue); exit 1 if any check fails
     aecom agentmail keys|create-key NAME|inboxes   (admin, uses AGENTMAIL_API_KEY)
     aecom agentmail poll                   fetch unread inbound mail → Support (same as the scheduler job)
@@ -123,6 +126,12 @@ def main(argv: list[str] | None = None) -> None:
     s = sub.add_parser("agents")
     s.add_argument("action", nargs="?", default="list", choices=["list", "enable", "disable"])
     s.add_argument("agent_id", nargs="?")
+    s = sub.add_parser("autonomy")
+    s.add_argument("action", nargs="?", default="report", choices=["report", "promote", "demote", "log"])
+    s.add_argument("tool", nargs="?")
+    s.add_argument("--by", default="", help="who is acting (required for promote/demote)")
+    s.add_argument("--reason", default="")
+    s.add_argument("--days", type=int, default=7, help="log: how far back")
     s = sub.add_parser("monitors")
     s.add_argument("action", nargs="?", default="run", choices=["run"])
     s = sub.add_parser("store")
@@ -268,6 +277,8 @@ def main(argv: list[str] | None = None) -> None:
                 _print(fn(a.id, a.by, a.note))
             except ValueError as e:
                 sys.exit(str(e))
+    elif a.cmd == "autonomy":
+        _autonomy(a)
     elif a.cmd == "registry":
         from aecom.persona.loader import agent_ids
         from aecom.registry import tools as registry_tools
@@ -460,6 +471,34 @@ def _chaos(name: str, seed: int, use_configured_db: bool) -> None:
                 db.reset_engine()
     if failed:
         sys.exit(1)
+
+
+def _autonomy(a: argparse.Namespace) -> None:
+    from aecom import trust
+
+    if a.action == "report":
+        print(f"{'action':18} {'stage':5} {'escal':>5} {'unchg':>6} {'rej':>6}  eligibility")
+        for r in trust.report():
+            st = r["stats"]
+            pct = lambda v: "-" if v is None else f"{v:.0%}"  # noqa: E731
+            verdict = f"yes -> stage {r['next_stage']}" if r["eligible"] else "no: " + "; ".join(r["missing"])
+            print(f"{r['tool']:18} {r['stage']:<5} {st['escalations']:>5} {pct(st['unchanged_rate']):>6} "
+                  f"{pct(st['reject_rate']):>6}  {verdict}")
+    elif a.action == "log":
+        _print(trust.log(a.days))
+    else:
+        if not (a.tool and a.by.strip()):
+            print(f"usage: aecom autonomy {a.action} TOOL --by NAME [--reason TEXT]; --by is required", file=sys.stderr)
+            sys.exit(2)
+        try:
+            if a.action == "promote":
+                stage = trust.promote(a.tool, a.by, a.reason)
+            else:
+                stage = trust.demote(a.tool, a.by, a.reason)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            sys.exit(2)
+        print(f"{a.tool}: stage {stage}")
 
 
 def _print_drain(attempted: int) -> None:

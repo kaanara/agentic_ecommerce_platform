@@ -124,7 +124,7 @@ def _ai(start: datetime, end: datetime, kpis: dict[str, Any]) -> dict[str, Any]:
             "runs": sum(r["runs"] for r in per_agent), "per_agent": per_agent}
 
 
-CONTROL_ACTIONS = ("kill_switch", "agents_paused", "safe_mode")
+CONTROL_ACTIONS = ("kill_switch", "agents_paused", "safe_mode", "autonomy_stage")
 GDPR_ACTIONS = {"marketing_opt_in": "opt_ins", "marketing_unsubscribe": "unsubscribes",
                 "marketing_suppressed": "suppressions"}
 PROVISIONING_ACTIONS = ("provisioning", "account_need")
@@ -157,7 +157,10 @@ def _governance(start: datetime, end: datetime) -> dict[str, Any]:
         resolved = Counter(s.scalars(select(Incident.severity).where(Incident.resolved_at.is_not(None),
                                                                      *_between(Incident.resolved_at, start, end))))
         suppressed = Counter(s.scalars(select(Suppression.reason).where(*_between(Suppression.created_at, start, end))))
-    controls = [{"ts": r["ts"], "actor": r["actor"], "setting": r["action"], "state": r["decision"]}
+    controls = [{"ts": r["ts"], "actor": r["actor"], "setting": r["action"], "state": r["decision"],
+                 **({"tool": str(r["detail"].get("tool") or ""), "from_stage": r["detail"].get("from"),
+                     "to_stage": r["detail"].get("to"), "reason": str(r["detail"].get("reason") or "")}
+                    if r["action"] == "autonomy_stage" else {})}
                 for r in _audit_rows(start, end, CONTROL_ACTIONS)]
     gdpr = Counter(GDPR_ACTIONS[r["action"]] for r in _audit_rows(start, end, GDPR_ACTIONS))
     provisioning = [{"ts": r["ts"], "actor": r["actor"], "action": r["action"], "decision": r["decision"],
@@ -352,7 +355,10 @@ def _governance_lines(d: dict[str, Any]) -> list[str]:
     by_agent = ", ".join(f"{agent} {n}" for agent, n in den["by_agent"].items())
     lines.append(f"Policy denies: {den['total']}" + (f" ({by_agent})." if by_agent else "."))
     lines.append(f"Control changes: {c['changes']} (kill switch {c['kill_switch']}, agents paused {c['agents_paused']}, "
-                 f"safe mode {c['safe_mode']}).")
+                 f"safe mode {c['safe_mode']}, autonomy stage {c['autonomy_stage']}).")
+    for e in c["events"]:
+        if e["setting"] == "autonomy_stage":
+            lines.append(f"Autonomy: {e['tool']} {e['state']} by {e['actor']}" + (f" ({e['reason']})." if e["reason"] else "."))
     o, r = inc["opened"], inc["resolved"]
     lines.append(f"Incidents opened P1/P2/P3: {o['P1']}/{o['P2']}/{o['P3']}; resolved: {r['P1']}/{r['P2']}/{r['P3']}.")
     lines.append(f"GDPR: {g['opt_ins']} opt-ins, {g['unsubscribes']} unsubscribes, {g['suppressions']} suppressions.")
