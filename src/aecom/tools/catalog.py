@@ -376,11 +376,19 @@ def record_decision(category: str, title: str, choice: str, rationale: str, alte
 
 @tool("exec", side_effect=True)
 def request_provisioning(vendor: str, category: str, purpose: str, steps: list[str], credential_env: str,
-                         monthly_cost_eur: float = 0.0) -> dict:
+                         monthly_cost_eur: float = 0.0, activation: str = "", activation_reason: str = "") -> dict:
     """Ask a human to create an account / API credentials at a vendor. Agents never sign up, accept terms or pay.
     `credential_env` = env var name the human should fill in .env (e.g. SHOPIFY_ADMIN_TOKEN).
-    A vendor that is already provisioning or active is left as it is."""
-    from aecom.provisioning import rejection_reason
+    A vendor that is already provisioning or active is left as it is.
+    `activation` proposes how the vendor goes active once its credential works: "auto" (only for well-known vendors the
+    system can verify, or where a wrong credential is harmless) or "human_confirm" (a human runs `aecom provisioning
+    confirm`); "" lets the system decide (auto if it can verify the vendor, else human_confirm). Give a one-sentence
+    `activation_reason`. Both are part of this request's args, so the human sees and may edit them on the approval card:
+    approving the request approves the mode. You can never activate a vendor yourself."""
+    from aecom.provisioning import ACTIVATION_MODES, rejection_reason
+
+    if activation not in ("", *ACTIVATION_MODES):
+        raise ValueError(f"activation must be '', 'auto' or 'human_confirm', got {activation!r}")
 
     with session() as s:
         v = s.scalars(select(Vendor).where(Vendor.name == vendor)).first()
@@ -392,6 +400,8 @@ def request_provisioning(vendor: str, category: str, purpose: str, steps: list[s
             v = Vendor(name=vendor, category=category, monthly_cost_eur=monthly_cost_eur)
             s.add(v)
         v.status, v.credential_env, v.checklist = "provisioning", credential_env, []
+        v.activation, v.activation_reason = activation or None, activation_reason or None
+        v.verified_at = None
         v.notes = purpose + "\n\nSteps:\n" + "\n".join(f"- {x}" for x in steps)
     out: dict[str, Any] = {"vendor": vendor, "status": "provisioning", "credential_env": credential_env}
     if previously == "rejected":

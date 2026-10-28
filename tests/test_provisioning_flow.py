@@ -10,7 +10,7 @@ import pytest
 from aecom import approvals, provisioning
 from aecom.bus.events import drain
 from aecom.cli import main
-from aecom.db import AuditLog, ErrorRow, EventRow, Incident, OutboxEmail, Vendor, now, session
+from aecom.db import AgentRun, Approval, AuditLog, ErrorRow, EventRow, Incident, OutboxEmail, Vendor, now, session
 from aecom.handlers import run_sync
 from aecom.llm import Script
 from aecom.policy.gate import gate_builtin
@@ -238,7 +238,8 @@ def test_anthropic_verifier_sends_the_right_headers(monkeypatch):
 
 
 def test_unknown_vendor_is_presence_only_with_a_warning(monkeypatch):
-    provision()
+    # U3: an unknown vendor now defaults to human_confirm, so this asserts the explicit "auto" path
+    provision({**REQUEST, "activation": "auto", "activation_reason": "harmless read-only token"})
     monkeypatch.setenv("ACME_ADS_TOKEN", SECRET)
     monkeypatch.setattr(httpx, "get", FakeHttp({}))  # no network call for an unknown vendor
     assert provisioning.check_credentials()["activated"] == ["Acme Ads"]
@@ -276,3 +277,123 @@ def test_the_credential_value_never_appears_anywhere(monkeypatch, caplog, capsys
         stored += [f"{v.notes}{v.checklist}{v.last_check_error}" for v in s.scalars(select(Vendor))]
     assert len(emails("does not work")) == 1 and emails("[reminder]")
     assert not any(SECRET in x for x in stored)
+
+
+# ----------------------------------------------------------------------------- U3: how a vendor becomes active
+def cli(monkeypatch, capsys, *argv) -> str:
+    monkeypatch.setattr("sys.argv", ["aecom", *argv])
+    main()
+    return capsys.readouterr().out
+
+
+def waiting_unknown_vendor(monkeypatch) -> None:
+    provision()
+    monkeypatch.setenv("ACME_ADS_TOKEN", SECRET)
+    monkeypatch.setattr(httpx, "get", FakeHttp({}))
+
+
+def test_unknown_vendor_waits_for_a_human_and_asks_once(monkeypatch):
+    waiting_unknown_vendor(monkeypatch)
+    assert provisioning.effective_activation(vendor()) == "human_confirm"
+    before = len(emails())
+    assert provisioning.check_credentials()["activated"] == []
+    v = vendor()
+    assert v.status == "provisioning" and v.verified_at is not None
+    assert any(c["step"] == provisioning.CONFIRM_STEP and not c["done"] for c in v.checklist)
+    asked = emails("Confirm Acme Ads")
+    assert len(asked) == 1 and len(emails()) == before + 1
+    assert 'aecom provisioning confirm "Acme Ads" --by NAME' in asked[0].body
+    with session() as s:
+        inc = s.scalars(select(Incident).where(Incident.monitor == "provisioning_action",
+                                               Incident.subject == "Acme Ads")).one()
+        assert "aecom provisioning confirm" in inc.detail and inc.status != "resolved"
+        assert s.scalars(select(EventRow).where(EventRow.topic == "vendor.provisioned")).all() == []
+    for _ in range(3):  # the 15-minute checks stay quiet
+        provisioning.check_credentials()
+    assert len(emails("Confirm Acme Ads")) == 1 and vendor().status == "provisioning"
+
+
+def test_confirm_cli_needs_by_then_activates_and_hands_off(monkeypatch, capsys):
+    waiting_unknown_vendor(monkeypatch)
+    provisioning.check_credentials()
+    listed = cli(monkeypatch, capsys, "provisioning", "list")
+    assert "human_confirm" in listed and "waiting_for_your_confirmation" in listed and SECRET not in listed
+    with pytest.raises(SystemExit):
+        cli(monkeypatch, capsys, "provisioning", "confirm", "Acme Ads")  # no --by
+    assert vendor().status == "provisioning"
+    out = cli(monkeypatch, capsys, "provisioning", "confirm", "Acme Ads", "--by", "kaan", "--note", "looked fine")
+    assert "active" in out and SECRET not in out
+    assert vendor().status == "active"
+    foreman = [r for r in run_sync_runs() if r.agent_id == "foreman"]
+    assert len(foreman) == 1 and "Acme Ads is provisioned" in foreman[0].task
+    with session() as s:
+        assert s.scalars(select(EventRow).where(EventRow.topic == "vendor.provisioned")).one().payload["vendor"] == "Acme Ads"
+        inc = s.scalars(select(Incident).where(Incident.monitor == "provisioning_action")).one()
+        assert inc.status == "resolved"
+        actors = {a.actor for a in s.scalars(select(AuditLog).where(AuditLog.decision.in_(["confirmed", "activated"])))}
+        assert "human:kaan" in actors
+        assert SECRET not in " ".join(str(a.detail) for a in s.scalars(select(AuditLog)))
+
+
+def run_sync_runs():
+    with session() as s:
+        return list(s.scalars(select(AgentRun)))
+
+
+def test_confirm_refuses_without_a_working_credential(monkeypatch):
+    provision()  # no credential in the environment
+    monkeypatch.delenv("ACME_ADS_TOKEN", raising=False)
+    with pytest.raises(ValueError, match="not set"):
+        provisioning.confirm("Acme Ads", "kaan")
+    with pytest.raises(ValueError, match="--by"):
+        provisioning.confirm("Acme Ads", " ")
+    provision(LS)
+    monkeypatch.setenv("LEMONSQUEEZY_API_KEY", SECRET)
+    monkeypatch.setattr(httpx, "get", FakeHttp({"/v1/users/me": 401}))
+    with pytest.raises(ValueError, match="fails"):
+        provisioning.confirm("Lemon Squeezy", "kaan")
+    assert vendor().status == "provisioning" and vendor("Lemon Squeezy").status == "provisioning"
+
+
+def test_explicit_auto_for_an_unknown_vendor_activates_with_the_warning(monkeypatch):
+    provision({**REQUEST, "activation": "auto", "activation_reason": "harmless"})
+    monkeypatch.setenv("ACME_ADS_TOKEN", SECRET)
+    assert provisioning.check_credentials()["activated"] == ["Acme Ads"]
+    v = vendor()
+    assert v.status == "active" and v.last_check_error.startswith("warning:") and v.activation_reason == "harmless"
+    assert not emails("Confirm Acme Ads")
+
+
+def test_known_vendor_defaults_to_auto_and_explicit_human_confirm_wins(monkeypatch):
+    provision(LS)
+    assert vendor("Lemon Squeezy").activation is None
+    assert provisioning.effective_activation(vendor("Lemon Squeezy")) == "auto"
+    monkeypatch.setitem(provisioning.VERIFIERS, "lemonsqueezy", lambda v, c: (True, None, []))
+    monkeypatch.setenv("LEMONSQUEEZY_API_KEY", SECRET)
+    assert provisioning.check_credentials()["activated"] == ["Lemon Squeezy"]
+    assert provisioning.effective_activation({"name": "Lemon Squeezy", "category": "platform",
+                                              "activation": "human_confirm"}) == "human_confirm"
+
+
+def test_invalid_activation_is_rejected_and_values_show_in_the_approval():
+    out = run_sync(gate_builtin("request_provisioning", "ceo").ainvoke({**REQUEST, "activation": "yolo"}))
+    assert out.startswith("ESCALATED"), out  # the gate parks it; the tool refuses when executed
+    approval_id = out.split("id=")[1].split(")")[0]
+    approvals.approve(approval_id, "tester")  # the tool refuses on execution: the approval fails, nothing is created
+    with session() as s:
+        failed = s.get(Approval, approval_id)
+        assert failed.status == "failed" and "activation must be" in failed.result
+    assert not [v for v in all_vendors() if v.name == "Acme Ads"]
+    out = run_sync(gate_builtin("request_provisioning", "ceo").ainvoke(
+        {**REQUEST, "activation": "human_confirm", "activation_reason": "unknown vendor"}))
+    with session() as s:
+        a = s.get(Approval, out.split("id=")[1].split(")")[0])
+        assert a.args["activation"] == "human_confirm" and a.args["activation_reason"] == "unknown vendor"
+    approvals.approve(a.id, "tester")
+    v = vendor()
+    assert (v.activation, v.activation_reason) == ("human_confirm", "unknown vendor")
+
+
+def all_vendors():
+    with session() as s:
+        return list(s.scalars(select(Vendor)))

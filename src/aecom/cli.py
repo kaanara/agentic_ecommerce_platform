@@ -27,7 +27,7 @@
     aecom backup list | verify [PATH] | restore PATH --yes   verify = restore drill in a temp dir, never the live DB
     aecom monitors run                     run all monitors once, raise/resolve incidents, send due alerts
     aecom provisioning [list]              vendors waiting for a human, with their numbered checklist
-    aecom provisioning done VENDOR STEP_NO --by NAME | snooze VENDOR --days N
+    aecom provisioning done VENDOR STEP_NO --by NAME | snooze VENDOR --days N | confirm VENDOR --by NAME
     aecom doctor [--json]                  health report (paste into an issue); exit 1 if any check fails
     aecom agentmail keys|create-key NAME|inboxes   (admin, uses AGENTMAIL_API_KEY)
     aecom agentmail poll                   fetch unread inbound mail → Support (same as the scheduler job)
@@ -134,11 +134,12 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--dest", default=None, help="backup directory (default BACKUP_DIR, data/backups)")
     s.add_argument("--yes", action="store_true", help="restore: confirm replacing the live database")
     s = sub.add_parser("provisioning")
-    s.add_argument("action", nargs="?", default="list", choices=["list", "done", "snooze"])
+    s.add_argument("action", nargs="?", default="list", choices=["list", "done", "snooze", "confirm"])
     s.add_argument("vendor", nargs="?")
     s.add_argument("step", nargs="?", type=int)
     s.add_argument("--by", default="")
     s.add_argument("--days", type=int, default=3)
+    s.add_argument("--note", default="")
     s = sub.add_parser("doctor")
     s.add_argument("--json", action="store_true", help="machine-readable report")
     s = sub.add_parser("scheduler")
@@ -329,6 +330,10 @@ def main(argv: list[str] | None = None) -> None:
                 if a.step is None or not a.by.strip():
                     sys.exit("usage: aecom provisioning done VENDOR STEP_NO --by NAME")
                 _print(provisioning.tick_step(a.vendor, a.step, a.by))
+            elif a.action == "confirm":
+                if not a.by.strip():
+                    sys.exit("usage: aecom provisioning confirm VENDOR --by NAME [--note ...]")
+                _print(provisioning.confirm(a.vendor, a.by, a.note))
             else:
                 _print(provisioning.snooze(a.vendor, a.days, by=a.by or "cli-user"))
         except ValueError as e:

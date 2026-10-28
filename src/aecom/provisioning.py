@@ -5,9 +5,14 @@
       rejected  → vendor 'rejected'; the reason is kept in the CEO's memory so it isn't requested again blindly
     check_credentials (every 15 min):
       credential set → one read-only API call by the vendor's verifier (VERIFIERS)
-        ok   → 'active' (+ warnings) → email → Foreman integrates it; the P3 incident resolves
+        ok   → mode 'auto': 'active' (+ warnings) → email → Foreman integrates it; the P3 incident resolves
+               mode 'human_confirm': stays 'provisioning' (verified_at set), ONE email asking the human to run
+               `aecom provisioning confirm VENDOR --by NAME`, which activates and hands off the same way
         fail → stays 'provisioning', masked error in last_check_error, the human gets an email
       still waiting 3+ days after approval → reminder email every 3 days (`aecom provisioning snooze` defers it)
+
+The mode (U3) is proposed by the CEO inside request_provisioning and approved with it by the human; unset, it is
+'auto' for vendors with a built-in verifier and 'human_confirm' for unknown ones. No agent can activate a vendor.
 
 Agents never sign up or handle credentials. The value is read from SecretsProvider only to make the verification
 call; it never goes into a log, an audit row, an event, an email, the DB or a prompt (only the env var name does).
@@ -38,6 +43,8 @@ from aecom.secrets import secrets
 log = logging.getLogger(__name__)
 db_now = now  # `now` is also a parameter name below
 
+ACTIVATION_MODES = ("auto", "human_confirm")
+CONFIRM_STEP = "Confirm the vendor works (human)"
 MEMORY_NAMESPACE = "provisioning"
 FOLLOWUP_MONITOR = "provisioning_followup"
 ACTION_MONITOR = "provisioning_action"  # P3 while a human still has to provision a vendor
@@ -147,7 +154,9 @@ def _instructions(vendor: str, args: dict[str, Any], checklist: list[dict[str, A
         "Scopes / permissions the steps ask for:",
         *[f"  - {s}" for s in scopes],
         "",
-        "The app checks the credential every 15 minutes with one read-only call and activates the vendor when it works.",
+        "The app checks the credential every 15 minutes with one read-only call. "
+        + ("It then waits for your `aecom provisioning confirm` before activating the vendor."
+           if args.get("activation") == "human_confirm" else "The vendor is activated when it works."),
         f'Tick a step:  uv run aecom provisioning done "{vendor}" STEP_NO --by NAME',
         f'Snooze:       uv run aecom provisioning snooze "{vendor}" --days N',
     ])
@@ -214,6 +223,8 @@ def list_provisioning() -> list[dict[str, Any]]:
     """Vendors waiting for a human, with their numbered checklist (never the credential, only its env var name)."""
     with session() as s:
         return [{"vendor": v.name, "category": v.category, "credential_env": v.credential_env,
+                 "activation": effective_activation(v), "activation_reason": v.activation_reason,
+                 "waiting_for_your_confirmation": bool(v.verified_at) and effective_activation(v) == "human_confirm",
                  "monthly_cost_eur": v.monthly_cost_eur, "last_check_error": v.last_check_error,
                  "last_reminded_at": v.last_reminded_at,
                  "checklist": [{"no": n, "step": c.get("step"), "done": bool(c.get("done"))}
@@ -300,6 +311,19 @@ VERIFIERS: dict[str, Callable[[dict[str, Any], str], Verdict]] = {
 }
 
 
+def has_verifier(vendor: dict[str, Any]) -> bool:
+    return bool(VERIFIERS.get(_key(vendor.get("name", ""))) or VERIFIERS.get(_key(vendor.get("category", ""))))
+
+
+def effective_activation(vendor: Vendor | dict[str, Any]) -> str:
+    """'auto' | 'human_confirm'. An explicit value wins; otherwise auto if a built-in verifier exists, else human."""
+    get = vendor.get if isinstance(vendor, dict) else lambda k, d=None: getattr(vendor, k, d)
+    explicit = get("activation")
+    if explicit in ACTIVATION_MODES:
+        return explicit
+    return "auto" if has_verifier({"name": get("name") or "", "category": get("category") or ""}) else "human_confirm"
+
+
 def _scrub(text: str, credential: str | None) -> str:
     if credential:
         text = text.replace(credential, MASK)
@@ -336,7 +360,8 @@ def check_credentials(now: datetime | None = None) -> dict[str, Any]:
     t = now or db_now()
     with session() as s:
         pending = [{"name": v.name, "category": v.category, "credential_env": v.credential_env,
-                    "last_check_error": v.last_check_error, "last_reminded_at": v.last_reminded_at}
+                    "last_check_error": v.last_check_error, "last_reminded_at": v.last_reminded_at,
+                    "activation": v.activation}
                    for v in s.scalars(select(Vendor).where(Vendor.status == "provisioning"))]
     activated: list[str] = []
     reminded: list[str] = []
@@ -368,6 +393,8 @@ def _check_one(snap: dict[str, Any]) -> bool:
         ok, error, warnings = verify(snap)
     except Exception as exc:  # a broken check must not stop the others; the message is not the credential
         ok, error, warnings = False, f"verification failed: {type(exc).__name__}", []
+    mode = effective_activation(snap)
+    first_wait = False
     with session() as s:
         v = s.scalars(select(Vendor).where(Vendor.name == name)).first()
         if v is None or v.status != "provisioning":
@@ -375,11 +402,15 @@ def _check_one(snap: dict[str, Any]) -> bool:
         if not ok:
             changed = v.last_check_error != error
             v.last_check_error = error
-        else:
-            v.status, v.verified_at = "active", db_now()
+            v.verified_at = None  # no longer a verified credential, so no longer "waiting for confirmation"
+        elif mode == "human_confirm":
+            first_wait = v.verified_at is None
+            v.verified_at = v.verified_at or db_now()
             v.last_check_error = ("warning: " + "; ".join(warnings)) if warnings else None
-            publish("vendor.provisioned", {"vendor": name, "category": snap["category"]},
-                    source="provisioning", session=s)
+            if first_wait and not any(c.get("step") == CONFIRM_STEP for c in v.checklist or []):
+                v.checklist = [*(v.checklist or []), {"step": CONFIRM_STEP, "done": False}]
+        else:
+            _activate(s, v, warnings)
     if not ok:
         if present and changed:  # a credential is there but does not work: tell the human once per distinct error
             audit("system", "provisioning", "check_failed", {"vendor": name, "credential_env": env, "error": error})
@@ -389,13 +420,72 @@ def _check_one(snap: dict[str, Any]) -> bool:
                     "scopes/permissions it was created with); the next check runs within 15 minutes.\n"
                     f"Checklist: uv run aecom provisioning list")
         return False
-    audit("system", "provisioning", "activated", {"vendor": name, "credential_env": env, "warnings": warnings})
+    if mode == "human_confirm":
+        if first_wait:
+            _await_confirmation(snap, warnings)
+        return False
+    _announce_active(snap, warnings, by=None)
+    return True
+
+
+def _activate(s: Any, v: Vendor, warnings: list[str]) -> None:
+    v.status, v.verified_at = "active", db_now()
+    v.last_check_error = ("warning: " + "; ".join(warnings)) if warnings else None
+    publish("vendor.provisioned", {"vendor": v.name, "category": v.category}, source="provisioning", session=s)
+
+
+def _announce_active(snap: dict[str, Any], warnings: list[str], by: str | None) -> None:
+    name, env = snap["name"], snap["credential_env"]
+    audit(f"human:{by}" if by else "system", "provisioning", "activated",
+          {"vendor": name, "credential_env": env, "warnings": warnings, "confirmed_by": by})
     body = f"{name} passed its credential check ({env}) and is now active. The Foreman integrates it next."
     if warnings:
         body += "\n\nWarnings:\n" + "\n".join(f"- {w}" for w in warnings)
     _notify(f"[provisioning] {name} is active" + (" (with warnings)" if warnings else ""), body)
     _foreman_followup(snap)
-    return True
+
+
+def _await_confirmation(snap: dict[str, Any], warnings: list[str]) -> None:
+    """Credential verified but the vendor needs a human tick: update the P3 incident and email once."""
+    name, env = snap["name"], snap["credential_env"]
+    cmd = f'uv run aecom provisioning confirm "{name}" --by NAME'
+    msg = f"The credential for {name} ({env}) was found and verified, but {name} needs your confirmation. Run: {cmd}"
+    if warnings:
+        msg += "\n\nWarnings:\n" + "\n".join(f"- {w}" for w in warnings)
+    raise_incident(ACTION_MONITOR, "P3", subject=name, detail=f"Waiting for your confirmation: {msg}")
+    audit("system", "provisioning", "awaiting_confirmation", {"vendor": name, "credential_env": env,
+                                                              "warnings": warnings})
+    _notify(f"[action needed] Confirm {name}", msg)
+
+
+def confirm(vendor: str, by: str, note: str = "") -> dict[str, Any]:
+    """A human activates a provisioning vendor whose credential works. Then the usual hand-off to the Foreman."""
+    if not by.strip():
+        raise ValueError("--by NAME is required")
+    with session() as s:
+        v = _find(s, vendor)
+        if v.status != "provisioning":
+            raise ValueError(f"{v.name} is {v.status}, not waiting for provisioning")
+        snap = {"name": v.name, "category": v.category, "credential_env": v.credential_env}
+    if not snap["credential_env"] or not secrets.has(snap["credential_env"]):
+        raise ValueError(f"{snap['name']}: the credential in {snap['credential_env'] or '(no env var)'} is not set yet")
+    ok, error, warnings = verify(snap)
+    if not ok:
+        raise ValueError(f"{snap['name']}: the credential check fails ({error}); fix the credential first")
+    with session() as s:
+        v = _find(s, snap["name"])
+        if v.status != "provisioning":
+            raise ValueError(f"{v.name} is {v.status}, not waiting for provisioning")
+        steps = [dict(c) for c in v.checklist or []]
+        for c in steps:
+            if c.get("step") == CONFIRM_STEP:
+                c["done"] = True
+        v.checklist = steps
+        _activate(s, v, warnings)
+    audit(f"human:{by}", "provisioning", "confirmed", {"vendor": snap["name"], "note": note})
+    _announce_active(snap, warnings, by=by)
+    resolve_absent(ACTION_MONITOR, _provisioning_names())
+    return {"vendor": snap["name"], "status": "active", "confirmed_by": by, "warnings": warnings}
 
 
 def _provisioning_names() -> list[str]:

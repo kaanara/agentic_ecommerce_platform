@@ -22,7 +22,15 @@ Agents **never** create accounts, accept terms, enter payment details or handle 
    | anything else | none | presence only, with a warning that it wasn't verified |
 
    - **Failure** (non-200, timeout, network error): the vendor stays `provisioning`, the masked error goes to `last_check_error`, and the human gets one email per distinct error saying what's wrong. A missing credential is not an error email (the reminders cover it). Nothing raises out of `check_credentials`.
-   - **Success**: the vendor becomes `active` with `verified_at`; warnings are kept in `last_check_error` as `warning: ...` and emailed with the "is active" message; `vendor.provisioned` is published; the `provisioning_action` incident resolves; the Foreman gets the integration task (propose the MCP server or adapter; `STORE_ADAPTER=<platform>` for a store). If the Foreman is disabled or fails, a P3 incident `provisioning_followup` is raised instead.
+   - **Activation mode (U3).** `request_provisioning` takes `activation` (`auto` | `human_confirm` | empty) and `activation_reason`. The CEO proposes them; they are part of the approval args, so the human sees them on the approval card, can edit them, and approving the request approves the mode. Empty means: `auto` if a built-in verifier exists for the vendor, `human_confirm` for unknown vendors. Agents cannot activate a vendor.
+   - **`human_confirm` success**: the vendor stays `provisioning` with `verified_at` set, the `provisioning_action` incident says it is waiting, ONE email asks the human to run the command below (not repeated on later checks) and the checklist gets the step "Confirm the vendor works (human)". `aecom provisioning list` shows the mode and `waiting_for_your_confirmation`.
+
+     ```
+     uv run aecom provisioning confirm "Acme Ads" --by kaan [--note "..."]   # audited as human:kaan
+     ```
+
+     `confirm` needs `--by`, requires the credential to be present and `verify()` to still pass (vendors without a verifier: presence only), then activates and does the usual hand-off below.
+   - **`auto` success** (and after `confirm`): the vendor becomes `active` with `verified_at`; warnings are kept in `last_check_error` as `warning: ...` and emailed with the "is active" message; `vendor.provisioned` is published; the `provisioning_action` incident resolves; the Foreman gets the integration task (propose the MCP server or adapter; `STORE_ADAPTER=<platform>` for a store). If the Foreman is disabled or fails, a P3 incident `provisioning_followup` is raised instead.
    - The credential **value** is read only to make the call. It is never logged, audited, stored, emailed or put into events or prompts (only its env var name is); error text is passed through `observability.mask` and the value itself is scrubbed.
 
    To add a vendor: write `verify_<vendor>(vendor, credential) -> (ok, error, warnings)` in `src/aecom/provisioning.py` and register it in `VERIFIERS`.

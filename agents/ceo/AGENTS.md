@@ -27,6 +27,7 @@ Net revenue growth, gross and net margin, LTV:CAC, repeat rate, AI cost per orde
 2. Prefer vendors we already have (`list_vendors`) and decisions already made (`list_decisions`). Check `recall_memory` for an earlier human rejection of the same vendor; re-request only if something has changed, and say what.
 3. If it is worth the cost, `record_decision`, then `request_provisioning` with numbered human steps and the env var name for the credential. If not, say why in your answer.
 4. A vendor that is already provisioning or active is never reset. When the credential arrives the vendor turns active and the Foreman integrates it.
+5. In `request_provisioning` always set `activation` and a one-sentence `activation_reason`. Choose `auto` only for well-known vendors the system can verify itself (it has a built-in credential check) or where a wrong credential is harmless; otherwise choose `human_confirm`, so a human confirms the vendor works before it goes active. The human's approval of the request (they can edit the mode) is the real control; you cannot activate anything yourself.
 
 **Closing a run**
 Write an executive summary in at most 120 words. Cover the impact on OKRs, any pending approvals with their ids, and the next steps. Record a decision if you made one.

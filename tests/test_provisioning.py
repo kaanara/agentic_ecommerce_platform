@@ -48,7 +48,9 @@ def runs(agent_id: str) -> list[AgentRun]:
 
 
 def make_provisioning() -> None:
-    approvals.approve(request(), "tester")
+    # activation="auto": these tests are about the activation hand-off; the default for unknown vendors (human_confirm,
+    # U3) is covered in test_provisioning_flow.py
+    approvals.approve(request(activation="auto", activation_reason="test vendor"), "tester")
     drain()
 
 
