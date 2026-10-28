@@ -137,7 +137,10 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--demo", action="store_true")
     s = sub.add_parser("api")
     s.add_argument("--port", type=int, default=8000)
-    sub.add_parser("dashboard")
+    s = sub.add_parser("dashboard")
+    s.add_argument("--host", default=None, help="address to listen on (default: Streamlit's default, all interfaces); "
+                                                "use 127.0.0.1 and reach it through Tailscale or an SSH tunnel")
+    s.add_argument("--port", type=int, default=None)
     s = sub.add_parser("mcp")
     s.add_argument("domain", choices=["store", "marketing", "finance", "registry", "all"])
     s = sub.add_parser("agentmail")
@@ -155,7 +158,12 @@ def main(argv: list[str] | None = None) -> None:
 
         return uvicorn.run("aecom.api.app:app", host="127.0.0.1", port=a.port)
     if a.cmd == "dashboard":
-        sys.exit(subprocess.call([sys.executable, "-m", "streamlit", "run", str(ROOT / "dashboard" / "Home.py")]))
+        cmd = [sys.executable, "-m", "streamlit", "run", str(ROOT / "dashboard" / "Home.py")]
+        if a.host:
+            cmd += ["--server.address", a.host]
+        if a.port:
+            cmd += ["--server.port", str(a.port)]
+        sys.exit(subprocess.call(cmd))
     if a.cmd == "scheduler":
         from aecom.scheduler import main as sched_main
 

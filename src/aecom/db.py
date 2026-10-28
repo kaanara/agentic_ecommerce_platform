@@ -94,6 +94,10 @@ class Vendor(Base):
     verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_check_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # E5 reminders
+    # U3: how the vendor goes active once its credential works: 'auto' | 'human_confirm' (None = decided by whether
+    # a built-in credential check exists). Proposed by the CEO inside request_provisioning, approved by the human.
+    activation: Mapped[str | None] = mapped_column(String, nullable=True)
+    activation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 

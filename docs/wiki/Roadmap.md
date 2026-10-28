@@ -198,8 +198,10 @@ Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves
 #### Decisions owned by the product owner
 | # | Decision | Status | Items waiting on it |
 |---|---|---|---|
-| U1 | **Accounting tool** (e.g. lexoffice or sevDesk) instead of building bookkeeping | Owner is evaluating | J8–J11 likely replaced by an API integration; F4 payouts go to the tool; J9 month-end report reads from it |
-| U2 | **Hosting** (cloud server vs. Raspberry Pi) | Owner is evaluating | C1–C3, H6, C6 remote access, webhook exposure (Cloudflare Tunnel or public endpoint), backup design |
+| U1 | **Accounting tool** (e.g. lexoffice or sevDesk) instead of building bookkeeping | ✅ **Decided 2026-10-28:** keep the built-in ledger for now; adopt lexoffice or sevDesk together with the move to a cloud server (trigger: first revenue of about USD 20–30, see M-trigger below) | J8–J11 stay deferred and will likely become an API integration; F4 payouts and R13 fee booking move with it; J9 month-end report reads from it |
+| U2 | **Hosting** (cloud server vs. Raspberry Pi) | ✅ **Decided 2026-10-28:** Raspberry Pi first; move to a cloud server once revenue reaches about USD 20–30 | C1–C3 and H6 are built for the Pi (wave 12); a cloud move later changes hosting, not the code |
+| U3 | Should an **unknown vendor** (no built-in credential check) need a human confirmation before going active? | ✅ **Delegated to the CEO agent 2026-10-28:** the CEO proposes `activation` (`auto` / `human_confirm`) inside `request_provisioning`; the human's T3 approval of that request covers it. Default for unknown vendors: `human_confirm`; agents can never lower the human's own check | R14 remainder |
+| M-trigger | **Migration trigger** | Cumulative net revenue reaches `MIGRATION_REVENUE_EUR` (default 25 ≈ USD 27, configurable) | A P3 incident reminds the owner to review hosting (cloud) and the accounting tool; the owner decides, nothing moves automatically |
 
 ## Next
 1. **Live validation:** run every scenario against real Claude and record the outcomes and costs. Calibrate `PRICE_*`.

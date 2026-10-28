@@ -4,7 +4,7 @@
 >
 > We can't foresee every failure. This plan covers every **known class** of failure and adds chaos testing to find the unknown ones. Item IDs (A1, B3, …) refer to the [Roadmap](Roadmap) → *Production readiness backlog*.
 
-> **Direction (2026-10-25):** build less and use services. See Roadmap → section L. Lemon Squeezy is the system of record for everything a customer touches (L1); standard tools cover errors, heartbeat and push (L2); few agents are active at launch (L3); the first 10 sales come before autonomy (L4). Two decisions are open with the product owner: the **accounting tool (U1)** and **hosting (U2)**. Items that depend on them are marked *(U1)* or *(U2)* and shouldn't be built until decided.
+> **Direction (2026-10-25):** build less and use services. See Roadmap → section L. Lemon Squeezy is the system of record for everything a customer touches (L1); standard tools cover errors, heartbeat and push (L2); few agents are active at launch (L3); the first 10 sales come before autonomy (L4). **Decided 2026-10-28:** hosting (U2) = Raspberry Pi first, cloud server once revenue reaches about USD 20–30; accounting (U1) = the built-in ledger until then, then lexoffice or sevDesk with the cloud move. So the *(U2)* items are now built for the Pi, and the *(U1)* items stay deferred until the migration trigger fires.
 
 ## Principles
 1. **Sales never depend on an LLM.** Order delivery, retries and monitors are plain code. Agents handle judgment.
