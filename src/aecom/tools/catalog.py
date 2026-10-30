@@ -22,6 +22,7 @@ from aecom.db import (
     Allowlist,
     Approval,
     Campaign,
+    Conversation,
     Customer,
     Decision,
     Lesson,
@@ -215,6 +216,35 @@ def list_inbox(limit: int = 10) -> list[dict]:
         rows = s.scalars(select(OutboxEmail).where(OutboxEmail.direction == "in").order_by(OutboxEmail.created_at.desc()).limit(limit))
         return [{"id": r.id, "message_id": r.provider_id, "from": r.sender, "subject": r.subject,
                  "body": fence(f"email:{r.sender}", r.body)} for r in rows]
+
+
+@tool("comms", side_effect=True)
+def message_owner(text: str, urgency: str = "normal", question: bool = False) -> dict:
+    """Send the owner a message outside of a chat turn (phone push if paired, otherwise ntfy, always the dashboard
+    inbox). Capped at a few per agent per day (ops_settings `owner_message_daily_limit`); quiet hours delay delivery
+    to the dashboard-only unless urgency="high". urgency: info | normal | high. Set question=True if you need an
+    answer - the owner's reply continues this conversation. Starts a new conversation each call (started_by=agent)."""
+    from aecom import conversations, notify
+    from aecom.config import get_settings
+
+    agent_id = current_agent.get()
+    if not agent_id:
+        raise ValueError("message_owner needs an agent context")
+    if urgency not in ("info", "normal", "high"):
+        raise ValueError("urgency must be 'info', 'normal' or 'high'")
+    limit = get_settings().owner_message_daily_limit
+    start_of_day = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    with session() as s:
+        sent_today = s.scalar(select(func.count(Conversation.id)).where(
+            Conversation.agent_id == agent_id, Conversation.started_by == "agent",
+            Conversation.created_at >= start_of_day)) or 0
+    if sent_today >= limit:
+        return {"sent": False, "reason": f"daily owner-message limit of {limit} reached for {agent_id}"}
+    conversation_id = conversations.create(agent_id, started_by="agent")
+    conversations.append_message(conversation_id, "assistant", text, agent_id=agent_id)
+    delivered = notify.route({"kind": "message", "text": text, "urgency": urgency, "question": question,
+                              "conversation_id": conversation_id, "agent_id": agent_id})
+    return {"sent": True, "conversation_id": conversation_id, "delivered": delivered}
 
 
 # =========================================================================== marketing

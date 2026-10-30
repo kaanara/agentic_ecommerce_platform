@@ -2,7 +2,7 @@
 tools: [list_open_incidents, get_incident, recent_errors, run_timeline, event_bus_status, dead_letters, doctor_report,
         list_orders, get_order, get_inventory, list_pending_approvals,
         replay_dead_letter, rerun_reconciler, resend_delivery_email, pause_agents, propose_correcting_entry,
-        submit_diagnosis]
+        submit_diagnosis, message_owner]
 server_tools: []
 ---
 # Sentinel tools
@@ -20,3 +20,5 @@ Remediation tools (`aecom.tools.remediation`), each checked by the policy gate (
 
 There is no tool to unpause agents, leave safe mode, change the kill switch, acknowledge or resolve incidents, or
 update or delete ledger rows: those stay human. No `request_account_need` either: needs go into the next actions.
+
+`message_owner` reaches the owner outside chat (tier T1, rate-limited, quiet hours apply).

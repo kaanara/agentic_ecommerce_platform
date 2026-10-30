@@ -92,7 +92,7 @@ def test_sentinel_has_no_tool_to_undo_containment_or_edit_history():
     seed_registry()
     tools = set(allowed_tools("sentinel")) | set(load_spec("sentinel").tools)
     side_effecting = {t for t in tools if t in CATALOG and CATALOG[t].side_effect}
-    assert side_effecting == set(REMEDIATION)
+    assert side_effecting - {"message_owner"} == set(REMEDIATION)  # message_owner only notifies the owner
     assert list(inspect.signature(CATALOG["pause_agents"].fn).parameters) == ["reason"]  # can only switch it on
     for name in tools & set(CATALOG):  # nothing that unpauses, leaves safe mode, flips the kill switch, acknowledges
         src = inspect.getsource(CATALOG[name].fn)  # or edits ledger rows

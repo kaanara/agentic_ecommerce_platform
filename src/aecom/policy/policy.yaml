@@ -161,6 +161,9 @@ rules:
     tier: T3
     agents: [marketing]
     reason: "Bulk email to customers is public-facing and has GDPR implications."
+  message_owner:
+    tier: T1
+    agents: [ceo, finance, researcher, sentinel, foreman]   # the chat-eligible agents (§1)
   publish_social_post:
     tier: T3
     agents: [marketing]

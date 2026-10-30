@@ -66,10 +66,10 @@ def test_persona_is_sonnet_with_read_only_tools_the_remediation_set_and_submit_d
     assert (spec.model_tier, spec.role, spec.reports_to) == ("sonnet", "Operations Sentinel", "ceo")
     assert spec.identity["layer"] == "evaluation"
     assert set(DIAGNOSTICS) | {"submit_diagnosis"} <= set(spec.tools)
-    side_effecting = {t for t in spec.tools if CATALOG[t].side_effect}
+    side_effecting = {t for t in spec.tools if CATALOG[t].side_effect} - {"message_owner"}
     assert side_effecting == REMEDIATION  # exactly the gated remediation set (K5/K9), not even request_account_need
     seed_registry()
-    assert {t for t in allowed_tools("sentinel") if t in CATALOG and CATALOG[t].side_effect} == REMEDIATION
+    assert {t for t in allowed_tools("sentinel") if t in CATALOG and CATALOG[t].side_effect} - {"message_owner"} == REMEDIATION
     assert [t for t in spec.tools if CATALOG[t].terminal] == ["submit_diagnosis"]
     assert spec.budget_eur_per_day == 3
 
