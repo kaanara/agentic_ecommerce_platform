@@ -164,6 +164,11 @@ rules:
   message_owner:
     tier: T1
     agents: [ceo, finance, researcher, sentinel, foreman]   # the chat-eligible agents (§1)
+  consult_agent:
+    tier: T1
+    # the chat-eligible agents (§1); built only inside a chat run (aecom.graph.agents), never listed in a
+    # persona's TOOLS.md, so automated runs never see it regardless of this rule.
+    agents: [ceo, finance, researcher, sentinel, foreman]
   publish_social_post:
     tier: T3
     agents: [marketing]

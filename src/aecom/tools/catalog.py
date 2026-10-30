@@ -452,8 +452,10 @@ def request_account_need(vendor: str, why: str, evidence: str = "") -> str:
 @tool("exec")
 def read_company_doc(name: str) -> str:
     """Read a company document: GOALS | BRAND."""
-    path = get_settings().company_dir / f"{name.upper()}.md"
-    return path.read_text() if path.exists() else f"unknown document {name}"
+    from aecom.persona.loader import company_doc_text
+
+    text = company_doc_text(f"{name.upper()}.md")
+    return text if text else f"unknown document {name}"
 
 
 @tool("exec")

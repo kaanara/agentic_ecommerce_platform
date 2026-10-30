@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from functools import lru_cache
-
-from aecom.config import get_settings
-from aecom.persona.loader import AgentSpec, split_frontmatter
+from aecom.persona.loader import AgentSpec, company_doc_text, split_frontmatter
 
 
-@lru_cache
 def company_context() -> str:
-    path = get_settings().company_dir / "GOALS.md"
-    if not path.exists():
+    """GOALS.md, preferring a UI override (``aecom.persona.overrides``, scope ``"company"``) over the file in git.
+
+    Not cached: an override can be saved at any time and must take effect on the next prompt build.
+    """
+    text = company_doc_text("GOALS.md")
+    if not text:
         return ""
-    _, body = split_frontmatter(path.read_text())
+    _, body = split_frontmatter(text)
     return body
 
 

@@ -29,7 +29,7 @@ from aecom.money import CENT, quantize, to_decimal
 from aecom.observability import mask, record_error
 from aecom.persona.loader import load_spec
 from aecom.persona.prompt import system_prompt
-from aecom.policy.gate import load_policy
+from aecom.policy.gate import load_policy, run_gated
 from aecom.registry.tools import build_tools, skills_for
 
 
@@ -126,8 +126,11 @@ def _build_consult_tool(agent_id: str, run_id: str, depth: int) -> StructuredToo
     """Chat-only tool: ask another eligible agent a question in chat mode, one level deep, rate-limited per turn.
 
     Built here (not in the catalog registry) because it only makes sense inside a chat run: it recurses into
-    ``_run_core`` directly, carries no side effects of its own, and must never be offered to an agent it consulted
-    (``depth`` stops it from going further; ``consulted`` caps how many calls one turn may make).
+    ``_run_core`` directly and must never be offered to an agent it consulted (``depth`` stops it from going
+    further; ``consulted`` caps how many calls one turn may make). It still runs through the same policy gate as
+    every other tool (``policy.yaml``'s ``consult_agent`` rule, T1, restricted to the chat-eligible agents) so the
+    kill switch, safe mode, agents-paused and audit trail all apply; it is never added to a persona's TOOLS.md, so
+    automated (non-chat) runs never see it.
     """
     consulted = [0]
 
@@ -138,14 +141,20 @@ def _build_consult_tool(agent_id: str, run_id: str, depth: int) -> StructuredToo
             return f"ERROR: '{agent}' is not available to consult (eligible: {', '.join(eligible)})."
         if consulted[0] >= CONSULT_MAX_PER_TURN:
             return f"ERROR: consult_agent limit ({CONSULT_MAX_PER_TURN} per turn) reached."
-        consulted[0] += 1
-        audit(agent_id, "consult_agent", "ok", {"target": agent, "question": question[:200]}, run_id)
-        sub = await _run_core(agent, question, run_id=f"{run_id}-consult{consulted[0]}", chat=True, depth=depth + 1)
-        return json.dumps({"output": sub.output, "status": sub.status, "messages": sub.messages}, default=str)[:12000]
+
+        async def execute(args: dict[str, Any]) -> str:
+            consulted[0] += 1
+            sub = await _run_core(args["agent"], args["question"], run_id=f"{run_id}-consult{consulted[0]}",
+                                  chat=True, depth=depth + 1)
+            return json.dumps({"output": sub.output, "status": sub.status, "messages": sub.messages},
+                              default=str)[:12000]
+
+        return await run_gated(agent_id, "consult_agent", {"agent": agent, "question": question}, execute,
+                               side_effect=True)
 
     return StructuredTool.from_function(coroutine=consult_agent, name="consult_agent",
                                         description=inspect.getdoc(consult_agent) or "consult_agent",
-                                        metadata={"terminal": False, "side_effect": False})
+                                        metadata={"terminal": False, "side_effect": True})
 
 
 async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str | None = None) -> AgentResult:
