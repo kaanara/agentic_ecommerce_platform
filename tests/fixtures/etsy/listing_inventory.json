@@ -1,0 +1,77 @@
+{
+  "111222333": {
+    "products": [
+      {
+        "product_id": 990011,
+        "sku": "LIC-SHARED-001",
+        "is_deleted": false,
+        "offerings": [
+          {
+            "offering_id": 880011,
+            "quantity": 999,
+            "is_enabled": true,
+            "is_deleted": false,
+            "price": {
+              "amount": 5000,
+              "divisor": 100,
+              "currency_code": "EUR"
+            }
+          }
+        ],
+        "property_values": []
+      }
+    ],
+    "price_on_property": [],
+    "quantity_on_property": []
+  },
+  "444555666": {
+    "products": [
+      {
+        "product_id": 990022,
+        "sku": "ETSY-ONLY-002",
+        "is_deleted": false,
+        "offerings": [
+          {
+            "offering_id": 880022,
+            "quantity": 999,
+            "is_enabled": true,
+            "is_deleted": false,
+            "price": {
+              "amount": 1500,
+              "divisor": 100,
+              "currency_code": "EUR"
+            }
+          }
+        ],
+        "property_values": []
+      }
+    ],
+    "price_on_property": [],
+    "quantity_on_property": []
+  },
+  "999888777": {
+    "products": [
+      {
+        "product_id": 990033,
+        "sku": "NEW-SKU-1",
+        "is_deleted": false,
+        "offerings": [
+          {
+            "offering_id": 880033,
+            "quantity": 10,
+            "is_enabled": true,
+            "is_deleted": false,
+            "price": {
+              "amount": 2500,
+              "divisor": 100,
+              "currency_code": "EUR"
+            }
+          }
+        ],
+        "property_values": []
+      }
+    ],
+    "price_on_property": [],
+    "quantity_on_property": []
+  }
+}

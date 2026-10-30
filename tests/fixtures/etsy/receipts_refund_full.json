@@ -1,0 +1,135 @@
+{
+  "count": 1,
+  "results": [
+    {
+      "receipt_id": 9001001234,
+      "receipt_type": 0,
+      "seller_user_id": 70011122,
+      "seller_email": "shop-owner@example.com",
+      "buyer_user_id": 8881122,
+      "buyer_email": "mia@example.de",
+      "name": "Mia Schmidt",
+      "first_line": "Musterstr. 1",
+      "second_line": null,
+      "city": "Berlin",
+      "state": null,
+      "zip": "10115",
+      "status": "paid",
+      "formatted_address": "Mia Schmidt\nMusterstr. 1\n10115 Berlin\nGermany",
+      "country_iso": "DE",
+      "payment_method": "cc",
+      "payment_email": "mia@example.de",
+      "message_from_seller": null,
+      "message_from_buyer": null,
+      "message_from_payment": null,
+      "is_paid": true,
+      "is_shipped": false,
+      "create_timestamp": 1761500500,
+      "created_timestamp": 1761500500,
+      "update_timestamp": 1761520000,
+      "updated_timestamp": 1761520000,
+      "is_gift": false,
+      "gift_message": "",
+      "gift_sender": "",
+      "grandtotal": {
+        "amount": 5000,
+        "divisor": 100,
+        "currency_code": "EUR"
+      },
+      "subtotal": {
+        "amount": 5000,
+        "divisor": 100,
+        "currency_code": "EUR"
+      },
+      "total_price": {
+        "amount": 5000,
+        "divisor": 100,
+        "currency_code": "EUR"
+      },
+      "total_shipping_cost": {
+        "amount": 0,
+        "divisor": 100,
+        "currency_code": "EUR"
+      },
+      "total_tax_cost": {
+        "amount": 0,
+        "divisor": 100,
+        "currency_code": "EUR"
+      },
+      "total_vat_cost": {
+        "amount": 1000,
+        "divisor": 100,
+        "currency_code": "EUR"
+      },
+      "discount_amt": {
+        "amount": 0,
+        "divisor": 100,
+        "currency_code": "EUR"
+      },
+      "gift_wrap_price": {
+        "amount": 0,
+        "divisor": 100,
+        "currency_code": "EUR"
+      },
+      "shipments": [],
+      "refunds": [
+        {
+          "amount": {
+            "amount": 1250,
+            "divisor": 100,
+            "currency_code": "EUR"
+          },
+          "created_timestamp": 1761510000,
+          "reason": "Customer requested refund",
+          "note_from_issuer": null,
+          "status": "succeeded"
+        },
+        {
+          "amount": {
+            "amount": 3750,
+            "divisor": 100,
+            "currency_code": "EUR"
+          },
+          "created_timestamp": 1761520000,
+          "reason": "Customer requested refund",
+          "note_from_issuer": null,
+          "status": "succeeded"
+        }
+      ],
+      "transactions": [
+        {
+          "transaction_id": 501001,
+          "title": "FocusFlow Pro - lifetime licence key (instant download)",
+          "description": "Instant digital delivery by email after checkout.",
+          "seller_user_id": 70011122,
+          "buyer_user_id": 8881122,
+          "create_timestamp": 1761500500,
+          "created_timestamp": 1761500500,
+          "paid_timestamp": 1761500505,
+          "shipped_timestamp": null,
+          "quantity": 1,
+          "listing_image_id": 123123123,
+          "receipt_id": 9001001234,
+          "is_digital": true,
+          "file_data": "",
+          "listing_id": 111222333,
+          "transaction_type": "listing",
+          "product_id": 990011,
+          "sku": "LIC-SHARED-001",
+          "price": {
+            "amount": 5000,
+            "divisor": 100,
+            "currency_code": "EUR"
+          },
+          "shipping_cost": {
+            "amount": 0,
+            "divisor": 100,
+            "currency_code": "EUR"
+          },
+          "variations": [],
+          "product_data": []
+        }
+      ]
+    }
+  ]
+}

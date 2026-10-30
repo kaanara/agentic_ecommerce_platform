@@ -1,0 +1,19 @@
+{
+  "listing_id": 999888777,
+  "user_id": 70011122,
+  "shop_id": 555666,
+  "title": "New Draft Product",
+  "description": "A newly created draft listing.",
+  "state": "draft",
+  "creation_timestamp": 1761600000,
+  "created_timestamp": 1761600000,
+  "quantity": 10,
+  "who_made": "i_did",
+  "when_made": "made_to_order",
+  "is_supply": false,
+  "has_variations": false,
+  "should_auto_renew": true,
+  "language": "en-US",
+  "price": {"amount": 2500, "divisor": 100, "currency_code": "EUR"},
+  "taxonomy_id": 1
+}

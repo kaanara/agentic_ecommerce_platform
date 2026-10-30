@@ -1,0 +1,91 @@
+{
+  "count": 2,
+  "results": [
+    {
+      "listing_id": 111222333,
+      "user_id": 70011122,
+      "shop_id": 555666,
+      "title": "FocusFlow Pro - lifetime licence key (instant download)",
+      "description": "Instant digital delivery of your FocusFlow Pro licence key by email after checkout.",
+      "state": "active",
+      "creation_timestamp": 1761500000,
+      "created_timestamp": 1761500000,
+      "ending_timestamp": 1792600000,
+      "last_modified_timestamp": 1761500000,
+      "updated_timestamp": 1761500000,
+      "state_timestamp": 1761500000,
+      "quantity": 999,
+      "url": "https://www.etsy.com/listing/111222333/focusflow-pro-licence-key",
+      "num_favorers": 12,
+      "non_taxable": false,
+      "is_taxable": true,
+      "is_customizable": false,
+      "is_personalizable": false,
+      "listing_type": "download",
+      "tags": [
+        "software license",
+        "productivity app",
+        "instant download"
+      ],
+      "materials": [],
+      "shipping_profile_id": null,
+      "processing_min": null,
+      "processing_max": null,
+      "who_made": "i_did",
+      "when_made": "2020_2026",
+      "is_supply": false,
+      "has_variations": false,
+      "should_auto_renew": true,
+      "language": "en-US",
+      "price": {
+        "amount": 5000,
+        "divisor": 100,
+        "currency_code": "EUR"
+      },
+      "taxonomy_id": 1
+    },
+    {
+      "listing_id": 444555666,
+      "user_id": 70011122,
+      "shop_id": 555666,
+      "title": "Minimalist Budget Planner PDF (printable, instant download)",
+      "description": "A printable budget planner, delivered as a PDF through Etsy's digital download.",
+      "state": "active",
+      "creation_timestamp": 1761400000,
+      "created_timestamp": 1761400000,
+      "ending_timestamp": 1792500000,
+      "last_modified_timestamp": 1761400000,
+      "updated_timestamp": 1761400000,
+      "state_timestamp": 1761400000,
+      "quantity": 999,
+      "url": "https://www.etsy.com/listing/444555666/minimalist-budget-planner-pdf",
+      "num_favorers": 5,
+      "non_taxable": false,
+      "is_taxable": true,
+      "is_customizable": false,
+      "is_personalizable": false,
+      "listing_type": "download",
+      "tags": [
+        "budget planner",
+        "printable pdf",
+        "instant download"
+      ],
+      "materials": [],
+      "shipping_profile_id": null,
+      "processing_min": null,
+      "processing_max": null,
+      "who_made": "i_did",
+      "when_made": "2020_2026",
+      "is_supply": false,
+      "has_variations": false,
+      "should_auto_renew": true,
+      "language": "en-US",
+      "price": {
+        "amount": 1500,
+        "divisor": 100,
+        "currency_code": "EUR"
+      },
+      "taxonomy_id": 1
+    }
+  ]
+}
