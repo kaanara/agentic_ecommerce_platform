@@ -52,6 +52,39 @@ def _print(obj: Any) -> None:
     print(json.dumps(obj, indent=2, default=str, ensure_ascii=False))
 
 
+def _chat_cli(a: argparse.Namespace) -> int:
+    """A shell on this machine is the owner, like ``dashboard reset-password``: no dashboard login is needed (the
+    messages still go through the policy gate and are audited with channel ``cli``)."""
+    from aecom import chat, conversations
+
+    if a.agent_id not in chat.chat_agents():
+        print(f"{a.agent_id} cannot chat; choose from: {', '.join(chat.chat_agents())}", file=sys.stderr)
+        return 1
+
+    def turn(conv_id: str, text: str) -> int:
+        t = chat.converse(conv_id, text, paired_channel=True)
+        print(f"\n{t.agent_id}> {t.text}")
+        for approval_id in t.escalations:
+            print(f"  (waiting for your approval: {approval_id}; see `aecom approvals`)")
+        print(f"  [{t.status}, EUR {t.cost_eur:.4f}]")
+        return 0 if t.status == "ok" else 1
+
+    if a.cmd == "ask":
+        return turn(conversations.create(a.agent_id, "cli", channel="cli"), " ".join(a.text))
+    conv_id = a.conversation or conversations.create(a.agent_id, "cli", channel="cli")
+    rc = 0
+    while True:
+        try:
+            text = input("you> ").strip()
+        except EOFError:
+            break
+        if not text:
+            break
+        rc = turn(conv_id, text)
+    print(f"conversation {conv_id}")
+    return rc
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="aecom", description="Agentic e-commerce company (PoC)")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -161,6 +194,12 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--port", type=int, default=None)
     s.add_argument("action", nargs="?", choices=["reset-password"],
                    help="reset-password: set a new dashboard password from this machine and turn the login on")
+    s = sub.add_parser("ask", help="one question to an agent (a new CLI conversation); prints the reply")
+    s.add_argument("agent_id")
+    s.add_argument("text", nargs="+")
+    s = sub.add_parser("chat", help="interactive chat with an agent; an empty line or Ctrl-D ends it")
+    s.add_argument("agent_id")
+    s.add_argument("--conversation", default=None, help="continue an existing conversation id")
     s = sub.add_parser("mcp")
     s.add_argument("domain", choices=["store", "marketing", "finance", "registry", "all"])
     s = sub.add_parser("agentmail")
@@ -246,6 +285,8 @@ def main(argv: list[str] | None = None) -> None:
             if isinstance(res, dict) and "summary" in res:
                 res = {"summary": res.get("summary"), "verdict": res.get("verdict")}
             _print({"result": res, "pending_approvals": r["pending_approvals"]})
+    elif a.cmd in ("ask", "chat"):
+        return _chat_cli(a)
     elif a.cmd == "run":
         from aecom.graph.supervisor import run_company
 

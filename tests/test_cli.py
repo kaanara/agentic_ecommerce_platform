@@ -144,3 +144,26 @@ def test_dashboard_reset_password_mismatch_changes_nothing(monkeypatch):
     monkeypatch.setattr("getpass.getpass", lambda prompt="": next(answers))
     assert cli.main(["dashboard", "reset-password"]) == 1
     assert not dashboard_auth.verify_password("a brand new password")
+
+
+def test_ask_prints_the_reply_and_stores_a_cli_conversation(fresh_company, capsys):
+    from aecom import conversations
+
+    assert cli.main(["ask", "ceo", "How", "are", "we", "doing?"]) in (0, 1)
+    out = capsys.readouterr().out
+    assert "ceo>" in out
+    convs = conversations.list_conversations()
+    assert convs and convs[0]["channel"] == "cli"
+
+
+def test_ask_rejects_an_agent_that_cannot_chat(fresh_company, capsys):
+    assert cli.main(["ask", "nobody", "hi"]) == 1
+    assert "cannot chat" in capsys.readouterr().err
+
+
+def test_chat_ends_on_an_empty_line(fresh_company, capsys, monkeypatch):
+    lines = iter(["hello", ""])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(lines))
+    cli.main(["chat", "finance"])
+    out = capsys.readouterr().out
+    assert "finance>" in out and "conversation " in out
