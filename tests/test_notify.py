@@ -44,9 +44,27 @@ def _pair(chat_id: str = "123") -> None:
         s.add(ChannelLink(channel="telegram", external_chat_id=chat_id, active=True))
 
 
+def _pair_whatsapp(chat_id: str = "777") -> None:
+    with session() as s:
+        s.add(ChannelLink(channel="whatsapp", external_chat_id=chat_id, active=True))
+
+
+WHATSAPP_SECRETS = {"WHATSAPP_TOKEN": "t", "WHATSAPP_PHONE_ID": "p", "WHATSAPP_APP_SECRET": "a",
+                   "WHATSAPP_VERIFY_TOKEN": "v"}
+
+
+def _enable_whatsapp(extra_secrets: dict | None = None) -> None:
+    """``whatsapp_enabled`` plus every required secret, so ``channels.whatsapp.CHANNEL.enabled()`` is True."""
+    get_settings().whatsapp_enabled = True
+    configured = {**WHATSAPP_SECRETS, **(extra_secrets or {})}
+    import aecom.secrets as secrets_mod
+
+    secrets_mod.secrets.get = lambda name: configured.get(name)
+
+
 def test_route_dashboard_only_without_any_channel():
     result = notify.route({"kind": "message", "text": "hello", "urgency": "normal"})
-    assert result == {"dashboard": True, "telegram": False, "ntfy": False}
+    assert result == {"dashboard": True, "telegram": False, "whatsapp": False, "ntfy": False}
 
 
 def test_route_falls_back_to_ntfy_when_not_paired(net):
@@ -97,7 +115,7 @@ def test_quiet_hours_block_normal_urgency(net):
         result = notify.route({"kind": "message", "text": "shh", "urgency": "normal"})
     finally:
         s.quiet_hours_start, s.quiet_hours_end = "", ""
-    assert result == {"dashboard": True, "telegram": False, "ntfy": False}
+    assert result == {"dashboard": True, "telegram": False, "whatsapp": False, "ntfy": False}
     assert net.calls == []
 
 
@@ -129,6 +147,94 @@ def test_telegram_module_sender_is_preferred(monkeypatch, net):
         notify.set_telegram_sender(None)
     assert result["telegram"] is True
     assert fallback_called == []
+
+
+def test_route_uses_whatsapp_when_telegram_not_paired(monkeypatch, net):
+    _pair_whatsapp("777")
+    _enable_whatsapp()
+    from aecom.channels import whatsapp
+
+    sent: list[tuple] = []
+    monkeypatch.setattr(whatsapp, "send", lambda chat_id, text: sent.append((chat_id, text)) or True)
+    s = get_settings()
+    try:
+        result = notify.route({"kind": "message", "text": "via whatsapp", "urgency": "normal"})
+    finally:
+        s.whatsapp_enabled = False
+    assert result["telegram"] is False
+    assert result["whatsapp"] is True
+    assert result["ntfy"] is False
+    assert sent == [("777", "via whatsapp")]
+    assert net.calls == []  # ntfy never called once WhatsApp delivered
+
+
+def test_route_prefers_telegram_over_whatsapp_when_both_paired(monkeypatch, net):
+    _pair("111")
+    _pair_whatsapp("777")
+    _enable_whatsapp()
+    from aecom.channels import whatsapp
+
+    whatsapp_sent: list[tuple] = []
+    monkeypatch.setattr(whatsapp, "send", lambda chat_id, text: whatsapp_sent.append((chat_id, text)) or True)
+    notify.set_telegram_sender(lambda chat_id, text: True)
+    s = get_settings()
+    try:
+        result = notify.route({"kind": "message", "text": "telegram wins", "urgency": "normal"})
+    finally:
+        notify.set_telegram_sender(None)
+        s.whatsapp_enabled = False
+    assert result["telegram"] is True
+    assert result["whatsapp"] is False
+    assert whatsapp_sent == []  # WhatsApp is only tried once Telegram did not deliver
+
+
+def test_route_whatsapp_not_attempted_when_disabled(monkeypatch, net):
+    """Paired but channels.whatsapp.CHANNEL.enabled() is False (missing config) -> falls through to ntfy."""
+    _pair_whatsapp("777")
+    from aecom.channels import whatsapp
+
+    whatsapp_sent: list[tuple] = []
+    monkeypatch.setattr(whatsapp, "send", lambda chat_id, text: whatsapp_sent.append((chat_id, text)) or True)
+    secrets_values = {"NTFY_URL": "https://ntfy.example/topic"}
+    import aecom.secrets as secrets_mod
+
+    secrets_mod.secrets.get = lambda name: secrets_values.get(name)
+    result = notify.route({"kind": "message", "text": "disabled whatsapp", "urgency": "normal"})
+    assert result["whatsapp"] is False
+    assert result["ntfy"] is True
+    assert whatsapp_sent == []
+
+
+def test_route_falls_back_to_ntfy_when_whatsapp_sender_fails(monkeypatch, net):
+    _pair_whatsapp("777")
+    _enable_whatsapp({"NTFY_URL": "https://ntfy.example/topic"})
+    from aecom.channels import whatsapp
+
+    monkeypatch.setattr(whatsapp, "send", lambda chat_id, text: False)
+    s = get_settings()
+    try:
+        result = notify.route({"kind": "message", "text": "whatsapp fails", "urgency": "normal"})
+    finally:
+        s.whatsapp_enabled = False
+    assert result["whatsapp"] is False
+    assert result["ntfy"] is True
+
+
+def test_whatsapp_module_sender_is_used(monkeypatch, net):
+    """channels.whatsapp exposes send(); notify uses it directly (lazy import, same shape as Telegram)."""
+    _pair_whatsapp("777")
+    _enable_whatsapp()
+    from aecom.channels import whatsapp
+
+    sent: list[tuple] = []
+    monkeypatch.setattr(whatsapp, "send", lambda chat_id, text: sent.append((chat_id, text)) or True)
+    s = get_settings()
+    try:
+        result = notify.route({"kind": "message", "text": "module sender", "urgency": "normal"})
+    finally:
+        s.whatsapp_enabled = False
+    assert result["whatsapp"] is True
+    assert sent == [("777", "module sender")]
 
 
 # --------------------------------------------------------------------------- message_owner tool

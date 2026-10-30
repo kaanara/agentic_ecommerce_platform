@@ -1,13 +1,21 @@
 """Owner notifications: one router for everything that should reach the owner.
 
-``route(event)`` delivers an event on the best available channel: a paired Telegram chat first, then ntfy, otherwise it
-only appears in the dashboard inbox. Event keys: ``kind`` (``message`` | ``approval`` | ``incident`` | ``diagnosis`` |
-``flash`` | ``settings``), ``text``, ``urgency`` (``info`` | ``normal`` | ``high``; high ignores quiet hours),
-optional ``conversation_id``, ``approval_id``, ``agent_id``. Returns ``{channel_name: delivered}``.
+``route(event)`` delivers an event on the best available channel: a paired Telegram chat first, then a paired
+WhatsApp chat, then ntfy, otherwise it only appears in the dashboard inbox. Event keys: ``kind`` (``message`` |
+``approval`` | ``incident`` | ``diagnosis`` | ``flash`` | ``settings``), ``text``, ``urgency`` (``info`` | ``normal``
+| ``high``; high ignores quiet hours), optional ``conversation_id``, ``approval_id``, ``agent_id``. Returns
+``{channel_name: delivered}``.
 
 Telegram sending goes through ``aecom.channels.telegram`` when that module provides a sender (lazy import, so this
 module never hard-depends on it); until then (or if it fails) a pluggable hook registered with
 ``set_telegram_sender`` is tried. Both are optional - a missing/failed sender just means ``telegram`` is False below.
+
+WhatsApp sending goes through ``aecom.channels.whatsapp`` the same way (lazy import, never raises), but only when
+``channels.whatsapp.CHANNEL.enabled()`` is true - WhatsApp's Cloud API needs its full secret set configured, unlike
+Telegram where a paired chat is enough. Only free-form text is sent here (no templates), so this only works within
+Meta's 24h customer-service window; a business-initiated message outside that window would need a template and is
+out of scope. ntfy is attempted only if neither Telegram nor WhatsApp delivered.
+
 Network errors never raise: a channel that is down is simply not delivered.
 """
 
@@ -98,6 +106,47 @@ def _send_telegram(text: str) -> bool:
     return delivered
 
 
+def _paired_whatsapp_chats() -> list[str]:
+    with session() as s:
+        return list(s.scalars(select(ChannelLink.external_chat_id)
+                              .where(ChannelLink.channel == "whatsapp", ChannelLink.active.is_(True))))
+
+
+def _whatsapp_module_sender() -> Callable[[str, str], bool] | None:
+    """``channels.whatsapp``'s own sender, if that module exists, is enabled, and offers one. Never raises on
+    import. Unlike Telegram (a paired chat is enough), WhatsApp is gated on ``CHANNEL.enabled()`` here since the
+    Cloud API needs its full secret/config set before a free-form send can work at all."""
+    try:
+        from aecom.channels import whatsapp as whatsapp_module
+    except ImportError:
+        return None
+    channel_obj = getattr(whatsapp_module, "channel", None) or getattr(whatsapp_module, "CHANNEL", None)
+    is_enabled = getattr(channel_obj, "enabled", None)
+    if is_enabled is None or not is_enabled():
+        return None
+    sender = getattr(whatsapp_module, "send", None)
+    if sender is None:
+        sender = getattr(channel_obj, "send", None)
+    return sender
+
+
+def _send_whatsapp(text: str) -> bool:
+    chat_ids = _paired_whatsapp_chats()
+    if not chat_ids:
+        return False
+    sender = _whatsapp_module_sender()
+    if sender is None:
+        return False
+    delivered = False
+    for chat_id in chat_ids:
+        try:
+            if sender(chat_id, text):
+                delivered = True
+        except Exception as exc:  # noqa: BLE001 - one bad send must not block the others or raise
+            _failed("whatsapp", exc, chat_id=chat_id)
+    return delivered
+
+
 def _send_ntfy(text: str, urgency: str) -> bool:
     url = secrets.get("NTFY_URL")
     if not url:
@@ -119,10 +168,12 @@ def route(event: dict[str, Any]) -> dict[str, bool]:
     """Deliver ``event`` on the best channel. Never raises; the dashboard inbox always has it regardless."""
     text = str(event.get("text") or "")
     urgency = event.get("urgency", "normal")
-    result = {"dashboard": True, "telegram": False, "ntfy": False}
+    result = {"dashboard": True, "telegram": False, "whatsapp": False, "ntfy": False}
     if _in_quiet_hours() and urgency != "high":
         return result
     result["telegram"] = _send_telegram(text)
     if not result["telegram"]:
+        result["whatsapp"] = _send_whatsapp(text)
+    if not result["telegram"] and not result["whatsapp"]:
         result["ntfy"] = _send_ntfy(text, urgency)
     return result
