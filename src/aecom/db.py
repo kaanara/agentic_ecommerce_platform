@@ -431,6 +431,98 @@ class Setting(Base):
     value: Mapped[str] = mapped_column(Text)
 
 
+# --------------------------------------------------------------------------- conversations (chat with agents)
+class Conversation(Base):
+    __tablename__ = "ops_conversations"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("cnv"))
+    title: Mapped[str] = mapped_column(String, default="")
+    agent_id: Mapped[str] = mapped_column(String, index=True)
+    channel: Mapped[str] = mapped_column(String, default="dashboard")  # dashboard | telegram | whatsapp | cli
+    started_by: Mapped[str] = mapped_column(String, default="owner")  # owner | agent
+    owner: Mapped[str] = mapped_column(String, default="")
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)  # folded older turns (long chats)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    unread: Mapped[int] = mapped_column(Integer, default=0)  # agent messages the owner has not seen
+    total_cost_eur: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+
+
+class ChatMessage(Base):
+    __tablename__ = "ops_messages"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[str] = mapped_column(String, ForeignKey("ops_conversations.id", ondelete="CASCADE"))
+    role: Mapped[str] = mapped_column(String)  # user | assistant
+    agent_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    content: Mapped[str] = mapped_column(Text, default="")  # masked before it is stored
+    tool_steps: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)  # name, short args, decision, approval_id
+    status: Mapped[str] = mapped_column(String, default="ok")
+    cost_eur: Mapped[float] = mapped_column(Float, default=0.0)
+    agent_run_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    escalations: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)  # approval ids
+    attachments: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    __table_args__ = (Index("ix_ops_messages_conversation", "conversation_id", "id"),)
+
+
+class ChannelLink(Base):
+    """A paired messaging account (Telegram/WhatsApp chat) allowed to talk to the agents."""
+
+    __tablename__ = "ops_channel_links"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    channel: Mapped[str] = mapped_column(String, index=True)
+    external_chat_id: Mapped[str] = mapped_column(String)
+    paired_by: Mapped[str] = mapped_column(String, default="")
+    paired_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    max_approve_tier: Mapped[str] = mapped_column(String, default="T1")  # highest tier approvable from this chat
+
+    __table_args__ = (UniqueConstraint("channel", "external_chat_id", name="uq_channel_link"),)
+
+
+class Job(Base):
+    """A UI-requested background job (backup, verify, restore, doctor) run by the scheduler process."""
+
+    __tablename__ = "ops_jobs"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("job"))
+    kind: Mapped[str] = mapped_column(String, index=True)  # backup | verify | restore | doctor
+    status: Mapped[str] = mapped_column(String, default="queued")  # queued | running | ok | error
+    requested_by: Mapped[str] = mapped_column(String, default="")
+    params: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+
+class PolicyVersion(Base):
+    """UI-edited policy.yaml versions; the active row wins over the file shipped in git."""
+
+    __tablename__ = "ops_policy_versions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    yaml: Mapped[str] = mapped_column(Text)
+    note: Mapped[str] = mapped_column(String, default="")
+    created_by: Mapped[str] = mapped_column(String, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class PersonaOverride(Base):
+    """UI-edited persona/company file content; the loader prefers it over the tracked file."""
+
+    __tablename__ = "ops_persona_overrides"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scope: Mapped[str] = mapped_column(String)  # agent id, or "company"
+    file_name: Mapped[str] = mapped_column(String)  # e.g. SOUL.md
+    content: Mapped[str] = mapped_column(Text)
+    base_file_hash: Mapped[str] = mapped_column(String, default="")  # hash of the git file at edit time
+    updated_by: Mapped[str] = mapped_column(String, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    __table_args__ = (UniqueConstraint("scope", "file_name", name="uq_persona_override"),)
+
+
 # --------------------------------------------------------------------------- memory
 class Memory(Base):
     """Long-term semantic memory. On Postgres, add a pgvector column; SQLite uses keyword recall."""
