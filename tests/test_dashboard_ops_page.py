@@ -20,11 +20,11 @@ def _page() -> AppTest:
     return at.run()
 
 
-def test_operations_page_renders_all_five_tabs(fresh_company):
+def test_operations_page_renders_all_six_tabs(fresh_company):
     at = _page()
     assert not at.exception
     assert [t.proto.label for t in at.tabs] == ["Run and maintenance", "Memory review", "Tool grants",
-                                                "Vendor provisioning", "Incident reports"]
+                                                "Vendor provisioning", "Incident reports", "Connections"]
 
 
 def test_operations_asks_for_a_name_first(fresh_company):

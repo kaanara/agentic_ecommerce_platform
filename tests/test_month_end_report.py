@@ -20,8 +20,8 @@ import pytest
 from sqlalchemy import select
 from streamlit.testing.v1 import AppTest
 
-from aecom import incidents, ledger, metrics, month_end, periods, reports
-from aecom.db import AgentRun, Campaign, LedgerEntry, Period, Refund, ledger_rewrites_allowed, now, session
+from aecom import incidents, ledger, metrics, month_end, payouts, periods, reports
+from aecom.db import AgentRun, Campaign, LedgerEntry, Order, Payout, Period, Refund, ledger_rewrites_allowed, now, session
 from aecom.graph.agents import daily_budget
 from aecom.persona.loader import agent_ids
 from aecom.simulator import _backdate
@@ -105,9 +105,8 @@ def test_build_matches_ground_truth_pnl_and_cash(february):
     assert data["checks"] == {"ledger_balanced": True, "every_mirrored_order_has_ledger_lines": True,
                               "period_status": "open", "ledger_fingerprint": None}
     assert data["unmatched_items"] == [] and data["unmatched_items_count"] == 0
-    assert data["payout_reconciliation"] == {"available": False,
-                                             "reason": "not available until payout reconciliation (F4) is built",
-                                             "open_items": []}
+    assert data["payout_reconciliation"] == {"count": 0, "gross_eur": 0.0, "fees_eur": 0.0, "refunds_eur": 0.0,
+                                             "net_eur": 0.0, "matched": 0, "mismatch": 0, "pending": 0, "open": []}
 
 
 def test_vat_per_country_sums_to_vat_payable(february):
@@ -140,6 +139,40 @@ def test_marketing_and_ai_budget_vs_actual(february):
     assert ai["total_spent_eur"] == round(sum(a["spent_eur"] for a in ai["by_agent"]), 4)
 
 
+def test_payout_reconciliation_section_has_real_numbers(february):
+    """F4: a reconciled (matched) payout and a still-pending one, both received in February, roll up into real
+    totals and counts - no more 'not available' placeholder. Reconciliation only matches mirrored (real
+    store-platform) orders (``Order.external_id`` set, see ``aecom.payouts`` module doc), so the fixture's two
+    mock orders are marked mirrored here, the same way ``test_revenue_milestone.py`` simulates a real order."""
+    start, end = month_end.bounds(FEB)
+    with session() as s:
+        for o in s.scalars(select(Order).where(Order.created_at >= start, Order.created_at < end)):
+            o.external_id = f"ls-{o.id}"
+    matched = payouts.ingest(payouts.LEMONSQUEEZY, {
+        "external_id": "ls_payout_feb", "period_start": start, "period_end": end, "currency": "EUR",
+        "gross_eur": 200.0, "fees_eur": 10.0, "refunds_eur": 50.0, "net_eur": 140.0}, "Ada")
+    reconciled = payouts.reconcile(matched["id"], "Ada")
+    assert reconciled["status"] == "matched"  # 200 (two orders) - 10 fees - 50 refund = 140
+    pending = payouts.ingest(payouts.LEMONSQUEEZY, {
+        "external_id": "ls_payout_feb_2", "currency": "EUR",
+        "gross_eur": 50.0, "fees_eur": 2.0, "refunds_eur": 0.0, "net_eur": 48.0}, "Ada")
+    with session() as s:
+        for pid in (matched["id"], pending["id"]):
+            s.get(Payout, pid).created_at = datetime(2026, 2, 20)
+
+    data = month_end.build(FEB)
+    pr = data["payout_reconciliation"]
+    assert pr["count"] == 2 and pr["matched"] == 1 and pr["mismatch"] == 0 and pr["pending"] == 1
+    assert (pr["gross_eur"], pr["fees_eur"], pr["refunds_eur"], pr["net_eur"]) == (250.0, 12.0, 50.0, 188.0)
+    assert pr["open"] == [{"id": pending["id"], "provider": "lemonsqueezy", "external_id": "ls_payout_feb_2",
+                           "status": "pending", "difference_eur": 0.0}]
+
+    text = month_end.numbers_text(data)
+    assert reports.number_check(text, data) == []
+    assert ("Payouts received: 2, gross \u20ac250.00, fees \u20ac12.00, refunds \u20ac50.00, net \u20ac188.00; "
+           "1 matched, 0 mismatch, 1 pending.") in text
+
+
 def test_numbers_text_passes_number_check_and_reads_well(february):
     data = month_end.build(FEB)
     text = month_end.numbers_text(data)
@@ -149,7 +182,7 @@ def test_numbers_text_passes_number_check_and_reads_well(february):
     assert "Total VAT payable: \u20ac24.66" in text
     assert "Top product: Close test with 2 orders" in text
     assert "Refunds booked: 1." in text and "Open incidents P1/P2/P3: 0/1/0." in text
-    assert "Payout reconciliation: not available until payout reconciliation (F4) is built." in text
+    assert "Payouts received: none this month." in text
     assert "Checks: ledger balanced True, every mirrored order booked True, period open." in text
 
 

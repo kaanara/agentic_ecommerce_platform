@@ -6,7 +6,11 @@ Every tool an agent can call is wrapped here. Order of checks:
   3. agents paused    → deny side-effecting calls except ``defaults.continue_while_paused`` (order delivery)
   4. forbidden pattern → deny sign-ups, logins and form submission (T4), read-only or not
   5. allowlist        → deny tools the agent was not granted (done when tools are built)
-  6. policy rule      → tier T0..T4, agent restriction, limits, price-change %, monthly budgets
+  6. policy rule      → tier T0..T4, agent restriction, limits, price-change %, monthly budgets. For
+                        ``mcp:<server>/<tool>`` (``resolve_rule``, F5): exact tool rule > server wildcard
+                        (``mcp:<server>/*``) > ``defaults.mcp_unclassified_tier`` - always escalates to a human
+                        unless a human already classified the tool or server. A destructive/financial-looking name
+                        on an otherwise unclassified MCP tool (``looks_destructive``) is bumped to at least T3.
   7. allow → execute; escalate → write an Approval and return immediately; deny → explain
 
 Escalations do *not* pause the graph. The exact call (tool + args) is parked in ``ops_approvals`` and
@@ -82,6 +86,52 @@ def is_forbidden(tool_name: str, policy: dict[str, Any] | None = None) -> bool:
     return any(fnmatch.fnmatchcase(name, p.lower()) for p in patterns)
 
 
+# F5: a name fragment that looks destructive or financial. Checked only for an *unclassified* MCP tool (no exact or
+# wildcard rule) - a human never got to look at it, so a name like this is treated as at least T3 rather than
+# whatever `defaults.mcp_unclassified_tier` says, and the bump shows up in the reason (and so in the audit log via
+# the normal "non-T0 / non-allow" logging in `run_gated`).
+MCP_DESTRUCTIVE_NAME_HINTS = ("create_refund", "delete", "send", "pay", "transfer", "charge", "submit", "purchase",
+                             "login", "sign_in", "download")
+
+
+def looks_destructive(tool_name: str) -> bool:
+    """True if the bare tool part of ``tool_name`` (after the last ``/`` for ``mcp:<server>/<tool>``) contains one of
+    ``MCP_DESTRUCTIVE_NAME_HINTS`` as a substring, case-insensitive."""
+    name = tool_name.rsplit("/", 1)[-1].lower() if tool_name.startswith("mcp:") else tool_name.lower()
+    return any(hint in name for hint in MCP_DESTRUCTIVE_NAME_HINTS)
+
+
+def resolve_rule(tool_name: str, policy: dict[str, Any], *, side_effect: bool) -> dict[str, Any]:
+    """The policy rule that applies to ``tool_name`` (F5).
+
+    For ``mcp:<server>/<tool>``: an exact rule for the tool > a server wildcard (``mcp:<server>/*``) >
+    ``defaults.mcp_unclassified_tier`` (falls back to ``defaults.unknown_tool_tier`` for a policy saved before F5).
+    A read-only call (``side_effect=False``) with no rule at all stays T0, same as an unclassified builtin tool.
+    A destructive/financial-looking name (``looks_destructive``) on an otherwise unclassified MCP tool is bumped to
+    at least T3, whatever the unclassified default would have said.
+
+    For any other tool name: the exact rule, or T0 (read-only) / ``defaults.unknown_tool_tier`` (side-effecting).
+    """
+    rules = policy["rules"]
+    if tool_name in rules:
+        return rules[tool_name]
+    if tool_name.startswith("mcp:"):
+        server = tool_name[len("mcp:"):].split("/", 1)[0]
+        wildcard = rules.get(f"mcp:{server}/*")
+        if wildcard is not None:
+            return wildcard
+        destructive = looks_destructive(tool_name)
+        tier = "T0" if not side_effect else policy["defaults"].get("mcp_unclassified_tier",
+                                                                   policy["defaults"]["unknown_tool_tier"])
+        if destructive:
+            tier = _max_tier(tier, "T3")
+            return {"tier": tier, "reason": f"Unclassified MCP tool '{tool_name}' looks destructive or financial "
+                                            "by name; treated as at least T3 until a human classifies it."}
+        return {"tier": tier, "reason": "Unclassified MCP tool."}
+    tier = "T0" if not side_effect else policy["defaults"]["unknown_tool_tier"]
+    return {"tier": tier, "reason": "Unclassified tool."}
+
+
 def _max_tier(a: str, b: str) -> str:
     return a if TIER_ORDER.index(a) >= TIER_ORDER.index(b) else b
 
@@ -144,10 +194,7 @@ def _t2_escalation(rule: dict[str, Any], args: dict[str, Any]) -> str | None:
 def evaluate(agent_id: str, tool_name: str, args: dict[str, Any], *, side_effect: bool = True,
              sandboxed: bool = False) -> GateResult:
     policy = load_policy()
-    rule = policy["rules"].get(tool_name)
-    if rule is None:
-        tier = "T0" if not side_effect else policy["defaults"]["unknown_tool_tier"]
-        rule = {"tier": tier, "reason": "Unclassified tool."}
+    rule = resolve_rule(tool_name, policy, side_effect=side_effect)
     tier = rule["tier"]
     if sandboxed and side_effect:
         tier = _max_tier(tier, policy["defaults"]["sandboxed_tool_tier"])

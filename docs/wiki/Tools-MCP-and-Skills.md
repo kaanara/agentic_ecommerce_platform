@@ -67,6 +67,30 @@ propose_tool (T1) → proposed → sandbox_tool (T1) → sandboxed → approve_t
 ```
 or `{"transport": "streamable_http", "url": "https://…/mcp"}`. Tools listed in `read_only_tools` are treated as T0. Everything else falls under its policy rule (key `mcp:<server>/<tool>`), or T3 if there's no rule.
 
+#### Policy rules for MCP tools (F5)
+`policy.yaml → rules` accepts two MCP-specific key shapes, with the same fields as any other rule (`tier`, `agents`,
+`limits`, `price_change_pct_max`, `monthly_budget_setting`, `reason`, …):
+- `mcp:<server>/<tool>` — an exact rule for one tool on one server, e.g. `mcp:aecom-store/refund_order`.
+- `mcp:<server>/*` — every other tool on that server that doesn't have its own exact rule.
+
+`aecom.policy.gate.resolve_rule` picks, in order: the exact rule, then the server wildcard, then
+`defaults.mcp_unclassified_tier` (ships as `T3` — an MCP tool nobody classified always needs a human; a read-only
+call with no rule at all still stays T0, same as an unclassified builtin tool). On top of that, an *unclassified*
+MCP tool (no exact or wildcard rule matched) whose name looks destructive or financial — `create_refund`, `delete`,
+`send`, `pay`, `transfer`, `charge`, `submit`, `purchase`, `login`, `sign_in`, `download` as a substring,
+case-insensitive (`aecom.policy.gate.looks_destructive`) — is bumped to at least T3 even if a vendor marked it
+read-only, and the escalation is audited like any other non-T0 decision. A `T4` MCP rule is a hard denial, exactly
+like a built-in `T4` rule. A sandboxed server still forces at least `defaults.sandboxed_tool_tier` on every
+side-effecting call, whatever its rule says — sandboxed servers stay read-only, unchanged by F5.
+
+Only the servers this repo actually seeds get a *live* rule (`src/aecom/bootstrap.py` seeds `aecom-store`); see
+[Policy and Approvals](Policy-and-Approvals#mcp-tools-f5) for the live examples and a commented-out one for a vendor
+we don't run (Stripe). `aecom.policy.versions.validate_yaml` rejects a `T0`/`T1` wildcard on a server whose name
+looks financial (`stripe`, `paypal`, `pay`, `bank`, `billing`, `invoice`, `checkout`, `finance`, `wallet`, `ledger`)
+unless the rule itself carries `acknowledge_financial_wildcard: true` — a real field, not a YAML comment, since
+comments don't survive parsing and can't be checked. `loosens()` treats lowering an MCP rule's tier/limits, or
+lowering `defaults.mcp_unclassified_tier`, exactly like any other loosening (step-up required).
+
 ### Vendor MCP onboarding: read-only tools first
 A new vendor's MCP server reaches an agent in two steps. The agent gets the read-only tools first, and a human widens that later.
 ```
@@ -82,6 +106,64 @@ Loading is done by `registry/mcp_manager.py` through `MultiServerMCPClient`, wit
 
 ### Skills
 `propose_tool(kind="skill", launch_config={"instructions": "..."})`. Approved and granted skills are appended to the agent's system prompt as `## Skill: <name>`. Use skills for reusable procedures like EU VAT pricing or a refund reply template.
+
+Two ways a skill's text ends up in the registry today:
+- **An agent proposes it** (normally the Foreman or the researcher — see `agents/foreman/TOOLS.md` /
+  `agents/researcher/TOOLS.md`): `propose_tool` → `sandbox_tool` → human `approve_tool` → human `grant_tool`, exactly
+  like the "self-tooling" scenario's `skill-eu-vat-pricing` (`src/aecom/scenarios.py`). This always lands at
+  `status="proposed"`, whatever is passed in.
+- **A human-reviewed doc is seeded at `aecom init`** (`src/aecom/bootstrap.py`: `seed_runbook_skills`,
+  `seed_scraping_policy_skill`). These are this app's own *operational* procedures (incident runbooks, the
+  researcher's scraping policy): the doc itself goes through normal PR review, so the seed writes
+  `status="approved", approved_by="system"` directly and only still needs a `grant_tool` to reach an agent.
+
+### Platform skills (F6): vendor/compliance checklists as files, proposed not auto-approved
+`skills/platform/*.md` (Etsy digital-listing rules, Shopify product-page SEO, EU VAT/OSS) are the F6 roadmap item.
+Each file carries YAML frontmatter in the same style as `agents/*/TOOLS.md` (`name`, `kind: skill`,
+`status: proposed`, `candidate_agents`, `version`, `last_reviewed`) with the skill's instructions as the markdown
+body, plus a `Sources to verify against` list (official domains only) and a `Last reviewed` line.
+
+These are vendor policy / tax-compliance content, not this app's own reviewed operational procedures, so they
+deliberately use the **first** path above, not the `seed_*_skill` "system-approved" shortcut: nothing auto-promotes
+them past `proposed`. To actually grant one, a human (normally via the Foreman) reads the file and calls, verbatim:
+```python
+propose_tool(name, "skill", description, {"instructions": body})  # body = the file's markdown, after frontmatter
+sandbox_tool(name)
+approve_tool(name)      # human
+grant_tool(name, agent_id)  # human, per candidate_agents in the frontmatter
+```
+`tests/test_platform_skills.py` proves each file's parsed body is valid input to this exact, unmodified call chain,
+and that `skills_for(agent)` only returns the text after all four steps — `propose_tool`/`sandbox_tool` alone never
+expose it to any agent.
+
+There is no code yet that reads `skills/platform/*.md` automatically at `aecom init` (unlike `Runbooks.md`). If that
+becomes desirable, the shape would be a new `seed_platform_skill_files()` in `bootstrap.py`, parallel to
+`seed_runbook_skills`, but — intentionally — stopping at `propose_tool`/`sandbox_tool` instead of writing
+`status="approved"` directly, so a human still approves and grants each one:
+```python
+def seed_platform_skill_files(path: Path = ROOT / "skills" / "platform") -> list[str]:
+    """F6: propose+sandbox each skills/platform/*.md file; a human still approves and grants it."""
+    from aecom.context import current_agent
+    from aecom.persona.loader import split_frontmatter
+    from aecom.tools.catalog import propose_tool, sandbox_tool
+
+    proposed: list[str] = []
+    token = current_agent.set("system")
+    try:
+        for file in sorted(path.glob("*.md")):
+            fm, body = split_frontmatter(file.read_text())
+            with session() as s:
+                if s.get(RegistryTool, fm["name"]) is not None:
+                    continue  # already proposed/sandboxed/approved: don't reset a human's progress
+            propose_tool(fm["name"], "skill", fm["name"], {"instructions": body})
+            sandbox_tool(fm["name"])
+            proposed.append(fm["name"])
+    finally:
+        current_agent.reset(token)
+    return proposed
+```
+called from `init()` alongside `seed_runbook_skills()`/`seed_scraping_policy_skill()`. This repo's catalog/registry
+code is intentionally untouched by this change; the above is a patch to review, not something already applied.
 
 ## The company's own MCP servers
 ```bash

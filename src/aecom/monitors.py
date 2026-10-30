@@ -23,7 +23,7 @@ from typing import Any
 from sqlalchemy import func, or_, select
 
 from aecom import alerts, incidents
-from aecom.db import AgentRun, Approval, ErrorRow, EventRow, Incident, LicenseKey, Order, session
+from aecom.db import AgentRun, Approval, ErrorRow, EventRow, Incident, LicenseKey, Order, Payout, session
 from aecom.db import now as db_now
 from aecom.observability import record_error
 
@@ -46,6 +46,7 @@ AWAITING_CONSENT_AFTER = timedelta(hours=24)
 MILESTONE_SUBJECT = "hosting_accounting_review"
 DEFAULT_MIGRATION_REVENUE_EUR = 25.0  # owner decision: move off the Raspberry Pi at about USD 20-30 revenue
 KILL_SWITCH_SINCE = "kill_switch_since"  # ops setting: ISO time the monitors first saw the kill switch on
+PAYOUT_STALE_AFTER = timedelta(days=14)  # F4: a payout still pending/mismatch past this age needs a human
 
 Problem = tuple[str, str]  # (subject, detail)
 Monitor = Callable[[datetime], list[Problem]]
@@ -329,12 +330,23 @@ def stale_backup_critical(now: datetime) -> list[Problem]:
     return []
 
 
+def payout_unmatched(now: datetime) -> list[Problem]:
+    """F4, P3: a payout still ``pending`` (never reconciled) or ``mismatch`` (reconciled, but the numbers don't
+    add up) for over 14 days needs a human to chase it down or correct the import."""
+    with session() as s:
+        rows = s.execute(select(Payout.id, Payout.provider, Payout.external_id, Payout.status).where(
+            Payout.status.in_(("pending", "mismatch")), Payout.created_at < now - PAYOUT_STALE_AFTER)
+            .order_by(Payout.id)).all()
+    return [(pid, f"payout {pid} ({provider} {ext}) has been '{status}' for over 14 days")
+            for pid, provider, ext, status in rows]
+
+
 MONITORS: dict[str, tuple[str, Monitor]] = {fn.__name__: (sev, fn) for sev, fn in (
     ("P1", undelivered_order), ("P1", unemailed_order), ("P1", ledger_imbalance), ("P1", duplicate_key),
     ("P1", order_dead_letter), ("P1", restock_failed), ("P1", stale_backup_critical),
     ("P2", other_dead_letter), ("P2", event_backlog), ("P2", stuck_run), ("P2", errors), ("P2", approval_ageing),
     ("P2", kill_switch_long), ("P2", refund_abuse), ("P2", policy_deny_spike), ("P2", stale_backup),
-    ("P3", awaiting_consent_order), ("P3", revenue_milestone))}
+    ("P3", awaiting_consent_order), ("P3", revenue_milestone), ("P3", payout_unmatched))}
 MONITOR_ERROR = "monitor_error"
 
 

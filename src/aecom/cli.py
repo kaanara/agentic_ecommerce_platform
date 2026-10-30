@@ -32,6 +32,7 @@
     aecom autonomy promote|demote TOOL --by NAME [--reason TEXT]   evidence-gated promotion / demotion to stage 1
     aecom autonomy log [--days N]          stage changes and autonomous actions
     aecom doctor [--json]                  health report (paste into an issue); exit 1 if any check fails
+    aecom payouts [list] | import FILE.csv --provider P --by NAME | reconcile [ID] | fetch-stripe [YYYY-MM-DD]
     aecom month-end YYYY-MM [--by NAME]    create the month-end close report for a finished month (J9)
     aecom period [list] | close|reopen YYYY-MM --by NAME [--note|--reason TEXT] | verify [YYYY-MM]   accounting months
     aecom export datev|csv YYYY-MM [--out FILE] [--by NAME]   accountant export of one finished month (J10)
@@ -192,6 +193,12 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--note", default="")
     s = sub.add_parser("doctor")
     s.add_argument("--json", action="store_true", help="machine-readable report")
+    s = sub.add_parser("payouts", help="platform payouts: list, import a CSV export, reconcile (F4)")
+    s.add_argument("action", nargs="?", default="list", choices=["list", "import", "reconcile", "fetch-stripe"])
+    s.add_argument("target", nargs="?", help="import: CSV file; reconcile: payout id (omit for all pending); "
+                                             "fetch-stripe: start date YYYY-MM-DD")
+    s.add_argument("--provider", default="lemonsqueezy")
+    s.add_argument("--by", default="cli-user")
     s = sub.add_parser("month-end", help="create the immutable month-end close report for a finished month (J9)")
     s.add_argument("period", help="YYYY-MM")
     s.add_argument("--by", default="cli-user")
@@ -457,6 +464,25 @@ def main(argv: list[str] | None = None) -> None:
         code = backup.run_cli(a.action, a.path, label=a.label, dest=a.dest, yes=a.yes)
         if code:
             sys.exit(code)
+    elif a.cmd == "payouts":
+        from pathlib import Path
+
+        from aecom import payouts
+
+        try:
+            if a.action == "list":
+                _print(payouts.list_payouts())
+            elif a.action == "import":
+                if not a.target:
+                    sys.exit("usage: aecom payouts import FILE.csv --provider lemonsqueezy|stripe|paypal --by NAME")
+                _print(payouts.import_csv(a.provider, Path(a.target).read_text(encoding="utf-8-sig"), by=a.by))
+            elif a.action == "fetch-stripe":
+                _print(payouts.fetch_stripe(a.target or "1970-01-01", by=a.by))
+            else:
+                ids = [a.target] if a.target else [p["id"] for p in payouts.list_payouts("pending")]
+                _print([payouts.reconcile(i, by=a.by) for i in ids])
+        except (ValueError, RuntimeError, OSError) as exc:
+            sys.exit(str(exc))
     elif a.cmd == "month-end":
         from aecom import month_end
 

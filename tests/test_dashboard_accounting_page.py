@@ -19,5 +19,5 @@ def test_accounting_page_renders_its_tabs(fresh_company):
     at.switch_page("app_pages/accounting.py")
     at.run()
     assert not at.exception
-    assert [t.proto.label for t in at.tabs] == ["Months", "Month-end report", "Accountant export", "Decision review"]
+    assert [t.proto.label for t in at.tabs] == ["Months", "Month-end report", "Payouts", "Accountant export", "Decision review"]
     assert any("Enter your name" in i.value for i in at.info)

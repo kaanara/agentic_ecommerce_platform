@@ -6,10 +6,10 @@ NAT64 IPv6; the deprecated IPv4-compatible (``::a.b.c.d``) and SIIT (``::ffff:0:
 
 DNS rebinding: checking a name and then letting the HTTP client resolve it again leaves a window in which the name
 can flip to a private address. `resolve_public` therefore resolves once and returns the validated IP, and
-`pinned_get` dials exactly that IP: the request URL carries the IP literal, the ``Host`` header carries the original
-host, and the ``sni_hostname`` request extension makes httpcore send the original host as TLS SNI *and* as the
-``server_hostname`` the default SSL context verifies the certificate against - so TLS verification stays on and is
-checked against the name the caller asked for, not the IP. Proxies from the environment are ignored
+`pinned_get`/`pinned_post` dial exactly that IP: the request URL carries the IP literal, the ``Host`` header carries
+the original host, and the ``sni_hostname`` request extension makes httpcore send the original host as TLS SNI *and*
+as the ``server_hostname`` the default SSL context verifies the certificate against - so TLS verification stays on
+and is checked against the name the caller asked for, not the IP. Proxies from the environment are ignored
 (``trust_env=False``), since a proxy would resolve the name itself.
 """
 
@@ -18,6 +18,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -132,5 +133,18 @@ def pinned_get(target: Target, *, timeout: float = 15, headers: dict[str, str] |
     """GET `target` without following redirects, connecting to the validated `target.ip` only (see module doc)."""
     with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False) as client:
         request = client.build_request("GET", target.pinned_url, headers={**(headers or {}), "Host": target.host_header},
+                                       extensions={"sni_hostname": target.ascii_host})
+        return client.send(request)
+
+
+def pinned_post(target: Target, *, data: dict[str, Any] | None = None, json: dict[str, Any] | None = None,
+                headers: dict[str, str] | None = None, timeout: float = 15) -> httpx.Response:
+    """POST `target` without following redirects, connecting to the validated `target.ip` only - the POST
+    counterpart of `pinned_get` (see module doc). `data` sends a form-encoded body (e.g. an OAuth token request),
+    `json` a JSON body; pass at most one. Generic so callers besides `channels.whatsapp` (which still has its own
+    copy) can share one pinned-POST implementation instead of hand-rolling it."""
+    with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False) as client:
+        request = client.build_request("POST", target.pinned_url, data=data, json=json,
+                                       headers={**(headers or {}), "Host": target.host_header},
                                        extensions={"sni_hostname": target.ascii_host})
         return client.send(request)

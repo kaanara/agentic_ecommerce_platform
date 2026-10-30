@@ -1,0 +1,43 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "txn_ch1fixture",
+      "object": "balance_transaction",
+      "amount": 6000,
+      "fee": 180,
+      "net": 5820,
+      "type": "charge",
+      "currency": "eur",
+      "created": 1769820000,
+      "status": "available",
+      "source": "ch_1fixture"
+    },
+    {
+      "id": "txn_ch2fixture",
+      "object": "balance_transaction",
+      "amount": 4000,
+      "fee": 120,
+      "net": 3880,
+      "type": "charge",
+      "currency": "eur",
+      "created": 1769830000,
+      "status": "available",
+      "source": "ch_2fixture"
+    },
+    {
+      "id": "txn_rf1fixture",
+      "object": "balance_transaction",
+      "amount": -500,
+      "fee": 0,
+      "net": -500,
+      "type": "refund",
+      "currency": "eur",
+      "created": 1769840000,
+      "status": "available",
+      "source": "re_1fixture"
+    }
+  ],
+  "has_more": false,
+  "url": "/v1/balance_transactions"
+}

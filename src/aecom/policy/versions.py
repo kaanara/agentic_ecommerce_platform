@@ -1,10 +1,12 @@
 """UI-edited policy versions (``ops_policy_versions``). ``aecom.policy.gate.load_policy`` loads ``active_yaml()``
 when a version is active, else falls back to the file shipped in git.
 
-Every saved or activated version must pass ``validate_yaml`` (the same shape ``aecom.policy.gate.evaluate`` reads).
-``loosens(old, new)`` is true when an existing rule gets a lower tier, a higher limit, a dropped monthly budget cap,
-or any field of a T4 rule changes - saving or activating such a version needs ``step_up_ok=True`` (the dashboard
-password again), matching the "loosens a rule" step-up case in the settings plan.
+Every saved or activated version must pass ``validate_yaml`` (the same shape ``aecom.policy.gate.evaluate`` reads;
+this includes ``mcp:<server>/<tool>`` and ``mcp:<server>/*`` rules, F5). ``loosens(old, new)`` is true when an
+existing rule (a built-in or an MCP one) gets a lower tier, a higher limit, a dropped monthly budget cap, or any
+field of a T4 rule changes, or when ``defaults.unknown_tool_tier``, ``defaults.sandboxed_tool_tier`` or (F5)
+``defaults.mcp_unclassified_tier`` drops a tier - saving or activating such a version needs ``step_up_ok=True`` (the
+dashboard password again), matching the "loosens a rule" step-up case in the settings plan.
 """
 
 from __future__ import annotations
@@ -21,14 +23,27 @@ from aecom.db import PolicyVersion, now, session
 # (importing gate at module scope here would be circular).
 TIER_ORDER = ["T0", "T1", "T2", "T3", "T4"]
 
+# F5: name fragments that make an MCP server "look financial" for the wildcard-override check below. Mirrors the
+# spirit of aecom.policy.gate.MCP_DESTRUCTIVE_NAME_HINTS but at the server level, not the tool level.
+FINANCIAL_SERVER_HINTS = ("stripe", "paypal", "pay", "bank", "billing", "invoice", "checkout", "finance", "wallet",
+                         "ledger")
+
 
 def _file_yaml() -> str:
     return get_settings().policy_file.read_text()
 
 
+def _looks_financial_server(server: str) -> bool:
+    name = server.lower()
+    return any(hint in name for hint in FINANCIAL_SERVER_HINTS)
+
+
 def validate_yaml(yaml_text: str) -> dict[str, Any]:
     """Parse and sanity-check a candidate policy.yaml. Raises ValueError (message fit for the UI) if it would break
-    the gate: bad YAML, no ``defaults``/``rules`` mapping, an unknown tier, or a non-numeric limit."""
+    the gate: bad YAML, no ``defaults``/``rules`` mapping, an unknown tier, a non-numeric limit, or (F5) a
+    ``mcp:<server>/*`` wildcard that would allow T0/T1 on a financial-looking server without an explicit
+    ``acknowledge_financial_wildcard: true`` on that rule (a real field, not a YAML comment - comments don't survive
+    parsing so they can't be checked)."""
     try:
         policy = yaml.safe_load(yaml_text)
     except yaml.YAMLError as exc:
@@ -41,6 +56,8 @@ def validate_yaml(yaml_text: str) -> dict[str, Any]:
     for key in ("unknown_tool_tier", "sandboxed_tool_tier"):
         if defaults.get(key) not in TIER_ORDER:
             raise ValueError(f"defaults.{key} must be one of {TIER_ORDER}")
+    if "mcp_unclassified_tier" in defaults and defaults["mcp_unclassified_tier"] not in TIER_ORDER:
+        raise ValueError(f"defaults.mcp_unclassified_tier must be one of {TIER_ORDER}")
     rules = policy.get("rules")
     if not isinstance(rules, dict):
         raise ValueError("rules: is required")
@@ -54,6 +71,11 @@ def validate_yaml(yaml_text: str) -> dict[str, Any]:
                 float(maximum)
             except (TypeError, ValueError):
                 raise ValueError(f"rules.{name}.limits.{arg} must be a number") from None
+        if name.startswith("mcp:") and name.endswith("/*") and rule["tier"] in ("T0", "T1"):
+            server = name[len("mcp:"):-len("/*")]
+            if _looks_financial_server(server) and not rule.get("acknowledge_financial_wildcard"):
+                raise ValueError(f"rules.{name}: a T0/T1 wildcard on a financial-looking server needs "
+                                 "acknowledge_financial_wildcard: true")
     return policy
 
 
@@ -98,10 +120,10 @@ def loosens(old_yaml: str, new_yaml: str) -> bool:
         if name not in new_rules and old_rule.get("tier") in ("T3", "T4"):
             return True  # a high-stakes rule dropped outright
     old_defaults, new_defaults = old.get("defaults") or {}, new.get("defaults") or {}
-    for key in ("unknown_tool_tier", "sandboxed_tool_tier"):
+    for key in ("unknown_tool_tier", "sandboxed_tool_tier", "mcp_unclassified_tier"):
         o, n = old_defaults.get(key), new_defaults.get(key)
         if o in TIER_ORDER and n in TIER_ORDER and TIER_ORDER.index(n) < TIER_ORDER.index(o):
-            return True
+            return True  # F5: lowering the MCP-unclassified default (same treatment as unknown_tool_tier)
     if set(old_defaults.get("forbidden_patterns") or []) - set(new_defaults.get("forbidden_patterns") or []):
         return True  # a forbidden pattern removed
     return False

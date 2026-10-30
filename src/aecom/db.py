@@ -113,6 +113,30 @@ class DecisionReview(Base):
     __table_args__ = (UniqueConstraint("decision_id", "quarter", name="uq_decision_review"),)
 
 
+class Payout(Base):
+    """A payout from a payment platform (F4): what the platform paid out, the fees it kept, and the orders it covers."""
+
+    __tablename__ = "ops_payouts"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("pay"))
+    provider: Mapped[str] = mapped_column(String)  # lemonsqueezy | stripe | paypal
+    external_id: Mapped[str] = mapped_column(String)
+    period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    currency: Mapped[str] = mapped_column(String, default="EUR")
+    gross_eur: Mapped[float] = mapped_column(Float, default=0.0)
+    fees_eur: Mapped[float] = mapped_column(Float, default=0.0)
+    refunds_eur: Mapped[float] = mapped_column(Float, default=0.0)
+    net_eur: Mapped[float] = mapped_column(Float, default=0.0)  # what actually reached the bank
+    status: Mapped[str] = mapped_column(String, default="pending")  # pending | matched | mismatch
+    difference_eur: Mapped[float] = mapped_column(Float, default=0.0)  # expected minus actual
+    matched_orders: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    fee_txn: Mapped[str | None] = mapped_column(String, nullable=True)  # ledger transaction that booked the fees
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    __table_args__ = (UniqueConstraint("provider", "external_id", name="uq_payout"),)
+
+
 class Vendor(Base):
     __tablename__ = "company_vendors"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("ven"))

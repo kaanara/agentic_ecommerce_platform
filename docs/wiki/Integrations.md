@@ -114,6 +114,22 @@ The simulator and `create_order` scenarios need `STORE_ADAPTER=mock`. Payload sh
 ## Ad platforms and social
 Mocked today: `launch_campaign` sets the campaign live, and the simulator generates traffic and orders per channel profile. For a real channel, provision the account (see above) and approve that platform's MCP server for Marketing. Spend stays gated by `launch_campaign` limits and the monthly budget.
 
+## OAuth token store (F2)
+Some integrations (Etsy, Google Ads, Meta so far) don't take a long-lived API key like the ones above; they hand out a **refresh token** once, which must be exchanged for a short-lived **access token** as needed. That doesn't fit the usual places:
+- **Not `.env`.** `SecretsProvider` (`aecom.secrets`) parses `.env` once at process start, and the dashboard Settings page's safe writer (`aecom.envfile`) rewrites it wholesale for human-edited config - neither suits a value this module itself updates every refresh, and a refresh can rotate the refresh token too.
+- **Not the database.** `aecom backup` copies the database file(s) and hands the result to a human or an off-device target; a backup must never carry live credentials.
+
+So tokens live in their own file, `data/oauth_tokens.json` (path overridable by `OAUTH_TOKEN_FILE`, for tests), written with the same discipline as `.env`: a temp file in the same directory, `chmod 0600`, then an atomic `os.replace`. It refuses outright to write under `BACKUP_DIR`. All of this is `src/aecom/oauth_tokens.py`:
+
+- **`PROVIDERS`** is a small table to extend: name, authorize/token URLs, scopes, and the env var names of the client id/secret (read through `aecom.secrets` at call time, like every other credential).
+- **`set_refresh_token(provider, token, by)`** stores the refresh token a human pasted in after consenting on the provider's page (audited as `by`; the token value itself never reaches the audit row, a log or `observability.record_error` - every outgoing/incoming secret is masked first, the same pattern as `aecom.integrations.ping`).
+- **`access_token(provider)`** returns a currently-valid access token, refreshing through the provider's token endpoint via `net_guard.pinned_post` (the same SSRF-guarded, IP-pinned POST `channels.whatsapp` uses for replies - now a generic `net_guard.pinned_post` helper, not hand-rolled) whenever the stored one is missing or within 60 seconds of expiry. A provider that rotates the refresh token on every call is tolerated: the new one is saved before the access token is returned. At most one refresh per provider is in flight per process; other callers share its result instead of each firing their own request. A failed refresh raises `OAuthError` (already masked) and records a masked ops error; the stored refresh token is kept (only `last_error` changes) so a transient outage doesn't require reconnecting.
+- **`status()`** reports, per provider, `connected`, `expires_at`, `last_refreshed`, `last_error`, `connected_at`, `connected_by` - never a token. This is the only thing the dashboard reads.
+- **`disconnect(provider, by)`** deletes the stored tokens (audited).
+- **`authorize_url(provider, state, redirect_uri)`** / **`exchange_code(provider, code, verifier, redirect_uri)`** build the PKCE (RFC 7636, S256) consent link and the matching code exchange, for a future public redirect handler - not wired to a route yet, but usable and tested offline.
+
+**Today's connect flow is entirely human-driven** (Operations > Connections tab, `dashboard/_ops_connections.py`): a card per provider shows its status, a "Connect" expander with the consent link and a write-only field to paste the refresh token (validated inline: not empty, no whitespace, a plausible length - never shown again once saved), and "Disconnect" behind a confirmation dialog. Nothing on the tab ever displays a token.
+
 ## Claude (Anthropic API)
 `langchain-anthropic` `ChatAnthropic`, one model per tier, prompt caching on the persona prompt, and `max_retries=3`. The Researcher gets Anthropic's server-side **web search** (`server_tools: [web_search]`, tool type `WEB_SEARCH_TOOL_TYPE`).
 

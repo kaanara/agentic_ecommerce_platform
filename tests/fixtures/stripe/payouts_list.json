@@ -1,0 +1,23 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "po_1PAYOUTfixture01",
+      "object": "payout",
+      "amount": 9200,
+      "arrival_date": 1769990400,
+      "automatic": true,
+      "balance_transaction": "txn_payout01",
+      "created": 1769904000,
+      "currency": "eur",
+      "description": null,
+      "destination": "ba_1fixture",
+      "livemode": false,
+      "method": "standard",
+      "status": "paid",
+      "type": "bank_account"
+    }
+  ],
+  "has_more": false,
+  "url": "/v1/payouts"
+}

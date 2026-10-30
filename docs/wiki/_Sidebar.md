@@ -14,6 +14,7 @@
 - [Monitoring and Alerting](Monitoring-and-Alerting)
 - [Backups](Backups)
 - [Accounting Export](Accounting-Export)
+- [Payouts](Payouts)
 - [Integrations](Integrations)
 - [Configuration](Configuration)
 - [Settings](Settings)

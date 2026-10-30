@@ -15,6 +15,7 @@ if not by:
 
 TABS = [("Months", "_acct_periods", "render_periods_tab"),
         ("Month-end report", "_acct_report", "render_month_end_tab"),
+        ("Payouts", "_acct_payouts", "render_payouts_tab"),
         ("Accountant export", "_acct_export", "render_export_tab"),
         ("Decision review", "_acct_decisions", "render_decision_review_tab")]
 

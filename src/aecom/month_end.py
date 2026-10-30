@@ -1,9 +1,10 @@
 """J9: month-end close report for one calendar month (``YYYY-MM``).
 
 P&L, cash movement, VAT per country and rate (OSS), budget vs actual (marketing and AI), top products, refunds,
-open incidents, unmatched ledger items and a payout reconciliation placeholder (F4 is not built yet: this section
-just lists what is open). Numbers are code-computed exactly like every other report (``aecom.reports``); period
-status and its ledger fingerprint come from ``aecom.periods`` (J8) when the month has been closed.
+open incidents, unmatched ledger items and payout reconciliation (F4: platform payouts ingested and reconciled
+through ``aecom.payouts``, counted by the month they were received). Numbers are code-computed exactly like every
+other report (``aecom.reports``); period status and its ledger fingerprint come from ``aecom.periods`` (J8) when
+the month has been closed.
 
     month_end.build(period)            # the data dict, for any month (past, current or future-but-started)
     month_end.numbers_text(data)       # deterministic numbers-only markdown text
@@ -26,7 +27,7 @@ from sqlalchemy import func, select
 from aecom import incidents, metrics, periods, reports
 from aecom.chaos.invariants import every_mirrored_order_has_ledger_lines, ledger_balanced, no_order_without_ledger_lines
 from aecom.company_settings import get_setting
-from aecom.db import AgentRun, LedgerEntry, Period, Refund, now, session
+from aecom.db import AgentRun, LedgerEntry, Payout, Period, Refund, now, session
 from aecom.graph.agents import daily_budget
 from aecom.persona.loader import agent_ids
 from aecom.policy.gate import load_policy
@@ -123,7 +124,20 @@ def _checks(period: str) -> tuple[dict[str, Any], list[dict[str, str]]]:
             "period_status": period_status, "ledger_fingerprint": fingerprint}, unmatched
 
 
-PAYOUT_RECONCILIATION_REASON = "not available until payout reconciliation (F4) is built"
+def _payouts(start: datetime, end: datetime) -> dict[str, Any]:
+    """F4: platform payouts received in the month (``ops_payouts.created_at``, same ingestion-time convention
+    every other section of this report uses): totals and how many have been reconciled (``aecom.payouts``)."""
+    with session() as s:
+        rows = list(s.scalars(select(Payout).where(*_between(Payout.created_at, start, end)).order_by(Payout.id)))
+    by_status = {st: sum(1 for p in rows if p.status == st) for st in ("matched", "mismatch", "pending")}
+    open_items = [{"id": p.id, "provider": p.provider, "external_id": p.external_id, "status": p.status,
+                  "difference_eur": round(p.difference_eur, 2)} for p in rows if p.status != "matched"]
+    return {"count": len(rows), "gross_eur": round(sum(p.gross_eur for p in rows), 2),
+            "fees_eur": round(sum(p.fees_eur for p in rows), 2),
+            "refunds_eur": round(sum(p.refunds_eur for p in rows), 2),
+            "net_eur": round(sum(p.net_eur for p in rows), 2),
+            "matched": by_status["matched"], "mismatch": by_status["mismatch"], "pending": by_status["pending"],
+            "open": open_items}
 
 
 def build(period: str) -> dict[str, Any]:
@@ -156,7 +170,7 @@ def build(period: str) -> dict[str, Any]:
                               "subject": i["subject"]} for i in open_incidents]},
         "unmatched_items": unmatched,
         "unmatched_items_count": len(unmatched),
-        "payout_reconciliation": {"available": False, "reason": PAYOUT_RECONCILIATION_REASON, "open_items": unmatched},
+        "payout_reconciliation": _payouts(start, end),
         "checks": checks,
     }
 
@@ -197,7 +211,14 @@ def numbers_text(data: dict[str, Any]) -> str:
     inc = data["incidents"]["by_severity"]
     lines.append(f"Open incidents P1/P2/P3: {inc['P1']}/{inc['P2']}/{inc['P3']}.")
     lines.append(f"Unmatched ledger items: {data['unmatched_items_count']}.")
-    lines.append(f"Payout reconciliation: {PAYOUT_RECONCILIATION_REASON}.")
+    pr = data["payout_reconciliation"]
+    if pr["count"]:
+        lines.append(f"Payouts received: {pr['count']}, gross \u20ac{pr['gross_eur']:.2f}, "
+                    f"fees \u20ac{pr['fees_eur']:.2f}, refunds \u20ac{pr['refunds_eur']:.2f}, "
+                    f"net \u20ac{pr['net_eur']:.2f}; {pr['matched']} matched, {pr['mismatch']} mismatch, "
+                    f"{pr['pending']} pending.")
+    else:
+        lines.append("Payouts received: none this month.")
     c = data["checks"]
     lines.append(f"Checks: ledger balanced {c['ledger_balanced']}, every mirrored order booked "
                 f"{c['every_mirrored_order_has_ledger_lines']}, period {c['period_status']}"

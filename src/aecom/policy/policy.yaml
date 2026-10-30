@@ -20,9 +20,18 @@
 #                lowered automatically or by a human, always back to 1). A stage may override ONLY "limits" (merged over
 #                the base limits), "price_change_pct_max" and (stage 3) "notify: true". HARD CAPS NEVER MOVE: a stage
 #                never touches monthly_budget_setting, recipient_must_be_counterparty, tier, agents or any T3/T4 rule.
+#
+# F5: MCP tools (aecom.policy.gate.resolve_rule). A rule key can be ``mcp:<server>/<tool>`` (exact) or
+# ``mcp:<server>/*`` (every tool on that server not given its own exact rule); both take the same fields as any other
+# rule above. Resolution order: exact tool rule > server wildcard > `defaults.mcp_unclassified_tier`. A wildcard rule
+# with tier T0 or T1 on a server whose name looks financial (stripe, paypal, pay, bank, billing, invoice, checkout,
+# finance, wallet, ledger) is rejected by `aecom.policy.versions.validate_yaml` unless it carries
+# ``acknowledge_financial_wildcard: true`` (a plain field, not a comment - comments are stripped by the YAML parser
+# and can't be validated).
 
 defaults:
-  unknown_tool_tier: T3          # MCP tools nobody classified yet are treated as high-stakes
+  unknown_tool_tier: T3          # non-MCP tools nobody classified yet (should not normally happen) are high-stakes
+  mcp_unclassified_tier: T3      # MCP tools nobody classified (no exact or server-wildcard rule) need a human (F5)
   sandboxed_tool_tier: T3        # anything from a sandboxed MCP server needs a human
   # Side-effecting tools that keep running while ops_settings.agents_paused is on (the kill switch still stops them).
   continue_while_paused:
@@ -229,6 +238,22 @@ rules:
     tier: T3
     agents: [foreman]
     reason: "Changes which agent can use which capability."
+
+  # ---------------------------------------------------------------- MCP tools (F5)
+  # "mcp:<server>/<tool>" exact, or "mcp:<server>/*" for every other tool on that server. Only the servers the repo
+  # actually seeds get a live rule here (grep registry seeds: aecom.bootstrap seeds "aecom-store" in
+  # init(with_registry_examples=True)); anything else stays unclassified (defaults.mcp_unclassified_tier) until a
+  # human classifies it via propose_tool/approve_tool/grant_tool. See docs/wiki/Policy-and-Approvals.md for a
+  # commented-out stripe example (not live - no such server is registered).
+  mcp:aecom-store/refund_order:
+    tier: T2
+    agents: [support, finance]
+    limits: {amount_eur: 50}
+    reason: "Same limit as the built-in refund_order (F5); the MCP-qualified name needs its own rule."
+  mcp:aecom-store/deliver_order: {tier: T1, agents: [store_ops]}
+  mcp:aecom-store/*:
+    tier: T3
+    reason: "Any other aecom-store tool (create/activate/update_price, ...) needs a human until classified."
 
   # ---------------------------------------------------------------- never by an agent
   delete_customer_data: {tier: T4}

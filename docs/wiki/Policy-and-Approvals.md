@@ -19,7 +19,7 @@ Every tool call is checked by `src/aecom/policy/gate.py`, using the escalation m
 3. **Agents paused**: if it's on, every side-effecting call is denied except `defaults.continue_while_paused` (delivery).
 4. **Forbidden patterns**: sign-up, login and form tools are denied as T4, read-only or not (see below).
 5. **Allowlist**: the agent only receives tools it was granted.
-6. **Rule**: tier, agent restriction (`agents:`), then the T2 checks: `limits`, `price_change_pct_max`, `monthly_budget_setting`.
+6. **Rule**: tier, agent restriction (`agents:`), then the T2 checks: `limits`, `price_change_pct_max`, `monthly_budget_setting`. For `mcp:<server>/<tool>`, the rule is resolved exact tool rule > server wildcard (`mcp:<server>/*`) > `defaults.mcp_unclassified_tier` (see [MCP tools (F5)](#mcp-tools-f5)).
 7. Unknown tools (for example from a new MCP server) are treated as T3 when they have side effects. Anything from a **sandboxed** server is at least T3.
 
 ## No accounts, no logins
@@ -52,6 +52,44 @@ No built-in catalog tool may match a pattern (enforced by `tests/test_policy_den
 The marketing budget is exact per calendar month (R9): committed = marketing spend booked this UTC month (ledger `marketing_expense` lines created since the month start; campaign spend from earlier months does not count, paused or ended campaigns still count) + remaining budget (budget - spent) of the other live campaigns + the requested budget (on a relaunch only the part not yet spent). Escalates when that exceeds `marketing_budget_month_eur`.
 
 Monthly budgets live in `ops_settings` (`marketing_budget_month_eur` = 1500, `vendor_budget_month_eur` = 400 by default).
+
+## MCP tools (F5)
+MCP tools arrive at the gate as `mcp:<server>/<tool>` (see [Tools, MCP and Skills](Tools-MCP-and-Skills#policy-rules-for-mcp-tools-f5)
+for the full resolution order and the registry/onboarding side). A rule key can be:
+- `mcp:<server>/<tool>` — exact, same fields as any other rule.
+- `mcp:<server>/*` — every other tool on that server.
+
+Resolution: exact > wildcard > `defaults.mcp_unclassified_tier` (ships as `T3`, so an MCP tool nobody classified
+always needs a human). An unclassified tool whose name looks destructive or financial (`create_refund`, `delete`,
+`send`, `pay`, `transfer`, `charge`, `submit`, `purchase`, `login`, `sign_in`, `download`) is bumped to at least T3
+and the escalation is audited. A `T4` MCP rule denies, exactly like a built-in one. A sandboxed server is still at
+least `defaults.sandboxed_tool_tier` regardless of its rule (sandboxed servers stay read-only).
+
+Live examples (the only server this repo seeds, `src/aecom/bootstrap.py`):
+```yaml
+rules:
+  mcp:aecom-store/refund_order:
+    tier: T2
+    agents: [support, finance]
+    limits: {amount_eur: 50}
+  mcp:aecom-store/deliver_order: {tier: T1, agents: [store_ops]}
+  mcp:aecom-store/*: {tier: T3}   # anything else on that server needs a human until classified
+```
+
+Commented-out example for a vendor we don't actually run (not live — no such server is registered, so this is
+documentation only, not loaded from `policy.yaml`):
+```yaml
+  # mcp:stripe/create_refund:
+  #   tier: T3
+  #   agents: [support, finance]
+  #   limits: {amount_eur: 50}
+  #   reason: "Stripe refunds always need a human; the limit documents the amount a human is asked to approve."
+```
+A `mcp:<server>/*` wildcard with tier T0 or T1 on a server whose name looks financial (`stripe`, `paypal`, `pay`,
+`bank`, `billing`, `invoice`, `checkout`, `finance`, `wallet`, `ledger`) is rejected by `validate_yaml` unless the
+rule also sets `acknowledge_financial_wildcard: true` — a real YAML field, not a comment (comments don't survive
+parsing, so they can't be checked). `loosens()` treats lowering an MCP rule, or lowering
+`defaults.mcp_unclassified_tier`, like any other loosening (step-up required to save or activate).
 
 ## What the agent sees
 - `DENIED by policy (T2): refund_order is reserved for support, finance.`

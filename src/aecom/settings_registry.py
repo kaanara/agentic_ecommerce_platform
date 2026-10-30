@@ -104,6 +104,7 @@ _FIELDS: list[Field] = [
        choices=("mock", "lemonsqueezy"), risk="critical"),
     _secret("lemonsqueezy_api_key", "Store and email", "Lemon Squeezy API key"),
     _secret("lemonsqueezy_webhook_secret", "Store and email", "Lemon Squeezy webhook secret"),
+    _secret("stripe_api_key", "Store and email", "Stripe API key", "Read-only key for fetching payouts (use a restricted key)."),
     _f("lemonsqueezy_store_id", "Store and email", "Lemon Squeezy store id", risk="sensitive"),
     _f("lemonsqueezy_base_url", "Store and email", "Lemon Squeezy API URL", risk="sensitive"),
     _f("download_route_enabled", "Store and email", "Customer download route",
