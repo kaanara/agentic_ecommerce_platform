@@ -132,27 +132,74 @@ def unread_total() -> int:
         return int(s.scalar(select(func.coalesce(func.sum(Conversation.unread), 0))) or 0)
 
 
+def _attachment_names(s: Any, conversation_ids: list[str]) -> set[str]:
+    """Attachment ``name`` fields recorded on every message of the given conversations (chat.py stores the raw
+    attachment metadata it was given, not the on-disk path; filenames are reconstructed in ``_delete_attachment_files``)."""
+    names: set[str] = set()
+    if not conversation_ids:
+        return names
+    rows = s.scalars(select(ChatMessage.attachments).where(ChatMessage.conversation_id.in_(conversation_ids)))
+    for attachments in rows:
+        for att in attachments or []:
+            name = att.get("name") if isinstance(att, dict) else None
+            if name:
+                names.add(str(name))
+    return names
+
+
+def _delete_attachment_files(names: set[str]) -> None:
+    """Best-effort removal of the attachment blobs chat.py saved as ``f"{new_id('att')}_{name}"`` under its
+    ``ATTACHMENT_DIR``. Only ever deletes a file that both lives directly inside that directory and ends with
+    ``_<recorded name>`` (never a path built from untrusted input), and never raises: a filesystem hiccup must not
+    stop a conversation delete or a retention sweep."""
+    if not names:
+        return
+    try:
+        # local import: chat.py imports this module at load time, so importing it back here at module scope
+        # would be circular
+        from aecom.chat import ATTACHMENT_DIR
+
+        base = ATTACHMENT_DIR.resolve()
+        if not base.is_dir():
+            return
+        for path in base.iterdir():
+            try:
+                if not path.is_file() or path.resolve().parent != base:
+                    continue
+                if any(path.name.endswith(f"_{name}") for name in names):
+                    path.unlink(missing_ok=True)
+            except OSError:
+                continue
+    except Exception:  # noqa: BLE001 - attachment cleanup must never block retention/delete
+        return
+
+
 def delete(conversation_id: str, by: str = "") -> bool:
-    """Hard delete (messages first: SQLite does not cascade). Attachment files are removed by the chat layer."""
+    """Hard delete (messages first: SQLite does not cascade), plus any attachment files it saved to disk."""
     with session() as s:
         if s.get(Conversation, conversation_id) is None:
             return False
+        names = _attachment_names(s, [conversation_id])
         s.execute(sa_delete(ChatMessage).where(ChatMessage.conversation_id == conversation_id))
         s.execute(sa_delete(Conversation).where(Conversation.id == conversation_id))
+    _delete_attachment_files(names)
     audit(f"human:{by}" if by else "system", "conversation_delete", "ok", {"conversation_id": conversation_id})
     return True
 
 
 def purge_older_than(days: int) -> int:
-    """Retention: delete conversations whose last activity is older than ``days`` (0 or less = keep forever)."""
+    """Retention: delete conversations (and their attachment files) whose last activity is older than ``days``
+    (0 or less = keep forever)."""
     if days <= 0:
         return 0
     cutoff = now() - timedelta(days=days)
     with session() as s:
         ids = list(s.scalars(select(Conversation.id).where(Conversation.updated_at < cutoff)))
+        names = _attachment_names(s, ids)
         if ids:
             s.execute(sa_delete(ChatMessage).where(ChatMessage.conversation_id.in_(ids)))
             s.execute(sa_delete(Conversation).where(Conversation.id.in_(ids)))
+    _delete_attachment_files(names)
     if ids:
         audit("system", "conversation_purge", "ok", {"count": len(ids), "older_than_days": days})
     return len(ids)

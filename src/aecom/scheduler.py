@@ -151,6 +151,17 @@ def run_jobs() -> None:
         log.info("jobs: ran %s", ran)
 
 
+def chat_retention() -> None:
+    """Nightly retention sweep: purge conversations idle past ``chat_retention_days`` (0 = keep forever, skip)."""
+    from aecom import conversations
+
+    days = get_settings().chat_retention_days
+    if days <= 0:
+        return
+    if (n := conversations.purge_older_than(days)):
+        log.info("chat retention: purged %d conversation(s) older than %d day(s)", n, days)
+
+
 def _schedule_jobs(sched: BlockingScheduler, demo: bool) -> None:
     """(Re)schedule every settings-driven job; safe to call again when the settings change."""
     s = get_settings()
@@ -163,6 +174,7 @@ def _schedule_jobs(sched: BlockingScheduler, demo: bool) -> None:
     add(sched, expire_approvals, s.schedule_expire_approvals, "expire_approvals", "30m")
     add(sched, sync_store_catalog, s.schedule_sync_store_catalog, "sync_store_catalog", "6h")
     add(sched, backup_job, s.backup_schedule, "backup", "cron:15 3 * * *")
+    add(sched, chat_retention, "cron:30 3 * * *", "chat_retention", "cron:30 3 * * *")
     for job_id in ("poll_email", "poll_telegram"):
         if sched.get_job(job_id):
             sched.remove_job(job_id)
