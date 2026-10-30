@@ -3,6 +3,8 @@
 # Only `aecom.settings_registry` public functions touch stored values here (never ops_settings/.env directly), and
 # Security uses only `aecom.dashboard_auth` service functions. Secrets are never rendered: only set/not set, the last
 # 4 characters and a write-only input. Policy, Agents and Backups tabs are rendered by the `_settings_*` partials.
+# A secret with an entry in `aecom.integrations.ping.PINGS` also gets a "Test" button (shown only once it is set)
+# that makes one real, read-only call and reports back with `st.toast` - the secret value never appears in it.
 
 import pandas as pd
 import streamlit as st
@@ -14,6 +16,7 @@ from _settings_policy import render_policy_tab
 from _common import confirm_dialog, page_header, require_login, reviewer_name, step_up
 from aecom import dashboard_auth as auth
 from aecom import settings_registry as reg
+from aecom.integrations.ping import PINGS
 
 require_login()
 page_header("Settings", "settings",
@@ -108,6 +111,12 @@ def _reset(key: str, by: str) -> None:
     _apply_reset(key, by)
 
 
+def _test_secret(key: str) -> None:
+    """Run `key`'s ping (one real, read-only call) and report the result with a toast - never the secret value."""
+    ok, message = PINGS[key]()
+    st.toast(message, icon=":material/check_circle:" if ok else ":material/error:")
+
+
 def _apply_pending_stepup() -> None:
     """Render the password prompt for a parked critical change, on every rerun, until it is confirmed or cancelled."""
     pending = st.session_state.get("_stepup_pending")
@@ -153,7 +162,13 @@ def _render_field(key: str, by: str) -> bool:
     if field.kind == "secret":
         hint = reg.secret_hint(key)
         status = f"set (ends \u2026{hint['last4']})" if hint["set"] and hint["last4"] else ("set" if hint["set"] else "not set")
-        st.markdown(f"**{field.label}** \u2014 {status}")
+        if hint["set"] and key in PINGS:
+            col_status, col_test = st.columns([5, 1])
+            col_status.markdown(f"**{field.label}** \u2014 {status}")
+            if col_test.button("Test", icon=":material/network_check:", key=f"test_{key}"):
+                _test_secret(key)
+        else:
+            st.markdown(f"**{field.label}** \u2014 {status}")
         if field.help:
             st.caption(field.help)
         with st.form(f"secret_form_{key}", clear_on_submit=True):

@@ -195,6 +195,22 @@ def test_secret_shows_only_set_not_set_and_last4_never_the_value(envp, monkeypat
         assert e.value != "sk-ant-verysecretvalue1234"
 
 
+def test_test_button_shows_only_for_a_set_secret_and_never_the_value(envp, monkeypatch):
+    from aecom.integrations import ping
+
+    calls = []
+    monkeypatch.setitem(ping.PINGS, "telegram_bot_token", lambda: calls.append(1) or (True, "Telegram bot reachable"))
+    at = _set_name(_app())
+    assert not any(b.key == "test_telegram_bot_token" for b in at.button)  # not set yet: no button
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:verysecrettelegramtoken")
+    secrets.reload()
+    at = _set_name(_app())
+    at.button(key="test_telegram_bot_token").click().run()
+    assert not at.exception and calls == [1]
+    assert any("Telegram bot reachable" in t.value for t in at.toast)
+    assert "verysecrettelegramtoken" not in " ".join(str(t.value) for t in at.toast)
+
+
 def test_saving_a_secret_needs_step_up_and_writes_to_the_private_env_file(envp):
     at = _set_name(_app(login_off=False))
     at.text_input(key="secret_input_sentry_dsn").set_value("https://example.invalid/dsn")
