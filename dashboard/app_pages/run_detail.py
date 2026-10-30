@@ -1,13 +1,13 @@
 import pandas as pd
 import streamlit as st
 
-from _common import mask_df, require_login, sql
+from _common import empty_state, kpi_row, mask_df, page_header, require_login, sql, status_badge
 from aecom import run_detail
 from aecom.observability import mask
 
 require_login()
-st.title("🔎 Run detail")
-st.caption("Everything recorded for one run: agent runs, tool calls, approvals, audit entries, errors, decisions and "
+page_header("Run detail", "search",
+           "Everything recorded for one run: agent runs, tool calls, approvals, audit entries, errors, decisions and "
            "incidents, in time order. Secrets are masked.")
 
 recent = run_detail.recent_run_ids(100)
@@ -25,14 +25,15 @@ run_id = st.selectbox("Run", options, index=options.index(wanted) if wanted else
 if run_id != wanted:
     st.query_params["run_id"] = run_id  # shareable link
 
+if run_id.startswith("chat-"):
+    conv = sql("SELECT conversation_id FROM ops_messages WHERE agent_run_id = :r LIMIT 1", r=run_id)
+    if not conv.empty:
+        st.markdown(f"💬 [Back to the conversation](/chat?conversation={conv.iloc[0]['conversation_id']})")
+
 s = run_detail.summary(run_id)
-c = st.columns(6)
-c[0].metric("Status", s["status"])
-c[1].metric("Agents", len(s["agents"]))
-c[2].metric("Tool calls", s["tool_calls"])
-c[3].metric("Approvals", s["approvals"])
-c[4].metric("Errors", s["errors"])
-c[5].metric("LLM cost", f"€{s['cost_eur']:.4f}")
+status_badge(s["status"])
+kpi_row([("Agents", len(s["agents"])), ("Tool calls", s["tool_calls"]), ("Approvals", s["approvals"]),
+        ("Errors", s["errors"]), ("LLM cost", f"€{s['cost_eur']:.4f}")])
 st.caption(f"Agents: {', '.join(s['agents']) or '—'} · tools: {', '.join(s['tools_used']) or '—'} · "
            f"started {s['started_at'] or '—'} · ended {s['ended_at'] or '—'}")
 
@@ -40,16 +41,19 @@ st.subheader("Timeline")
 tl = run_detail.timeline(run_id)
 kinds = sorted({e["kind"] for e in tl})
 shown = st.multiselect("Kinds", kinds, default=kinds)
-st.dataframe(mask_df(pd.DataFrame([e for e in tl if e["kind"] in shown], columns=["ts", "kind", "actor", "summary", "ref"]),
-                     ["summary"]),
-             hide_index=True, width="stretch")
+if not tl:
+    empty_state("timeline", "Nothing recorded for this run yet")
+else:
+    st.dataframe(mask_df(pd.DataFrame([e for e in tl if e["kind"] in shown], columns=["ts", "kind", "actor", "summary", "ref"]),
+                        ["summary"]),
+                hide_index=True, width="stretch")
 
 st.subheader("Approvals")
 apr = sql("""SELECT id, created_at, decided_at, status, risk_tier, agent_id, tool_name, decided_by, reason,
                     decision_note, substr(result, 1, 300) AS result
              FROM ops_approvals WHERE run_id = :r ORDER BY created_at""", r=run_id)
 if apr.empty:
-    st.caption("No approvals in this run.")
+    empty_state("fact_check", "No approvals in this run")
 
 
 def txt(value: object) -> str:
@@ -73,7 +77,7 @@ st.subheader("Errors")
 err = sql("""SELECT id, ts, component, exc_type, message, traceback FROM ops_errors WHERE run_id = :r ORDER BY id""",
           r=run_id)
 if err.empty:
-    st.caption("No errors in this run.")
+    empty_state("error", "No errors in this run")
 for _, e in err.iterrows():
     with st.expander(f"{e['ts']} · {e['component']} · {e['exc_type']}"):
         st.text(txt(e["message"]))
