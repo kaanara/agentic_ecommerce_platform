@@ -25,6 +25,7 @@ import streamlit as st
 
 from _common import step_up
 from aecom import backup, jobs
+from aecom import settings_registry as reg
 from aecom.bus.events import publish
 from aecom.company_settings import set_setting
 from aecom.config import get_settings
@@ -60,6 +61,78 @@ def _next_run() -> str:
         return f"unknown ({exc})"
 
 
+WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+FREQUENCIES = ["Every few hours", "Every day", "Every week"]
+
+
+def schedule_from_form(frequency: str, hours: int, hour: int, minute: int, weekday: str) -> str:
+    """The `backup_schedule` string (aecom.schedule_spec grammar) for the friendly form; cron weekday 1 = Monday."""
+    if frequency == "Every few hours":
+        return f"{int(hours)}h"
+    if frequency == "Every week":
+        return f"cron:{int(minute)} {int(hour)} * * {WEEKDAYS.index(weekday) + 1}"
+    return f"cron:{int(minute)} {int(hour)} * * *"
+
+
+def form_from_schedule(spec: str) -> dict:
+    """Best-effort inverse of `schedule_from_form`, for the form's starting values (anything unusual -> daily 03:15)."""
+    out = {"frequency": "Every day", "hours": 6, "hour": 3, "minute": 15, "weekday": "Monday", "custom": False}
+    spec = (spec or "").strip().lower()
+    try:
+        if spec.endswith("h") and spec[:-1].isdigit():
+            return {**out, "frequency": "Every few hours", "hours": max(1, int(spec[:-1]))}
+        if spec.startswith("cron:"):
+            minute, hour, dom, mon, dow = spec[5:].split()
+            if minute.isdigit() and hour.isdigit() and dom == "*" and mon == "*":
+                out.update(hour=int(hour), minute=int(minute))
+                if dow == "*":
+                    return out
+                if dow.isdigit() and 1 <= int(dow) <= 7:
+                    return {**out, "frequency": "Every week", "weekday": WEEKDAYS[int(dow) - 1]}
+    except ValueError:
+        pass
+    return {**out, "custom": spec not in ("",)}
+
+
+def _schedule_editor(by: str) -> None:
+    """Turn automatic backups on or off and pick when they run, without typing a cron string."""
+    settings = get_settings()
+    cur = form_from_schedule(settings.backup_schedule)
+    with st.container(border=True):
+        st.subheader("Automatic backups")
+        with st.form("backup_schedule_form"):
+            enabled = st.toggle("Run backups automatically", value=bool(settings.backup_enabled), key="_bk_enabled")
+            frequency = st.radio("How often", FREQUENCIES, index=FREQUENCIES.index(cur["frequency"]), horizontal=True,
+                                 key="_bk_frequency")
+            c1, c2, c3 = st.columns(3)
+            hours = c1.number_input("Every (hours)", min_value=1, max_value=24, value=cur["hours"], key="_bk_hours")
+            at = c2.time_input("At (server time)", value=datetime(2000, 1, 1, cur["hour"], cur["minute"]).time(),
+                               key="_bk_time")
+            weekday = c3.selectbox("On", WEEKDAYS, index=WEEKDAYS.index(cur["weekday"]), key="_bk_weekday")
+            verify = st.toggle("Verify every backup after it is made", value=bool(settings.backup_verify_after),
+                               key="_bk_verify")
+            saved = st.form_submit_button("Save schedule", icon=":material/save:")
+        if cur["custom"]:
+            st.caption(f"Current schedule `{settings.backup_schedule}` is a custom expression; saving here replaces it.")
+        st.caption(f"Now: {'on' if settings.backup_enabled else 'off'}, schedule `{settings.backup_schedule}`, "
+                   f"next run {_next_run()}.")
+        if not saved:
+            return
+        if not by:
+            st.warning("Enter your name in the sidebar first.")
+            return
+        spec = schedule_from_form(frequency, hours, at.hour, at.minute, weekday)
+        try:
+            reg.set_value("backup_schedule", spec, by)
+            reg.set_value("backup_enabled", enabled, by)
+            reg.set_value("backup_verify_after", verify, by)
+        except (ValueError, reg.StepUpRequired) as exc:
+            st.error(str(exc))
+            return
+        st.success("Saved. The scheduler picks it up within about 30 seconds.")
+        st.rerun()
+
+
 def _free_disk() -> str:
     try:
         d = backup.backup_dir()
@@ -76,12 +149,13 @@ def _backups_table() -> pd.DataFrame:
             m = backup.read_manifest(p)
         except backup.BackupError:
             rows.append({"backup": p.name, "created": "", "size (MB)": None, "schema": "", "git": "",
-                        "verified": "unreadable", "off-device": ""})
+                        "verified": "unreadable", "off-device": "", "encrypted": ""})
             continue
         size = sum(f.get("bytes", 0) for f in m.get("files", {}).values())
         rows.append({"backup": p.name, "created": m.get("created_at", "")[:19].replace("T", " "),
                     "size (MB)": round(size / 1024**2, 1), "schema": m.get("alembic_revision") or "",
                     "git": m.get("git_sha") or "",
+                    "encrypted": "\u2705" if m.get("encrypted") else "\u2014",
                     "verified": "\u2705" if m.get("verified") else "\u2014",
                     "off-device": {True: "\u2705", False: "\u274c"}.get(m.get("copied_off_device"), "\u2014")})
     return pd.DataFrame(rows)
@@ -138,6 +212,8 @@ def render_backups_tab(by: str) -> None:
     st.caption("Backups are created and verified by the scheduler, never by this dashboard process. The schedule, "
               "verify-after-backup and retention settings live in their own fields above/in Schedules; this tab is "
               "status plus the one-off actions.")
+
+    _schedule_editor(by)
 
     cols = st.columns(4)
     cols[0].metric("Next scheduled run", _next_run())

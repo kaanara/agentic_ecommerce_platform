@@ -162,6 +162,9 @@ _FIELDS: list[Field] = [
     _f("backup_keep_weeks", "Backups and updates", "Keep one per ISO week, for (weeks)", kind="int", min=0, max=52),
     _f("backup_keep_labelled", "Backups and updates", "Keep newest labelled backups", kind="int", min=0, max=50),
     _f("backup_target", "Backups and updates", "Off-device copy target", "A local path or user@host:/path (rsync). Backups hold customer data: use an encrypted target.", risk="sensitive"),
+    _secret("backup_passphrase", "Backups and updates", "Backup encryption passphrase",
+            "Encrypts new backups at rest (AES-256-GCM, at least 12 characters). Keep it in a password manager: without "
+            "it encrypted backups cannot be restored. Set it before the first backup you rely on; older backups stay plain."),
     _f("backup_dir", "Backups and updates", "Backup directory", "Changing it from the running app is not offered.", "path", storage="readonly"),
     # --- Autonomy (evidence gate: lowering these weakens it)
     _f("autonomy_min_real_sales", "Autonomy", "Real sales needed before a promotion", kind="float", storage="env", min=0, risk="critical", link="Trust"),

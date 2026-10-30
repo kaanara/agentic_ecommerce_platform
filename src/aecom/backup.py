@@ -19,7 +19,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from aecom import backup_crypto
 from aecom.config import ROOT, get_settings
+from aecom.secrets import secrets
 
 NAME_RE = re.compile(r"^(\d{8})-(\d{6})(?:-([A-Za-z0-9][A-Za-z0-9_.-]*))?$")
 KEEP_DAILY = 7
@@ -67,6 +69,26 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _passphrase() -> str | None:
+    return (secrets.get("BACKUP_PASSPHRASE") or "").strip() or None
+
+
+def _plain_name(name: str, meta: dict[str, Any]) -> str:
+    """The database file name a manifest entry stands for (an encrypted entry is ``<name>.enc``)."""
+    return meta.get("plain_name", name)
+
+
+def _unpack(path: Path, name: str, meta: dict[str, Any], dst: Path) -> None:
+    """Put a backup file at ``dst`` as a plain database: a copy, or decrypted with BACKUP_PASSPHRASE."""
+    if not meta.get("encrypted"):
+        shutil.copy2(path / name, dst)
+        return
+    try:
+        backup_crypto.decrypt_file(path / name, dst, _passphrase())
+    except backup_crypto.CryptoError as e:
+        raise BackupError(str(e)) from e
 
 
 def _utcnow() -> datetime:
@@ -158,17 +180,33 @@ def create_backup(label: str | None = None, dest: str | Path | None = None, now:
     work.mkdir()
     try:
         sources = [main] + ([checkpoints_path(main)] if checkpoints_path(main).exists() else [])
+        passphrase = _passphrase()
+        if passphrase:
+            try:
+                backup_crypto.check_passphrase(passphrase)
+            except backup_crypto.CryptoError as e:
+                raise BackupError(str(e)) from e
         files: dict[str, Any] = {}
+        revision, counts = None, None
         for src in sources:
             copy = work / src.name
             _online_copy(src, copy)
             res = _integrity(copy)
             if res != "ok":
                 raise BackupError(f"integrity_check of the copy of {src.name} failed: {res}")
-            files[src.name] = {"bytes": copy.stat().st_size, "sha256": _sha256(copy)}
+            if src == main:
+                revision, counts = _alembic_revision(copy), _count_rows(copy)
+            if passphrase:
+                enc = copy.with_name(copy.name + backup_crypto.SUFFIX)
+                backup_crypto.encrypt_file(copy, enc, passphrase)
+                copy.unlink()
+                files[enc.name] = {"bytes": enc.stat().st_size, "sha256": _sha256(enc), "encrypted": True,
+                                   "plain_name": src.name}
+            else:
+                files[src.name] = {"bytes": copy.stat().st_size, "sha256": _sha256(copy)}
         manifest = {"created_at": now.astimezone(UTC).isoformat(), "git_sha": _git_sha(),
-                    "alembic_revision": _alembic_revision(work / main.name), "files": files,
-                    "row_counts": _count_rows(work / main.name)}
+                    "alembic_revision": revision, "files": files, "row_counts": counts,
+                    "encrypted": bool(passphrase)}
         (work / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         work.rename(target)
     except BaseException:
@@ -351,14 +389,19 @@ def verify_backup(path: Path) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="aecom-verify-") as tmp:
         tmpd = Path(tmp)
         main_name = None
-        for name in manifest["files"]:
-            shutil.copy2(path / name, tmpd / name)
-            if not _is_checkpoints(name):
-                main_name = name
-            res = _integrity(tmpd / name)
+        for name, meta in manifest["files"].items():
+            plain = _plain_name(name, meta)
+            try:
+                _unpack(path, name, meta, tmpd / plain)
+            except BackupError as e:
+                problems.append(str(e))
+                continue
+            if not _is_checkpoints(plain):
+                main_name = plain
+            res = _integrity(tmpd / plain)
             if res != "ok":
-                problems.append(f"{name}: integrity_check: {res}")
-        if main_name is None:
+                problems.append(f"{plain}: integrity_check: {res}")
+        if main_name is None and not problems:
             problems.append("backup has no main database")
         if problems:
             return report
@@ -411,14 +454,26 @@ def restore_backup(path: Path, now: datetime | None = None) -> dict[str, Any]:
     stamp = (now or _utcnow()).strftime("%Y%m%d-%H%M%S")
     saved, restored = [], []
     main.parent.mkdir(parents=True, exist_ok=True)
-    for name in files:
-        live = checkpoints_path(main) if _is_checkpoints(name) else main
+    staged: list[tuple[Path, Path]] = []
+    try:  # unpack and check everything first, so a wrong passphrase or bad file never leaves a half-restored database
+        for name, meta in files.items():
+            plain = _plain_name(name, meta)
+            live = checkpoints_path(main) if _is_checkpoints(plain) else main
+            tmp = live.with_name(live.name + ".restoring")
+            _unpack(path, name, meta, tmp)
+            staged.append((live, tmp))
+            res = _integrity(tmp)
+            if res != "ok":
+                raise BackupError(f"{plain}: integrity_check: {res}")
+    except BaseException:
+        for _, tmp in staged:
+            tmp.unlink(missing_ok=True)
+        raise
+    for live, tmp in staged:
         if live.exists():
             keep = live.with_name(f"{live.name}.before-restore-{stamp}")
             _online_copy(live, keep)
             saved.append(str(keep))
-        tmp = live.with_name(live.name + ".restoring")
-        shutil.copy2(path / name, tmp)
         tmp.replace(live)
         for suffix in ("-wal", "-shm"):
             live.with_name(live.name + suffix).unlink(missing_ok=True)
