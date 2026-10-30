@@ -2,8 +2,9 @@
 
     uv run aecom api      → http://127.0.0.1:8000/docs
 
-Every route except /health and /webhooks/* requires `Authorization: Bearer $AECOM_API_TOKEN`. The webhooks
-(`aecom.api.webhooks`) verify the provider's signature instead and fail closed.
+Every route except /health, /webhooks/* and /download/{order_id} requires `Authorization: Bearer $AECOM_API_TOKEN`.
+The webhooks (`aecom.api.webhooks`) verify the provider's signature instead and fail closed; /download/{order_id}
+(R14) verifies the order's own signed token instead (404 while disabled, see that module's download-route section).
 
 Handlers are sync on purpose: FastAPI runs them in a thread pool, so the agent/event code (which uses
 asyncio.run internally for approvals and reflexes) never collides with the server's event loop.
@@ -365,3 +366,4 @@ def status_route() -> dict[str, Any]:
 
 app.include_router(api)
 app.include_router(webhooks.router)  # signature-verified instead of the bearer token
+app.include_router(webhooks.download_router)  # R14: token-verified instead of the bearer token; 404 while disabled

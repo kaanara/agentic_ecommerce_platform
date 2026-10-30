@@ -23,7 +23,7 @@ Stages cannot change: the **monthly marketing and vendor budgets**, the rule tha
 uv run aecom autonomy report                                  # per action: stage, approvals, unchanged rate, eligibility
 uv run aecom autonomy promote refund_order --by YOURNAME --reason "why"
 ```
-The dashboard has the same on the **Trust** page. Promotion is checked again on the server and has no override. It needs **all** of:
+The dashboard has the same on the **Trust** page. Promotion is checked again on the server and has no override, and the check and the write are **one atomic step** (R19): `trust.promote` re-checks eligibility and then calls `autonomy.set_stage` with the exact stage it just saw, as a guarded compare-and-set, inside one DB transaction. If the stage changed underneath it in between - another promotion, or an automatic demotion - the write is refused outright instead of silently applying a decision based on stale evidence; run the command again to re-check. It needs **all** of:
 
 - at least **10 real sales** (orders from the store platform; demo and simulated orders don't count),
 - at least **20 decided approvals** for that action since its last stage change,
@@ -46,7 +46,10 @@ Thresholds can be changed in `.env` (`AUTONOMY_MIN_REAL_SALES`, `AUTONOMY_MIN_DE
 | ROAS below 1.0 after at least €100 of ad spend in 7 days | `launch_campaign` |
 | Gross margin below 50% with at least 10 orders in 7 days | `update_price` |
 
-Each demotion is audited and raises a **P2 incident** (`autonomy_demotion`) that stays until you acknowledge it. The refund and denial triggers also raise their own alerts (`refund_abuse`, `policy_deny_spike`) even when nothing is promoted. See [Runbooks](Runbooks).
+Each demotion **raises its P2 incident (`autonomy_demotion`) first and demotes the tool second** (R19): `raise_incident` is idempotent (it refreshes the already-open incident for the same tool rather than duplicating it), so if the demotion write itself then fails, the incident - the audit trail that something is wrong - is never lost; the next monitor tick (5 minutes later) finds the tool still promoted, reuses the same open incident, and completes the demotion. The incident stays until you acknowledge it. The refund and denial triggers also raise their own alerts (`refund_abuse`, `policy_deny_spike`) even when nothing is promoted. See [Runbooks](Runbooks).
+
+## Stage-3 actions also notify immediately
+A stage-3 ("notify") autonomous action - the gate already marks it `autonomous: true`, `autonomy_stage: 3` in the audit log - sends an immediate owner notification (`aecom.notify.route`, `kind: "autonomy"`, masked text naming the tool) in addition to the daily flash and the log (R19). It is sent by `autonomy_guard.notify_stage3_actions`, which runs on the same ~5-minute monitor tick as the demotion checks above (a bookmark in `ops_settings` keeps it idempotent): the tool call itself happens in the policy gate (`policy/gate.py`), which this fix does not touch, so "immediate" means the next tick rather than synchronous with the call - still far sooner than the daily flash.
 
 ## Where you see it
 - **Trust page** (dashboard) and `aecom autonomy report|log`.
@@ -54,6 +57,16 @@ Each demotion is audited and raises a **P2 incident** (`autonomy_demotion`) that
 - A chaos invariant (`no_unearned_promotion`) fails if a stage is raised without a recorded human promotion, so tampering with the setting is detected.
 
 ## Limits to know
-- "Notify" at stage 3 is the daily flash and the log, not an immediate message.
-- The Judge's scores are not a demotion trigger yet.
 - Trust is collected from now on: approvals from before this feature have no "edited" information.
+- The Judge's scores are **not** a demotion trigger, and R19 deliberately did not add one. The Judge reviews a whole
+  company run (`ceo_direct → foreman_plan → execute → judge`), not a single tool call: its verdict (`submit_verdict`)
+  is only persisted as one `ops_tool_calls` row keyed by `run_id`, and several unrelated T2 actions - different
+  tools, different agents, different departments - can share that same `run_id` in one run. `ops_agent_runs.status`
+  even has an unused `"vetoed"` value that nothing ever sets, confirming a per-action verdict was never wired up.
+  Blaming one specific autonomous action for a run-level rejection that may be about a sibling department's output
+  would be invented precision, not evidence - so this trigger needs a schema change (recording the Judge's verdict
+  per task/tool-call, not per run) before it can be added safely. If/when that exists, the trigger should demote a
+  tool to stage 1 with an incident when the Judge vetoed/failed at least `autonomy_judge_fail_demote` (default 2) of
+  the last `autonomy_judge_window` (default 10) of its autonomous actions; those two fields need to be added to
+  `config.Settings` (so `getattr(get_settings(), "autonomy_judge_fail_demote", 2)` resolves to a real, overridable
+  value) and to the "Autonomy" section of `settings_registry.py` - see the R19 report for the exact rows.

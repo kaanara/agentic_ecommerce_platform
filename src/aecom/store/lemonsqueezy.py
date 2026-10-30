@@ -544,6 +544,13 @@ class LemonSqueezyStore:
         """No-op. Lemon Squeezy has already delivered the key or file and emailed the customer."""
         return {"order_id": order_id, "status": "delivered", "already": True, "delivered_by": PROVIDER}
 
+    def verify_download(self, order_id: str, token: str) -> bool:
+        """``deliver_order`` never calls ``_download_link`` here (Lemon Squeezy, not us, delivers the file), so
+        the mirror's ``download_token`` stays unset and this always answers False - R14's download route is for
+        the built-in store only. Delegated rather than special-cased so that route need not know which adapter
+        is active."""
+        return self._local.verify_download(order_id, token)
+
     def mark_email_sent(self, order_id: str) -> None:
         self._local.mark_email_sent(order_id)
 

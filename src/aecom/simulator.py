@@ -52,6 +52,9 @@ def _order(rng: random.Random, sku: str, email: str | None, campaign_id: str | N
 
 def simulate_day(day_offset: int = 0, seed: int | None = None, support_emails: bool = False) -> dict[str, Any]:
     """Simulate one day of traffic. day_offset < 0 backfills history for dashboards."""
+    from aecom.safety import assert_demo_data_allowed
+
+    assert_demo_data_allowed("simulator.simulate_day")
     rng = random.Random(seed)
     ts = now() + timedelta(days=day_offset)
     stats = {"orders": 0, "ad_spend": 0.0, "emails": 0}

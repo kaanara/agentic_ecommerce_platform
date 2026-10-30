@@ -35,7 +35,7 @@ from aecom.db import (
     session,
 )
 from aecom.integrations.agentmail import AgentMail
-from aecom.store.adapter import get_store
+from aecom.store.adapter import EMAIL_SEND_SENDING, get_store
 
 
 @dataclass
@@ -139,10 +139,27 @@ def deliver_order(order_id: str) -> dict:
     # I4: the email is tracked apart from delivery, so a failed send is retried (also on an 'already' delivery)
     # and a sent one is never repeated. A send error propagates: the gate reports ERROR and the bus retries.
     if not order.get("email_sent"):
+        # R10: AgentMail's send API has no idempotency key, so a crash between the send and `mark_email_sent`
+        # could double-send. A durable marker (set *before* calling AgentMail) guards that gap: if a previous
+        # attempt left it 'sending', we cannot tell whether the customer already has it, so we never guess -
+        # surface it and wait for a human (see MockStore.flag_stuck_email_send / clear_stuck_email_send).
+        if store.email_guard_state(order_id) == EMAIL_SEND_SENDING:
+            store.flag_stuck_email_send(order_id)
+            blocked = dict(result)
+            blocked["email_sent"] = False
+            blocked["email_delivery_blocked"] = ("a previous access-email send for this order did not confirm "
+                                                 "completion before a crash; a human must verify and clear it "
+                                                 "(see the stuck_email_delivery incident) before it is retried")
+            return _redact_access(blocked)
+        store.begin_email_send(order_id)
         secret = result.get("license_key") or result.get("download_url")
-        AgentMail().send(order.get("customer_email", ""), f"Your purchase {result.get('sku', '')}",
-                         f"Thank you for your order {order_id}.\n\nYour access: {secret}\n\nNeed help? Just reply to this email.")
-        store.mark_email_sent(order_id)
+        try:
+            AgentMail().send(order.get("customer_email", ""), f"Your purchase {result.get('sku', '')}",
+                             f"Thank you for your order {order_id}.\n\nYour access: {secret}\n\nNeed help? Just reply to this email.")
+        except Exception:
+            store.fail_email_send(order_id)  # definite failure: nothing reached the customer, safe to retry
+            raise
+        store.mark_email_sent(order_id)  # also clears the guard marker
         result["email_sent"] = True
     return _redact_access(result)
 

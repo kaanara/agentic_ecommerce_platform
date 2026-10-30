@@ -4,6 +4,10 @@
 earned; ``promote`` re-checks that on the server (no override) before calling ``autonomy.set_stage`` with the evidence.
 Only the per-call limits ever move: budgets, tiers, recipient rule, kill switch, pause and safe mode stay as they are.
 Demotion is always back to stage 1. There is deliberately no agent tool for any of this.
+
+R19: the eligibility check and the stage write in ``promote`` are not an unguarded two-step - the write is a
+compare-and-set against the exact stage eligibility saw (``autonomy.set_stage(..., expected_old_stage=...)``), so a
+promotion or demotion that lands in between is detected instead of silently overwritten.
 """
 
 from __future__ import annotations
@@ -136,15 +140,24 @@ def eligibility(tool: str, now: datetime | None = None) -> dict[str, Any]:
 
 
 def promote(tool: str, by: str, reason: str = "", now: datetime | None = None) -> int:
-    """Raise ``tool`` by exactly one stage if (re-checked here) it is eligible. No override exists."""
+    """Raise ``tool`` by exactly one stage if (re-checked here) it is eligible. No override exists.
+
+    R19: the eligibility check above and the stage write below are not two independent steps - the write is a
+    guarded compare-and-set (``autonomy.set_stage(..., expected_old_stage=e["stage"])``): if the stage on disk no
+    longer matches what eligibility just saw (another promotion, or an automatic demotion, raced in between), the
+    write is refused instead of silently applying a decision based on stale evidence. Call again to re-check."""
     if not (by or "").strip():
         raise ValueError("promotion needs the name of the human (by)")
     now = now or db_now()
     e = eligibility(tool, now)
     if not e["eligible"]:
         raise ValueError(f"{tool} is not eligible for promotion: " + "; ".join(e["missing"]))
-    return autonomy.set_stage(tool, e["next_stage"], by, reason,
-                              evidence={**e["evidence"], "checked_at": now.isoformat()})
+    try:
+        return autonomy.set_stage(tool, e["next_stage"], by, reason,
+                                  evidence={**e["evidence"], "checked_at": now.isoformat()},
+                                  expected_old_stage=e["stage"])
+    except autonomy.StageConflict as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def demote(tool: str, by: str, reason: str = "") -> int:

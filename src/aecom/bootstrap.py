@@ -135,10 +135,12 @@ def init(with_registry_examples: bool = True) -> None:
 
 
 def seed_demo() -> None:
+    from aecom.safety import assert_demo_data_allowed
     from aecom.store.adapter import get_store
     from aecom.store.keysource import get_key_source
     from aecom.tools.catalog import CATALOG
 
+    assert_demo_data_allowed("bootstrap.seed_demo")
     store = get_store()
     has_keys = get_key_source() is not None
     with session() as s:

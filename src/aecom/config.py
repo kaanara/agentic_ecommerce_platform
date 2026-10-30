@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # Backups (aecom backup): directory, and an optional off-device copy (local path or user@host:/path via rsync)
     backup_dir: Path = ROOT / "data" / "backups"
     backup_target: str | None = None
+    # Customer download route (GET /download/{order_id}?token=...): off until the API has a public URL
+    download_route_enabled: bool = False
+    downloads_dir: Path = ROOT / "data" / "downloads"
 
     # --- Integrations --------------------------------------------------------
     agentmail_api_key: str | None = None

@@ -1,10 +1,17 @@
 """G6: automatic demotion and abuse detection for the Phase 5 autonomy stages (see ``aecom.autonomy``).
 
 Pure trigger functions look at the database and return ``Trigger(tools, key, reason)`` for every tripped condition;
-``check_and_demote`` sends each affected promoted tool back to stage 1 (by "system") and raises a P2 incident per
-tool. It never promotes, leaves stage-1 tools alone, is idempotent and never raises. The detectors for refund abuse
-and policy-deny spikes are shared with the monitors of the same name, so humans hear about them even when nothing
-is promoted.
+``check_and_demote`` raises a P2 incident per affected tool *before* sending it back to stage 1 (by "system") - R19:
+that order means a failure between the two never loses the incident (it is idempotent, so the next tick reuses the
+still-open one and finishes the demotion). It never promotes, leaves stage-1 tools alone, is idempotent and never
+raises. The detectors for refund abuse and policy-deny spikes are shared with the monitors of the same name, so
+humans hear about them even when nothing is promoted.
+
+``notify_stage3_actions`` (R19/c) is the other half of this module's periodic duty: a stage-3 ("notify") autonomous
+action used to show up only in the daily flash and the log; this sends an immediate owner notification too, through
+``aecom.notify.route``. It runs from ``check_and_demote`` so it rides the same ~5-minute monitor tick - the policy
+gate that executes the call (``aecom.policy.gate``) is owned elsewhere and out of scope here, so "immediate" means
+the next tick, not synchronous with the tool call itself (see docs/wiki/Autonomy.md).
 """
 
 from __future__ import annotations
@@ -16,10 +23,11 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from aecom import autonomy, incidents
+from aecom import autonomy, incidents, notify
+from aecom.company_settings import get_setting, set_setting
 from aecom.db import AuditLog, Order, Refund, session
 from aecom.db import now as db_now
-from aecom.observability import record_error
+from aecom.observability import mask, record_error
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +44,7 @@ ROAS_MIN_SPEND_EUR = 100.0
 GROSS_MARGIN_MIN_PCT = 50.0
 GROSS_MARGIN_MIN_ORDERS = 10
 MONITOR = "autonomy_demotion"
+STAGE3_NOTIFY_BOOKMARK = "autonomy_stage3_notify_cursor"  # ops_settings: highest ops_audit_log.id already notified
 
 
 @dataclass(frozen=True)
@@ -153,18 +162,62 @@ def evaluate_triggers(now: datetime | None = None) -> list[Trigger]:
     return out
 
 
+def notify_stage3_actions(now: datetime | None = None) -> int:
+    """R19/c: send an immediate owner notification for each new stage-3 ("notify") autonomous action, instead of
+    leaving it to show up only in the daily flash and the log.
+
+    Scans ``ops_audit_log`` for ``allow`` rows whose detail has ``autonomous: true`` and ``autonomy_stage: 3`` (the
+    gate, ``aecom.policy.gate``, already records both on every allowed T2 call). A bookmark in ``ops_settings``
+    (the highest row id already handled) makes this idempotent across ticks; a send that itself raises is logged
+    and skipped (never retried forever) rather than breaking the demotion check that runs right after this.
+    Returns how many notifications were actually sent."""
+    try:
+        bookmark = int(get_setting(STAGE3_NOTIFY_BOOKMARK) or 0)
+    except (TypeError, ValueError):
+        bookmark = 0
+    with session() as s:
+        rows = list(s.scalars(select(AuditLog).where(AuditLog.id > bookmark, AuditLog.decision == "allow")
+                              .order_by(AuditLog.id)))
+    if not rows:
+        return 0
+    highest, sent = bookmark, 0
+    for row in rows:
+        highest = max(highest, row.id)
+        detail = row.detail or {}
+        if detail.get("autonomous") is not True or detail.get("autonomy_stage") != 3:
+            continue
+        try:
+            text = mask(f"{row.action} executed autonomously at stage 3 (earned autonomy, no human review).")
+            notify.route({"kind": "autonomy", "urgency": "normal", "text": text, "agent_id": row.actor})
+            sent += 1
+        except Exception as exc:  # a notification problem must never block the demotion check
+            log.exception("stage-3 autonomy notification failed")
+            record_error("autonomy_guard", exc, context={"step": "notify_stage3", "tool": row.action})
+    set_setting(STAGE3_NOTIFY_BOOKMARK, str(highest))
+    return sent
+
+
 def check_and_demote(now: datetime | None = None) -> list[dict[str, Any]]:
-    """Demote every promoted tool a trigger names, raise a P2 incident per demoted tool. Never raises."""
+    """Raise a P2 incident per tool a trigger names *then* demote it to stage 1, and send stage-3 "notify"
+    autonomous actions their immediate owner notification. Never raises."""
     t = now or db_now()
     done: list[dict[str, Any]] = []
+    try:
+        notify_stage3_actions(t)
+    except Exception as exc:
+        log.exception("stage-3 autonomy notification step failed")
+        record_error("autonomy_guard", exc, context={"step": "notify_stage3_outer"})
     try:
         for trig in evaluate_triggers(t):
             for tool in trig.tools:
                 try:
                     if autonomy.current_stage(tool) <= 1:
                         continue
-                    autonomy.demote(tool, trig.reason, by="system")
+                    # R19/b: the incident is raised BEFORE the demotion write, so a failure in between (the audit
+                    # row the demotion would add) never loses it - raise_incident is idempotent, so a retried tick
+                    # just reuses the still-open incident instead of raising a duplicate.
                     incidents.raise_incident(MONITOR, "P2", tool, f"{tool} demoted to stage 1: {trig.reason}", now=t)
+                    autonomy.demote(tool, trig.reason, by="system")
                     done.append({"tool": tool, "reason": trig.reason})
                 except Exception as exc:
                     log.exception("could not demote %s", tool)

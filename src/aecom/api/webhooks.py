@@ -18,6 +18,10 @@ tunnel); the dashboard and the rest of the API must never be exposed.
 
 * ``GET``/``POST /webhooks/whatsapp``: Meta Cloud API, see the dedicated section near the bottom of this file -
   signed differently (``X-Hub-Signature-256``) and, unlike the two above, 404 while disabled rather than 503.
+
+R14: ``GET /download/{order_id}`` is a second kind of public route, registered on ``download_router`` below (no
+``/webhooks`` prefix - it is a customer-facing link, not a provider callback) but included on ``app`` the same way:
+outside the bearer-token-protected ``api`` router, see the dedicated section near the bottom of this file.
 """
 
 from __future__ import annotations
@@ -28,20 +32,27 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import timedelta
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
+from fastapi.responses import FileResponse
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
 from aecom import consent
+from aecom.audit import audit
 from aecom.bus.events import drain, publish
 from aecom.channels import whatsapp as wa
 from aecom.channels.router import handle_inbound as whatsapp_handle_inbound
-from aecom.db import WebhookReceipt, session
+from aecom.config import ROOT, get_settings
+from aecom.db import AuditLog, Order, Product, WebhookReceipt, now, session
 from aecom.observability import record_error
 from aecom.secrets import secrets
 from aecom.store import lemonsqueezy as ls
+from aecom.store.adapter import get_store
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -261,3 +272,94 @@ async def whatsapp_webhook(request: Request, bg: BackgroundTasks) -> dict[str, A
     if result["processed"]:
         bg.add_task(drain)
     return result
+
+
+# --------------------------------------------------------------------------- customer downloads (R14)
+# Public (no bearer token - a customer's browser, not an agent or a dashboard) and, like WhatsApp above, 404 while
+# disabled: there is no public URL for this host yet (the Pi sits behind no tunnel), so going live needs the move
+# to a cloud server (U2's trigger). The lead must add two fields to ``config.Settings`` plus matching
+# ``settings_registry`` rows; until then this module reads them defensively with ``getattr(..., default)``:
+#
+#   download_route_enabled: bool = False   # config.py; settings_registry: kind="bool", section="Store and email",
+#                                           # risk="sensitive" (same shape as whatsapp_enabled)
+#   downloads_dir: Path = ROOT / "data" / "downloads"  # config.py; settings_registry: kind="path",
+#                                           # section="Store and email" (files served by the route live here)
+#
+# Auth is the order's own signed token (``StoreAdapter.verify_download``, constant-time compare), never the bearer
+# token. Every failure the customer can trigger - disabled, unknown/foreign order, bad/expired token, a refunded
+# order, a product with no (or an unsafe) file on disk - answers the identical 404, so a guess can never learn
+# whether an order id exists (no oracle). Rate limiting alone answers 429: it reveals nothing about any particular
+# order, only that this IP is hammering one. Every attempt (allowed, denied or rate-limited) is one audit row;
+# the token itself is never included (``audit.mask_detail`` would redact it anyway, see ``REDACT_KEYS``).
+download_router = APIRouter(tags=["downloads"])
+
+DOWNLOAD_RATE_LIMIT = 10          # attempts
+DOWNLOAD_RATE_WINDOW_S = 60       # per this many seconds, per (ip, order_id)
+
+
+def _download_route_enabled() -> bool:
+    return bool(getattr(get_settings(), "download_route_enabled", False))
+
+
+def _downloads_dir() -> Path:
+    return Path(getattr(get_settings(), "downloads_dir", ROOT / "data" / "downloads"))
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _download_attempts(ip: str, order_id: str) -> int:
+    """Attempts from this IP at this order in the trailing window (I16-style audit rows double as the limiter's
+    storage: no extra table, no in-process state to lose on restart or disagree across workers)."""
+    cutoff = now() - timedelta(seconds=DOWNLOAD_RATE_WINDOW_S)
+    with session() as s:
+        return s.scalar(select(func.count(AuditLog.id)).where(
+            AuditLog.actor == f"download:{ip}:{order_id}", AuditLog.action == "download_attempt",
+            AuditLog.ts >= cutoff)) or 0
+
+
+def _audit_download(ip: str, order_id: str, decision: str, reason: str = "") -> None:
+    audit(f"download:{ip}:{order_id}", "download_attempt", decision, {"order_id": order_id, "reason": reason})
+
+
+def _safe_asset_path(downloads_dir: Path, asset_url: str | None) -> Path | None:
+    """The product's file, resolved strictly inside ``downloads_dir``. ``None`` for anything else a product's
+    ``asset_url`` might hold (empty, a remote URL/URI such as ``s3://...`` - not ours to stream -, an absolute
+    path, or ``..`` segments) or for a path that does not resolve to an existing file."""
+    if not asset_url or "://" in asset_url:
+        return None
+    rel = PurePosixPath(asset_url.replace("\\", "/").lstrip("/"))
+    if rel.is_absolute() or not rel.parts or any(part in ("..", "") for part in rel.parts):
+        return None
+    base = downloads_dir.resolve()
+    candidate = (base / Path(*rel.parts)).resolve()
+    if not candidate.is_relative_to(base) or not candidate.is_file():
+        return None
+    return candidate
+
+
+@download_router.get("/download/{order_id}")
+def download_product(order_id: str, token: str, request: Request) -> FileResponse:
+    """Streams the order's product file once ``verify_download`` accepts ``token`` (I13's download link).
+    404 while disabled, or for any failure (invalid/expired/refunded token, missing/unsafe file) - the same
+    response for all of them, on purpose. 429 (not 404) when this IP is over the per-order rate limit."""
+    if not _download_route_enabled():
+        raise HTTPException(404, "not found")
+    ip = _client_ip(request)
+    if _download_attempts(ip, order_id) >= DOWNLOAD_RATE_LIMIT:
+        _audit_download(ip, order_id, "deny", "rate_limited")
+        raise HTTPException(429, "too many requests")
+    if not get_store().verify_download(order_id, token):
+        _audit_download(ip, order_id, "deny", "invalid_token")
+        raise HTTPException(404, "not found")
+    with session() as s:
+        order = s.get(Order, order_id)
+        product = s.get(Product, order.product_id) if order else None
+    path = _safe_asset_path(_downloads_dir(), product.asset_url if product else None)
+    if path is None:
+        _audit_download(ip, order_id, "deny", "no_file")
+        raise HTTPException(404, "not found")
+    _audit_download(ip, order_id, "allow")
+    filename = (product.sku + path.suffix) if product else path.name
+    return FileResponse(path, media_type="application/octet-stream", filename=filename)

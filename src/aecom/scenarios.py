@@ -358,7 +358,9 @@ SCENARIOS: dict[str, Scenario] = {s.name: s for s in [
 
 async def run_scenario(name: str, offline: bool = False) -> dict[str, Any]:
     import aecom.handlers  # noqa: F401  (registers event subscribers)
+    from aecom.safety import assert_demo_data_allowed
 
+    assert_demo_data_allowed("scenarios.run_scenario")
     sc = SCENARIOS[name]
     settings = get_settings()
     if offline:

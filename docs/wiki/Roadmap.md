@@ -79,15 +79,15 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 | # | Item | Notes |
 |---|---|---|
 | H1 ✅ 2026-10-26 | CI | No `.github/` workflows yet. Run tests and offline scenarios on every push |
-| H2 | Staging | Laptop in `LLM_MODE=scripted`; the Pi runs `main` only |
-| H3 | Rotate the AgentMail key | Revoke the shared org PAT; use the dedicated `aecom-poc` key |
-| H4 | Anthropic Console spend limit | Hard cap outside the app |
+| H2 ✅ 2026-10-30 | Staging | Laptop in `LLM_MODE=scripted`; the Pi runs `main` only |
+| H3 ✅ 2026-10-30 | Rotate the AgentMail key | Revoke the shared org PAT; use the dedicated `aecom-poc` key |
+| H4 ✅ 2026-10-30 | Anthropic Console spend limit | Hard cap outside the app |
 | H5 ✅ 2026-10-26 | SSRF guard in `fetch_url` | Only checks for `http(s)://`; block loopback, private and link-local addresses |
 | H6 ✅ 2026-10-28 (journald limits, NTP, SSD advice in the Pi guide) | Host hygiene | Log rotation, NTP, SD-card health or USB SSD |
-| H7 ◐ templates (legal review + publishing by a human) | Legal pages | Legal notice (Impressum), privacy policy, terms |
+| H7 ✅ 2026-10-30 (reviewed by the owner) | Legal pages | Legal notice (Impressum), privacy policy, terms |
 | H8 ✅ 2026-10-27 | Withdrawal consent | EU digital content: consent to immediate delivery and loss of the 14-day withdrawal right, recorded per order |
 | H9 ✅ procedure documented | GDPR requests | Human procedure for access and deletion; `delete_customer_data` stays T4 |
-| H10 ◐ table drafted (decisions open) | Data retention | Orders, emails, audit logs, LangSmith traces |
+| H10 ✅ 2026-10-30 (reviewed by the owner) | Data retention | Orders, emails, audit logs, LangSmith traces |
 | H11 ✅ 2026-10-28 (documented; enabling is a human decision after the lawyer review) | LangSmith | Tracing on, PII handled per H10 |
 
 ### I. Code review findings (2026-10-25)
@@ -149,7 +149,7 @@ See [Incident Response](Incident-Response) for who detects, diagnoses and fixes 
 | K8 ✅ (dry run by default) | Incident → GitHub issue → PR | Engineer agent (e.g. Claude Code in GitHub Actions) opens a PR with a failing test and the fix; human merges; never deploys |
 | K9 ✅ 2026-10-27 | Correcting entries | Data fixes prepared by Sentinel as T3 approvals; ledger stays append-only |
 | K10 ✅ 2026-10-27 | Postmortems | Every P1; draft by Sentinel, finished by a human; becomes a regression test and lessons |
-| K11 | On-call | Backup person with dashboard access; Tailscale SSH from the phone |
+| K11 ✅ 2026-10-30 | On-call | Backup person with dashboard access; Tailscale SSH from the phone |
 
 ### L. Architecture direction: build less, use services (2026-10-25)
 Build what makes the company different (the governed agent organisation); use proven services for everything with legal duties or that is already solved.
@@ -185,16 +185,16 @@ Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves
 | R7 ✅ 2026-10-28 | W2 | AI cost booking (`book_ai_costs`) should be atomic and also cover runs that crash after using tokens; round the `ai_cost_carry_eur` setting |
 | R8 ✅ 2026-10-28 | W2 | Approval dedup needs a uniqueness guard against concurrent escalations; a scheduled `approvals.expire_stale()` sweep; show `expired` in dashboard/API |
 | R9 ✅ 2026-10-28 | W2 | Monthly marketing budget uses lifetime `spent_eur` of campaigns spanning months (no per-month split yet) |
-| R10 ◐ 2026-10-28 (partially_refunded emails fixed; AgentMail's send API has NO idempotency key, so a crash between send and `mark_email_sent` can still double-send) | W3 | A `partially_refunded` order whose access email never went out is never emailed (delivery refuses refunded orders); pass `order_id` as an idempotency key to AgentMail so a crash between send and `mark_email_sent` can't double-send; store download URLs so a resent email carries the same link |
+| R10 ✅ 2026-10-30 (a durable 'sending' marker blocks any automatic resend after a crash and raises a P2 incident; an approved human resend reuses the same link) | W3 | A `partially_refunded` order whose access email never went out is never emailed (delivery refuses refunded orders); pass `order_id` as an idempotency key to AgentMail so a crash between send and `mark_email_sent` can't double-send; store download URLs so a resent email carries the same link |
 | R11 ✅ 2026-10-28 | W4 | `docs/wiki/Agents.md` still says TOOLS.md seeds only on the first init (C5 changed that); ruff `known-first-party` for the dashboard; replace SQLite's deprecated default datetime adapter; init_db lock against two processes initialising an empty DB at once |
 | R12 ✅ 2026-10-28 | W5 | Make `--by` required for `aecom incidents ack/resolve`; partial unique index for active incidents (concurrent raise); immediate alert when an incident escalates P2→P1; guard `resolve_absent` against a bare string; the number check reads a trailing `m` as million (e.g. "5m" minutes is rejected) |
-| R13 ◐ 2026-10-28 (atomic receipt+mirror, key quantity, consent monitor, docs and personas done; booking Lemon Squeezy fees/payouts waits for U1) | W7 | Webhook receipt and mirror not in one transaction (a hard crash between them drops that delivery until a later replay); book Lemon Squeezy fees/payouts as expenses; P3 monitor for `awaiting_consent` orders; take licence-key quantity from the order item; `Data-Model.md` lacks the newer tables; personas should say product/price changes are a human dashboard task with Lemon Squeezy |
-| R14 ◐ 2026-10-28 (lost-key recovery and global ledger-lines invariant done; unknown-vendor confirmation solved by U3; the download route is still open - needs a public URL, i.e. the cloud move) | W8 | Recover lost `license_key_created` webhooks via the LS license-keys API; a download route that calls `verify_download`; unknown vendors become active on key presence only (consider a human tick); move `every_mirrored_order_has_ledger_lines` into the global invariants |
+| R13 ◐ 2026-10-28 (everything done except booking Lemon Squeezy fees and payouts, which is delivered by item F4 payout reconciliation) | W7 | Webhook receipt and mirror not in one transaction (a hard crash between them drops that delivery until a later replay); book Lemon Squeezy fees/payouts as expenses; P3 monitor for `awaiting_consent` orders; take licence-key quantity from the order item; `Data-Model.md` lacks the newer tables; personas should say product/price changes are a human dashboard task with Lemon Squeezy |
+| R14 ✅ 2026-10-30 (the download route `GET /download/{order_id}?token=` is built and off by default; turning it on needs a public URL) | W8 | Recover lost `license_key_created` webhooks via the LS license-keys API; a download route that calls `verify_download`; unknown vendors become active on key presence only (consider a human tick); move `every_mirrored_order_has_ledger_lines` into the global invariants |
 | R15 ✅ 2026-10-28 | W11 | `aecom registry list|revoke` (human-only, audited). Note: every CLI command runs `init`, which re-adds tools still listed in `TOOLS.md`, so a revoke only sticks if the tool is also removed from `TOOLS.md` |
 | R16 ✅ 2026-10-28 (scheduler syncs at start and every 6 h when STORE_ADAPTER=lemonsqueezy; `aecom store sync`; doctor warns until the first sync) | W11 | Lost-key recovery only considers products of kind `license`, but a webhook for a not-yet-synced product creates a placeholder of kind `download`, so recovery is skipped for it. Run `LemonSqueezyStore.sync_catalog()` before the first sale and on a schedule (not wired yet) |
-| R17 | W11 | `chaos.run_scenario()` now refuses non-disposable databases (a direct call once wrote test orders into the company DB; repaired from a snapshot). Same care applies to other writing helpers (`simulator`, `seed_demo`): never call them without a throwaway `DATABASE_URL` |
+| R17 ✅ 2026-10-30 (`simulator`, `seed_demo` and `run_scenario` now refuse a database that holds real store sales; override with `AECOM_ALLOW_DEMO=1`) | W11 | `chaos.run_scenario()` now refuses non-disposable databases (a direct call once wrote test orders into the company DB; repaired from a snapshot). Same care applies to other writing helpers (`simulator`, `seed_demo`): never call them without a throwaway `DATABASE_URL` |
 | R18 ✅ 2026-10-30 (optional AES-256-GCM encryption with `BACKUP_PASSPHRASE`; see [Backups](Backups)) | W12 | Backups held customer personal data unencrypted. `update.sh`/units were validated statically and with `--check` in a clone only - the first real run on the Pi is a human test; the Sentinel still holds `request_account_need` in the owner's database until `aecom registry revoke sentinel request_account_need --by NAME` is run |
-| R19 | W13 | Stage 3 "notify" is only the daily flash and the log (no immediate message); the Judge's scores are not a demotion trigger; trust history starts now (older approvals have no edited flag); `promote()` checks eligibility and sets the stage in two steps (a human must act, so the window is tiny); demotion raises its incident after demoting, so a failure in between loses the incident (the audit row remains) |
+| R19 ✅ 2026-10-30 (promotion is atomic, the incident is raised before demotion, stage-3 actions notify the owner within one monitor tick; the Judge-score demotion trigger is deliberately NOT built: the Judge verdict is stored per run, not per action, so it would blame the wrong tool) | W13 | Stage 3 "notify" is only the daily flash and the log (no immediate message); the Judge's scores are not a demotion trigger; trust history starts now (older approvals have no edited flag); `promote()` checks eligibility and sets the stage in two steps (a human must act, so the window is tiny); demotion raises its incident after demoting, so a failure in between loses the incident (the audit row remains) |
 | R5 ✅ | — | Replace FastAPI's deprecated `@app.on_event("startup")` with a lifespan handler |
 
 #### Decisions owned by the product owner
@@ -204,6 +204,17 @@ Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves
 | U2 | **Hosting** (cloud server vs. Raspberry Pi) | ✅ **Decided 2026-10-28:** Raspberry Pi first; move to a cloud server once revenue reaches about USD 20–30 | C1–C3 and H6 are built for the Pi (wave 12); a cloud move later changes hosting, not the code |
 | U3 | Should an **unknown vendor** (no built-in credential check) need a human confirmation before going active? | ✅ **Delegated to the CEO agent 2026-10-28:** the CEO proposes `activation` (`auto` / `human_confirm`) inside `request_provisioning`; the human's T3 approval of that request covers it. Default for unknown vendors: `human_confirm`; agents can never lower the human's own check | R14 remainder |
 | M-trigger | **Migration trigger** | Cumulative net revenue reaches `MIGRATION_REVENUE_EUR` (default 25 ≈ USD 27, configurable) | A P3 incident reminds the owner to review hosting (cloud) and the accounting tool; the owner decides, nothing moves automatically |
+
+### N. Dashboard UX (2026-10-30)
+Findings and fixes come from a design critique of the dashboard (visual hierarchy, flows, messages). Streamlit rules stay: no custom CSS, theme only through `.streamlit/config.toml`.
+| # | Item | Notes |
+|---|---|---|
+| N1 | Visual hierarchy and typography scale | One clear heading scale, consistent spacing between sections, secondary text sized and weighted so it never competes with the primary content |
+| N2 | Color contrast | Every text and badge combination reaches WCAG AA (4.5:1 body, 3:1 large text and controls) in light and dark; fix failing theme colours |
+| N3 | One obvious primary action per view | Primary button styling used once per view, in a predictable place; destructive actions stay secondary and behind a confirmation |
+| N4 | Flow friction | Remove dead ends and extra steps: the "enter your name first" requirement on every button, long forms, steps that need a second visit |
+| N5 | Friendly error messages | Specific, constructive messages that say what went wrong and what to do next, in one shared style |
+| N6 | Inline validation | Feedback under the field while typing (length, ranges, formats, matching values), with the submit button off until valid |
 
 ## Next
 1. **Live validation:** run every scenario against real Claude and record the outcomes and costs. Calibrate `PRICE_*`.

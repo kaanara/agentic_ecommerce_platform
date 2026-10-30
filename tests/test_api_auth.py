@@ -54,7 +54,11 @@ def test_health_is_public(client):
 
 
 # --------------------------------------------------------------------------- route discovery
-PUBLIC = {"/health", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"}
+# R14: /download/{order_id} is deliberately public too - a customer's browser, not an agent, hits it, authenticated
+# by the order's own signed token (verify_download) instead of the bearer token. See test_download_route.py for its
+# own auth, rate-limit and disabled-by-default coverage; it is excluded here rather than folded into WEBHOOKS below
+# because its failure modes (404 disabled/invalid, 429 rate-limited) don't match the webhooks' 401/503/404.
+PUBLIC = {"/health", "/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json", "/download/{order_id}"}
 BEARER_401 = "Invalid or missing bearer token"
 UNCONFIGURED_503 = "API token not configured"
 

@@ -9,13 +9,29 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from aecom import ledger
+from aecom import incidents, ledger
 from aecom.audit import audit
 from aecom.bus.events import outbox, publish
+from aecom.company_settings import get_setting, set_setting
 from aecom.config import get_settings
 from aecom.db import Customer, LicenseKey, Order, Product, Refund, now, session
 from aecom.money import cents, quantize
-from aecom.store.adapter import vat_included, vat_rate
+from aecom.store.adapter import EMAIL_SEND_SENDING, vat_included, vat_rate
+
+# R10: AgentMail's send API has no idempotency key, so a crash between a successful send and `mark_email_sent`
+# could double-send. A durable 'send once' marker closes that gap: it lives in ops_settings (keyed per order +
+# purpose) rather than a new column, is written *before* the AgentMail call so it survives a crash, and is only
+# ever cleared by a definite outcome (the send call itself raising) or a confirmed success (`mark_email_sent`).
+# A marker found still 'sending' means we genuinely don't know whether the customer already has it, so it is
+# never auto-resent - it is surfaced as a P2 incident instead, for a human to check and clear explicitly
+# (`clear_stuck_email_send`) before the next attempt is allowed to send.
+STUCK_EMAIL_MONITOR = "stuck_email_delivery"
+ACCESS_EMAIL_PURPOSE = "access_email"
+
+
+def _email_guard_key(order_id: str, purpose: str) -> str:
+    return f"email_guard:{order_id}:{purpose}"
+
 
 # H8 (EU digital content): version of the checkout checkbox the customer ticks before immediate delivery.
 # LEGAL REVIEW PENDING - bump the version whenever the wording changes; each order stores the version it agreed to.
@@ -241,6 +257,47 @@ class MockStore:
             if o is None:
                 raise ValueError(f"order {order_id} not found")
             o.email_sent, o.email_sent_at = True, now()
+        set_setting(_email_guard_key(order_id, ACCESS_EMAIL_PURPOSE), "")  # confirmed sent: the guard is moot now
+
+    def email_guard_state(self, order_id: str, purpose: str = ACCESS_EMAIL_PURPOSE) -> str | None:
+        """R10: durable 'send once' marker for the (order, purpose) email - 'sending' while a send is in flight,
+        ``None`` once it is confirmed sent or a send definitely failed. Backed by ops_settings, so it survives a
+        crash in the caller's process independently of the order row."""
+        return get_setting(_email_guard_key(order_id, purpose)) or None
+
+    def begin_email_send(self, order_id: str, purpose: str = ACCESS_EMAIL_PURPOSE) -> None:
+        """Record intent to call AgentMail *before* doing so. If the process crashes before the matching
+        `mark_email_sent` (or `fail_email_send`), this marker is the only durable evidence that an attempt was
+        made - AgentMail's send API has no idempotency key to fall back on."""
+        set_setting(_email_guard_key(order_id, purpose), EMAIL_SEND_SENDING)
+
+    def fail_email_send(self, order_id: str, purpose: str = ACCESS_EMAIL_PURPOSE) -> None:
+        """A definite failure: the send call itself raised, so nothing reached the customer and it is safe to
+        clear the marker and let the next attempt retry."""
+        set_setting(_email_guard_key(order_id, purpose), "")
+
+    def flag_stuck_email_send(self, order_id: str, purpose: str = ACCESS_EMAIL_PURPOSE) -> dict[str, Any]:
+        """A later attempt found the marker still 'sending': a crash happened between the AgentMail call and
+        `mark_email_sent`, so we cannot tell whether the customer already has it. Raise (or refresh) a P2
+        incident instead of guessing; a human checks AgentMail and calls `clear_stuck_email_send`."""
+        incident, _ = incidents.raise_incident(
+            STUCK_EMAIL_MONITOR, "P2", subject=order_id,
+            detail=f"order {order_id}: a previous '{purpose}' email send did not confirm completion before a "
+                   "crash (AgentMail's send API has no idempotency key). Resending automatically could double-send "
+                   "the customer's licence key / download link - a human must verify (AgentMail sent folder, or "
+                   "ask the customer) and clear it before it is retried.")
+        return incident
+
+    def clear_stuck_email_send(self, order_id: str, by: str, purpose: str = ACCESS_EMAIL_PURPOSE) -> None:
+        """A human, after verifying whether the customer already received the email, clears a stuck 'sending'
+        marker so the next `deliver_order` is allowed to send again (reusing the stored licence key / download
+        link - nothing new is issued)."""
+        if not by.strip():
+            raise ValueError("clearing a stuck email send needs the name of the human (by)")
+        if self.email_guard_state(order_id, purpose) != EMAIL_SEND_SENDING:
+            raise ValueError(f"order {order_id} has no stuck '{purpose}' email send to clear")
+        set_setting(_email_guard_key(order_id, purpose), "")
+        audit(f"human:{by}", "email_delivery", "cleared_stuck", {"order_id": order_id, "purpose": purpose})
 
     def refund_order(self, order_id: str, amount_eur: float, reason: str) -> dict[str, Any]:
         """Full or partial refund; the licence key is revoked only once the whole amount is refunded.

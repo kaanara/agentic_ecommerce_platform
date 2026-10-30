@@ -125,6 +125,10 @@ def resend_delivery_email(order_id: str) -> dict:
         raise ValueError(f"order {order_id} is '{order.get('status')}', not delivered - use the reconciler instead")
     if order.get("email_sent"):
         raise ValueError(f"order {order_id} already got its email; it is never sent twice")
+    store = get_store()
+    if getattr(store, "email_guard_state", lambda _id: None)(order_id) == "sending":
+        # a crash left the send unconfirmed; this tool is approval-gated, so a human has decided to resend
+        store.clear_stuck_email_send(order_id, by=current_agent.get() or "human")
     return deliver_order(order_id)
 
 
