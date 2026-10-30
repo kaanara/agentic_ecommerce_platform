@@ -28,20 +28,26 @@ Plain SQL checks, no LLM, so they work when Claude is down or a budget is exhaus
 | P1 | `duplicate_key` | a licence key on two orders, or more keys than the quantity (detail names key ids and order ids, never the key value) | `license_keys` |
 | P1 | `order_dead_letter` | dead-lettered event with topic `order.*` or `inventory.*` | event id |
 | P1 | `restock_failed` | `inventory.restock_failed` event in the last 24 h | sku |
+| P1 | `stale_backup_critical` | last verified backup older than 3 days, or none has ever verified clean | `verified_backup` |
 | P2 | `other_dead_letter` | any other dead-lettered event | event id |
 | P2 | `event_backlog` | more than 100 waiting/queued events, or the oldest due event is older than 10 min | `event_bus` |
 | P2 | `stuck_run` | agent run `running` for more than 30 min | run id |
 | P2 | `errors` | rows in `ops_errors` in the last hour (one incident with the count) | `ops_errors` |
 | P2 | `approval_ageing` | pending approval older than 24 h | approval id |
 | P2 | `kill_switch_long` | kill switch on for more than 1 h (first seen on is stored in setting `kill_switch_since`) | `kill_switch` |
+| P2 | `stale_backup` | last verified backup older than 26 h, or the off-device copy failed | `verified_backup` |
 | P2 | `monitor_error` | a monitor itself raised | monitor name |
 
-## Alert routing (`src/aecom/alerts.py`)
+## Alert routing (`src/aecom/notify.py`)
+``notify.route(event)`` delivers an event on the best available channel, returning `{channel_name: delivered}`. Event keys: `kind` (``message`` | ``approval`` | ``incident`` | ``diagnosis`` | ``flash`` | ``settings``), `text`, `urgency` (`info` | `normal` | `high`; high ignores quiet hours), optional `conversation_id`, `approval_id`, `agent_id`.
+
 | Sev | Channel | Timing |
 |---|---|---|
 | P1 | Telegram (every paired chat) + ntfy phone push (title, priority high) + email to `ALERT_EMAIL` | when the incident opens, repeated every 30 min until acknowledged |
 | P2 | Telegram (every paired chat) + email to `ALERT_EMAIL` | once, when the incident opens |
 | P3 | none yet (daily digest planned) | - |
+
+Routing order: paired Telegram chat (if available) → ntfy (if no Telegram) → dashboard inbox (always). Quiet hours (`QUIET_HOURS_START` / `QUIET_HOURS_END`, format "HH:MM") suppress non-high alerts; P1 high-urgency alerts always get through.
 
 - Acknowledge to stop repeats: `uv run aecom incidents ack <id> --by <you>`; resolve by hand with `aecom incidents resolve`, or let the monitor auto-resolve it.
 - Email goes through AgentMail and stays in the local outbox unless `AGENTMAIL_LIVE=true`. The push is a plain HTTP POST, so it does not depend on AgentMail or Claude.

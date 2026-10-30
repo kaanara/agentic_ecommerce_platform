@@ -1,19 +1,29 @@
 # Backups
 
-The company's state lives in two SQLite files. `aecom backup` copies them safely while the services keep running.
+The company's state lives in two SQLite files. `aecom backup` copies them safely while the services keep running. UI-driven backups are available from the dashboard [Settings](Settings) > Backups and updates tab.
 
 ## What is backed up
 
 - `data/aecom.db` - orders, customers, ledger, events, approvals, audit log.
 - `data/aecom.checkpoints.db` - the LangGraph checkpoints (if present).
 - `manifest.json` - UTC time, git sha, migration revision, size and SHA-256 per file, row counts of orders,
-  customers, ledger entries and events.
+  customers, ledger entries and events, verification status, and off-device copy outcome.
 
 The copies use SQLite's online backup API (never a plain file copy, which can be torn while the database is in
 use), and every copy must pass `PRAGMA integrity_check` or the backup fails. A backup directory contains only
 `*.db` files and `manifest.json`. **`.env` is never included**: keep it in the owner's password manager.
 
 PostgreSQL is not handled by this command (it raises an error pointing to `pg_dump`).
+
+## Dashboard interface
+
+**[Settings](Settings) > Backups and updates**:
+- List of recent backups with their timestamp, size, schema revision, git sha, verification status (✅/—), and off-device copy status (✅/❌/—).
+- Next scheduled run (computed from `backup_schedule` setting).
+- Free disk space where backups are stored.
+- **Back up now**: creates a backup on demand (published to the event bus; the scheduler runs it and writes the result to the jobs table).
+- **Verify newest**: runs an integrity check and business invariant validation on the newest backup.
+- **Restore** and **Download**: require the dashboard password again (customer data in backups). Restore prompts for the backup name in full and refuses to restore while the database is in use.
 
 ## Commands
 
@@ -29,8 +39,7 @@ error. Backups land in `data/backups/YYYYMMDD-HHMMSS[-label]/` (setting `BACKUP_
 
 ## Schedule
 
-Run `aecom backup` daily from the systemd timer described in the Raspberry Pi guide, and with
-`--label pre-update` right before every update. `aecom doctor` warns when the newest backup is older than 26 h and
+The dashboard Settings can enable automatic backups with a schedule (`BACKUP_ENABLED`, `BACKUP_SCHEDULE` — same interval/cron grammar as other scheduler jobs). Or run `aecom backup` from a cron job or systemd timer. Use `--label pre-update` right before every update. `aecom doctor` warns when the newest backup is older than 26 h and
 fails after 72 h, or when its hashes no longer match the manifest.
 
 ## Retention
@@ -56,7 +65,7 @@ fresh one and look at the reported problems.
 
 ## Off-device copy
 
-A backup on the same SD card is not a backup. Set `BACKUP_TARGET` in `.env` to one of:
+A backup on the same SD card is not a backup. Set `BACKUP_TARGET` in `.env` or [Settings](Settings) to one of:
 
 - a local path, e.g. a mounted USB drive: `BACKUP_TARGET=/mnt/usb/aecom-backups`
 - a second machine over ssh: `BACKUP_TARGET=backup@nas.local:/srv/aecom-backups` (uses
@@ -64,7 +73,7 @@ A backup on the same SD card is not a backup. Set `BACKUP_TARGET` in `.env` to o
 - a cloud bucket via rclone, for example after `rclone config` add an `ExecStartPost=` line to the timer service:
   `rclone sync /home/pi/aecom/data/backups remote:aecom-backups`
 
-If the copy fails the local backup is kept, the error is recorded (see `aecom errors`) and `create` exits 3.
+If the copy fails the local backup is kept, the error is recorded (see `aecom errors`) and `create` exits 3. A stale backup alert (P1 if over 3 days, P2 if over 26 h) fires if an off-device target is configured and the last copy failed.
 
 ## Privacy
 

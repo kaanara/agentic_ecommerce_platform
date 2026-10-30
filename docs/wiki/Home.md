@@ -13,8 +13,11 @@
 | Add a tool, MCP server or skill | [Tools, MCP and Skills](Tools-MCP-and-Skills) |
 | Query the database | [Data Model](Data-Model) |
 | Use the dashboards | [Dashboards](Dashboards) |
+| Monitor and alert | [Monitoring and Alerting](Monitoring-and-Alerting) |
+| Back up and restore | [Backups](Backups) |
 | Connect email, a real store, ad platforms | [Integrations](Integrations) |
-| Configure env vars | [Configuration](Configuration) |
+| Configure settings | [Settings](Settings), [Configuration](Configuration) |
+| Talk to the agents (dashboard, Telegram) | [Chat and Channels](Chat-and-Channels) |
 | Fix something | [Operations and Troubleshooting](Operations-and-Troubleshooting) |
 | See what's next | [Roadmap](Roadmap) |
 
