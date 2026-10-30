@@ -32,6 +32,11 @@
     aecom autonomy promote|demote TOOL --by NAME [--reason TEXT]   evidence-gated promotion / demotion to stage 1
     aecom autonomy log [--days N]          stage changes and autonomous actions
     aecom doctor [--json]                  health report (paste into an issue); exit 1 if any check fails
+    aecom month-end YYYY-MM [--by NAME]    create the month-end close report for a finished month (J9)
+    aecom period [list] | close|reopen YYYY-MM --by NAME [--note|--reason TEXT] | verify [YYYY-MM]   accounting months
+    aecom export datev|csv YYYY-MM [--out FILE] [--by NAME]   accountant export of one finished month (J10)
+    aecom decisions [due]                  accepted decisions due for the quarterly review (J14)
+    aecom decisions review ID delivered|partly|not_delivered|superseded --note TEXT --by NAME
     aecom update-status record --status success|rolled-back|failed --stage NAME --from REV --to REV
                                             record the outcome of a scripts/update.sh run (ops_jobs); best-effort,
                                             called by update.sh itself - never run this by hand except to test it
@@ -187,6 +192,26 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--note", default="")
     s = sub.add_parser("doctor")
     s.add_argument("--json", action="store_true", help="machine-readable report")
+    s = sub.add_parser("month-end", help="create the immutable month-end close report for a finished month (J9)")
+    s.add_argument("period", help="YYYY-MM")
+    s.add_argument("--by", default="cli-user")
+    s = sub.add_parser("period", help="accounting months: list, close, reopen (newest only) and verify (J8/J11)")
+    s.add_argument("action", nargs="?", default="list", choices=["list", "close", "reopen", "verify"])
+    s.add_argument("period", nargs="?", help="YYYY-MM (verify without it checks every closed month)")
+    s.add_argument("--by", default="")
+    s.add_argument("--note", default="")
+    s.add_argument("--reason", default="", help="reopen: why (required)")
+    s = sub.add_parser("export", help="accountant export of one finished month (DATEV draft or plain CSV)")
+    s.add_argument("fmt", choices=["datev", "csv"])
+    s.add_argument("period", help="YYYY-MM")
+    s.add_argument("--out", default=None, help="file to write (default: the suggested file name)")
+    s.add_argument("--by", default="cli-user")
+    s = sub.add_parser("decisions", help="quarterly look back at decision records (ADRs)")
+    s.add_argument("action", nargs="?", default="due", choices=["due", "review"])
+    s.add_argument("decision_id", nargs="?")
+    s.add_argument("outcome", nargs="?", choices=["delivered", "partly", "not_delivered", "superseded"])
+    s.add_argument("--note", default="")
+    s.add_argument("--by", default="")
     s = sub.add_parser("update-status")
     s.add_argument("action", choices=["record"])
     s.add_argument("--status", choices=["success", "rolled-back", "failed"], required=True)
@@ -432,6 +457,50 @@ def main(argv: list[str] | None = None) -> None:
         code = backup.run_cli(a.action, a.path, label=a.label, dest=a.dest, yes=a.yes)
         if code:
             sys.exit(code)
+    elif a.cmd == "month-end":
+        from aecom import month_end
+
+        try:
+            rep = month_end.generate(a.period, a.by)
+        except ValueError as exc:
+            sys.exit(str(exc))
+        _print({k: rep.get(k) for k in ("id", "kind", "period", "created_by", "created_at")})
+    elif a.cmd == "period":
+        from aecom import periods
+
+        try:
+            if a.action == "list":
+                _print(periods.list_periods())
+            elif a.action == "verify":
+                _print(periods.verify(a.period) if a.period else periods.verify_all())
+            elif not a.period:
+                sys.exit(f"usage: aecom period {a.action} YYYY-MM --by NAME")
+            elif a.action == "close":
+                _print(periods.close(a.period, a.by, a.note))
+            else:
+                _print(periods.reopen(a.period, a.by, a.reason))
+        except (ValueError, PermissionError) as exc:
+            sys.exit(str(exc))
+    elif a.cmd == "export":
+        from pathlib import Path
+
+        from aecom import accountant_export
+
+        res = accountant_export.export_month(a.period, a.fmt, by=a.by)
+        out = Path(a.out or res.filename)
+        out.write_bytes(res.content)
+        print(f"wrote {out} ({res.rows} rows)")
+        for w in res.warnings:
+            print(f"warning: {w}", file=sys.stderr)
+    elif a.cmd == "decisions":
+        from aecom import decision_review
+
+        if a.action == "due":
+            _print(decision_review.due())
+        else:
+            if not (a.decision_id and a.outcome):
+                sys.exit("usage: aecom decisions review ID OUTCOME --note TEXT --by NAME")
+            _print(decision_review.record_review(a.decision_id, a.outcome, a.note, a.by))
     elif a.cmd == "update-status":
         from aecom import jobs
 

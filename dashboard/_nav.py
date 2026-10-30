@@ -36,6 +36,7 @@ PAGE_DEFS: list[PageDef] = [
     PageDef("Govern", "trust.py", "Trust", "verified_user", "trust"),
     PageDef("Govern", "health.py", "Health", "monitor_heart", "health"),
     PageDef("Govern", "operations.py", "Operations", "build", "operations"),
+    PageDef("Govern", "accounting.py", "Accounting", "account_balance", "accounting"),
     PageDef("Govern", "settings.py", "Settings", "settings", "settings"),
     PageDef("Govern", "run_detail.py", "Run detail", "search", "run", hidden=True),  # reached by link (?run_id=)
 ]

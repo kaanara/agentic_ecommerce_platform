@@ -126,13 +126,13 @@ See [Reporting](Reporting) for the report catalog and design.
 | J5 ✅ 2026-10-26 | Daily flash email | Replaces the log-only daily report; merged with the P3 digest; stop writing daily insights to shared memory |
 | J6 ✅ 2026-10-27 | Weekly business review | Stored and emailed; product, marketing, support and AI sections |
 | J7 ✅ 2026-10-26 | VAT detail on ledger lines | Country and rate per VAT line, needed for the OSS report |
-| J8 | Period close | `ops_periods`; no postings into closed months |
-| J9 | Month-end close report | P&L, cash, VAT, budget vs actual, payout reconciliation (F4) |
-| J10 | Accountant export | General journal CSV (DATEV format for a German accountant), receipts linked to expenses |
-| J11 | Immutable records | Append-only ledger, 10-year retention (GoBD); demo backdating only in simulator mode |
+| J8 ✅ 2026-10-30 | Period close | `ops_periods`; no postings into closed months |
+| J9 ✅ 2026-10-30 (payout reconciliation section waits for F4) | Month-end close report | P&L, cash, VAT, budget vs actual, payout reconciliation (F4) |
+| J10 ✅ 2026-10-30 (DATEV draft; the accountant must validate the format and account numbers) | Accountant export | General journal CSV (DATEV format for a German accountant), receipts linked to expenses |
+| J11 ✅ 2026-10-30 (ledger rows cannot be edited or deleted, closed months carry a tamper-evident fingerprint; nothing deletes ledger rows, so the 10-year retention holds) | Immutable records | Append-only ledger, 10-year retention (GoBD); demo backdating only in simulator mode |
 | J12 ✅ 2026-10-27 | Governance report | Approvals, denies, kill switch, incidents, GDPR requests, consent, key rotations |
 | J13 ✅ (Markdown/CSV; PDF later) | Reports page + exports | Dashboard archive, CSV/PDF downloads, `aecom report`, `GET /reports` |
-| J14 | Decision review | Quarterly: did each ADR deliver? |
+| J14 ✅ 2026-10-30 | Decision review | Quarterly: did each ADR deliver? |
 
 ### K. Incident response
 See [Incident Response](Incident-Response) for who detects, diagnoses and fixes each problem type.

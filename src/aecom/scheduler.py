@@ -152,6 +152,13 @@ def run_jobs() -> None:
         log.info("jobs: ran %s", ran)
 
 
+def decision_review_reminder() -> None:
+    """Weekly: once per quarter, remind the owner that accepted decisions are due for a look back (J14)."""
+    from aecom import decision_review
+
+    decision_review.remind_due_reviews()
+
+
 def chat_retention() -> None:
     """Nightly retention sweep: purge conversations idle past ``chat_retention_days`` (0 = keep forever, skip)."""
     from aecom import conversations
@@ -176,6 +183,7 @@ def _schedule_jobs(sched: BlockingScheduler, demo: bool) -> None:
     add(sched, sync_store_catalog, s.schedule_sync_store_catalog, "sync_store_catalog", "6h")
     add(sched, backup_job, s.backup_schedule, "backup", "cron:15 3 * * *")
     add(sched, chat_retention, "cron:30 3 * * *", "chat_retention", "cron:30 3 * * *")
+    add(sched, decision_review_reminder, "cron:0 9 * * 1", "decision_review_reminder", "cron:0 9 * * 1")
     for job_id in ("poll_email", "poll_telegram"):
         if sched.get_job(job_id):
             sched.remove_job(job_id)

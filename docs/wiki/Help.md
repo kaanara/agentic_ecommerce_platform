@@ -30,6 +30,7 @@ Quick answers for running aecom. Everything below is run from the project folder
 | Change a setting or secret | Dashboard > Settings (secrets are written to `.env` only) |
 | Run the company, sync the store, review memories, manage tool grants or vendor sign-ups | Dashboard > Operations (see [Dashboards](Dashboards)) |
 | Turn backups on or off, set when they run, encrypt them | Dashboard > Settings > Backups and updates (see [Backups](Backups)) |
+| Close a month, create the month-end report, export for the accountant | Dashboard > Accounting (see [Dashboards](Dashboards)) |
 | Change the dashboard password | Dashboard > Settings > Security |
 
 ## Common problems

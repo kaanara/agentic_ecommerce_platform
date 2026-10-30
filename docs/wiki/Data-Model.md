@@ -41,11 +41,15 @@ The LangGraph checkpoints live in a separate file, `data/aecom.checkpoints.db` (
 | `ops_channel_links` | Paired messaging chats (unique per channel and chat id), `active`, and `max_approve_tier`, the highest tier approvable from that chat |
 | `ops_jobs` | UI-requested background jobs run by the scheduler: kind `backup`, `verify`, `restore`, `doctor` or `update` (recorded by `update.sh`), status, result JSON |
 | `ops_policy_versions` | Versions of `policy.yaml` saved from the Settings page; the single active row wins over the file in git |
+| `ops_periods` | Accounting months: status (open or closed), who closed it and when, a fingerprint of its ledger lines (tamper check) and the month-end report id (migration 0011) |
+| `ops_decision_reviews` | The quarterly look back at a decision: outcome, note and reviewer (one per decision and quarter) |
 | `ops_persona_overrides` | Persona and `company/` file edits made in the UI (scope, file name, content, hash of the git file at edit time); the loader prefers them |
 
 UI settings are rows in `ops_settings` with the key `config:<name>`, plus `config_version`, which every process checks to reload. Secrets are never stored in the database: they go to `.env` only.
 
 ## Ledger accounts
+The ledger is append-only: editing or deleting a `ledger_entries` row raises an error (only the market simulator may back-date demo data). Corrections are new balancing entries, and nothing deletes ledger rows, so the 10-year retention holds.
+
 | Account | Normal side | Written by |
 |---|---|---|
 | `cash` | debit | sales, refunds, expenses |

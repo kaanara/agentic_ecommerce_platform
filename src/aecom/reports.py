@@ -263,6 +263,20 @@ def _sha(data: dict[str, Any], text: str) -> str:
     return hashlib.sha256((canonical + text).encode()).hexdigest()
 
 
+_MONTH = re.compile(r"\d{4}-(0[1-9]|1[0-2])")
+
+
+def _period_bounds(period_name: str, today: date | datetime | None = None) -> tuple[datetime, datetime]:
+    """(start, end) for a named metrics period (``aecom.metrics.period``) or an explicit accounting month
+    ``YYYY-MM`` (J9's ``month_end`` kind: it needn't have ended for its bounds to exist, only ``month_end.generate``
+    refuses one that hasn't)."""
+    if _MONTH.fullmatch(period_name):
+        year, month = int(period_name[:4]), int(period_name[5:])
+        end = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
+        return datetime(year, month, 1), end
+    return metrics.period(period_name, today)
+
+
 def _to_dict(r: Report) -> dict[str, Any]:
     return {"id": r.id, "kind": r.kind, "period_start": r.period_start.isoformat() if r.period_start else None,
             "period_end": r.period_end.isoformat() if r.period_end else None, "version": r.version, "data": r.data,
@@ -281,7 +295,7 @@ def create_report(kind: str, period_name: str, text: str, created_by: str = "sys
     if unknown := number_check(text, data):
         raise ValueError(f"report mentions numbers not in its data: {', '.join(unknown)}. "
                          "Quote only figures from get_pnl/get_kpis for this period.")
-    start, end = metrics.period(period_name, today)
+    start, end = _period_bounds(period_name, today)
     with session() as s:
         previous = s.scalar(select(func.max(Report.version))
                             .where(Report.kind == kind, Report.period_start == start, Report.period_end == end)) or 0
@@ -314,7 +328,8 @@ def latest(kind: str) -> dict[str, Any] | None:
     return reports[0] if reports else None
 
 
-TITLES = {"daily_flash": "Daily flash", "weekly_review": "Weekly business review", "governance": "Governance report"}
+TITLES = {"daily_flash": "Daily flash", "weekly_review": "Weekly business review", "governance": "Governance report",
+          "month_end": "Month-end close report"}
 
 
 def report_title(kind: str) -> str:

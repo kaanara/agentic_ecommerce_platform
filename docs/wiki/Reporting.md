@@ -1,6 +1,6 @@
 # Reporting
 
-> **Status:** stored report snapshots exist (J3) and their commentary is number-checked (J4): `aecom/reports.py` + the `submit_report` tool, persisted in `ops_reports`. The daily flash (J5), the weekly business review (J6) and the monthly governance report (J12) are generated on schedule and emailed; the dashboard **Reports** page and `GET /reports` serve the archive with Markdown and CSV exports (J13). Still missing: PDF, a CLI, month-end close and accounting exports, and periods aren't closed. This page records today's state, the remaining gaps and the target design. Work items are tracked in [Roadmap](Roadmap) → section J, and scheduled in the [Development Plan](Development-Plan).
+> **Status:** stored report snapshots exist (J3) and their commentary is number-checked (J4): `aecom/reports.py` + the `submit_report` tool, persisted in `ops_reports`. The daily flash (J5), the weekly business review (J6) and the monthly governance report (J12) are generated on schedule and emailed; the dashboard **Reports** page and `GET /reports` serve the archive with Markdown and CSV exports (J13). The month-end close report (J9: P&L, cash, VAT, budget vs actual, top products, open incidents, unmatched items) is built by `aecom/month_end.py` and created by a human from the dashboard's Govern → Accounting → "Month-end report" tab. Still missing: PDF, a CLI to (re)generate reports, and payout reconciliation (F4), which the month-end report currently reports as an open item instead of a number. This page records today's state, the remaining gaps and the target design. Work items are tracked in [Roadmap](Roadmap) → section J, and scheduled in the [Development Plan](Development-Plan).
 
 ## What exists today
 | Report | How it's produced | Where it ends up |
@@ -9,6 +9,7 @@
 | Weekly business review | Scheduler Monday 08:00 → `reports.send_report("weekly_review", "last_7_days")` | `ops_reports` (`weekly_review`), email |
 | Weekly company run | Scheduler Monday 08:00 → company run | The CEO's executive summary in the run output |
 | Governance report | Scheduler 1st of the month 07:30 → `reports.send_report("governance", "last_month")` | `ops_reports` (`governance`), email |
+| Month-end close report | Human, from Govern → Accounting → "Month-end report" (J9) → `month_end.generate(period, by)` | `ops_reports` (`month_end`), dashboard Markdown/CSV download |
 | Reports page / `GET /reports` | Stored snapshots | Dashboard (Markdown and CSV download), API |
 | Business dashboard | Live SQL queries | On screen only (7/30/90-day ranges) |
 | `get_pnl` / `get_kpis` tools | Ledger and order queries | Returned to the agent that called them |
@@ -73,6 +74,31 @@ report. Scheduler jobs: `weekly_review_report` (Monday 08:00, next to the `weekl
 `governance_report` (1st of the month 07:30); with `--demo` every 60 and 240 minutes. `scheduler.build_scheduler(demo)`
 returns the configured scheduler without starting it.
 
+## Month-end close report (J9)
+`aecom/month_end.py` builds the close report for one calendar month (`period`, `'YYYY-MM'`, e.g. `'2026-01'`):
+
+| Section | Contents |
+|---|---|
+| `pnl` | Net revenue, refunds, COGS, marketing, AI and vendor expenses, gross profit/margin, net result (`aecom.metrics`) |
+| `cash` | Opening and closing balance of the `cash` account, plus the period's gross in/out movement |
+| `vat` | VAT payable per country and rate (J7/OSS), from the `vat_payable` ledger lines' `country`/`vat_rate` columns: net taxable amount and VAT per group, and the total (always equal to `pnl.vat_payable`) |
+| `budget` | Marketing: the `marketing_budget_month_eur` setting vs. ledger spend. AI: each agent's `daily_budget` (`aecom.graph.agents`) × the month's length vs. its actual run cost (`ops_agent_runs`) |
+| `top_products` | Same per-SKU shape as the weekly review's `products` |
+| `refunds_count`, `incidents` | Refunds booked in the month; currently open incidents by severity |
+| `unmatched_items` | Deduplicated violations of `ledger_balanced`, `every_mirrored_order_has_ledger_lines` and `no_order_without_ledger_lines` (`aecom.chaos.invariants`) |
+| `payout_reconciliation` | `{"available": false, "reason": "not available until payout reconciliation (F4) is built", "open_items": ...}` - F4 isn't built, so this section reports that instead of numbers it doesn't have |
+| `checks` | `ledger_balanced`, `every_mirrored_order_has_ledger_lines`; the period's close status and (once closed) its ledger fingerprint, both from `aecom.periods` (J8) |
+
+`month_end.build(period)` works for any month that has ledger lines, including the current one (for a preview).
+`month_end.numbers_text(data)` is the same kind of deterministic, number-check-safe summary as `reports.summary`.
+`month_end.generate(period, by)` refuses a month that has not fully ended yet, or a blank `by`, then stores it
+through `reports.create_report(..., created_by=f"human:{by}")` - there is no agent tool for this report, a human
+always creates it. A second call for the same month adds the next version, exactly like every other report kind;
+it never edits one. If the month is already closed in `ops_periods`, the new report's id is written to that row's
+`report_id` (and nothing else on it changes). The dashboard's Govern → Accounting → "Month-end report" tab
+(`dashboard/_acct_report.py`) picks a month, previews the numbers, creates a version and downloads it as Markdown
+or as a P&L-only CSV (`month_end.pnl_csv`).
+
 Not yet in the governance data: who switched the kill switch or the agent pause. Those settings are changed with
 `set_setting` and only appear once that writes an audit row (safe mode already does).
 
@@ -90,7 +116,7 @@ Not yet in the governance data: who switched the kill switch or the agent pause.
 - **Two sources of truth.** `get_kpis` computes revenue from the `orders` table, while `get_pnl` uses the ledger. They can disagree (refunds, VAT, failed orders).
 - **Numbers written by an LLM.** The Finance agent writes the report text itself. Nothing checks that its figures match the database.
 - **Reports aren't snapshots.** Re-running later gives different numbers, and no period is ever closed.
-- **No tax or accounting output.** There's no VAT breakdown by country and rate (ledger lines carry no country), no journal export for an accountant, and no receipts attached to expenses.
+- **No tax or accounting output.** J9's month-end report now has a VAT breakdown by country and rate and an unmatched-items list, but there is still no journal export for an accountant, no payout reconciliation (F4) and no receipts attached to expenses.
 - **Records can be changed.** Ledger rows are ordinary rows (the simulator rewrites `created_at`). German bookkeeping rules (GoBD) require records that can't be altered, kept for 10 years.
 - **Partial export.** Stored reports download as Markdown and CSV; there is no PDF, and the Business page has no download.
 - **Daily insights pollute shared memory.** Every agent recalls them, they pile up daily, and they're never reviewed (see I15).
@@ -109,7 +135,7 @@ Not yet in the governance data: who switched the kill switch or the agent pause.
 |---|---|---|---|---|
 | **Daily flash** | Owner | Daily 07:00 | Yesterday's orders, net revenue, refunds, ad spend, AI cost, open incidents, pending approvals | Email (merged with the P3 alert digest), dashboard |
 | **Weekly business review** | Owner, CEO agent | Monday | KPIs vs OKRs, product and channel performance, decisions made, lessons, next steps | Email + archive |
-| **Month-end close** | Owner, accountant | Monthly, by the 5th | P&L, cash, VAT payable, budget vs actual, payout reconciliation, open items | PDF + CSV, archive, period locked |
+| **Month-end close** | Owner, accountant | Monthly, by the 5th | P&L, cash, VAT payable, budget vs actual, payout reconciliation, open items | Markdown + CSV, archive (built, J9); PDF, scheduling by the 5th and automatic period lock still open |
 | **VAT report** | Accountant / tax | Quarterly (OSS) | Sales and refunds by country and VAT rate; with a merchant of record, the MoR statements and payouts instead | CSV |
 | **Accountant export** | Accountant | Monthly | General journal in the accountant's format (e.g. DATEV CSV in Germany), with links to receipts | CSV |
 | **Product and stock** | Owner, Store Ops, Supply | Weekly | Sales and refund rate per SKU, key stock, burn rate, days of stock left | Dashboard + weekly review |

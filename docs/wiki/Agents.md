@@ -103,6 +103,9 @@ uv run aecom memory reject mem_123 --by alice --note "came from a phishing email
 
 Rejected memories stay in the table for the record but are never recalled. Approving and rejecting are audited as `human:<name>` (action `memory_review`). Look hard at tainted entries before you approve them.
 
+## Decision review (J14)
+Agents record decisions (ADRs) with `record_decision`, mirrored to `docs/decisions/*.md`. Quarterly, a human checks whether each one delivered what it promised, using `aecom.decision_review`: `due()` lists accepted decisions at least 60 days old not yet reviewed this quarter, `evidence(decision_id)` pulls small, factual current figures from the books (metrics/ledger/real sales/vendor status) for categories where numbers exist, and `record_review(decision_id, outcome, note, by)` saves the verdict (`outcome` one of `delivered|partly|not_delivered|superseded`; a note is required unless it delivered). No agent tool can write a review — only a human, in the dashboard's Accounting > Decision review tab.
+
 ## Adding an agent
 1. Create `agents/<new_id>/` with all five files. The `id` in IDENTITY must match the folder name.
 2. List only tools that exist in the catalog (`uv run pytest` checks this).

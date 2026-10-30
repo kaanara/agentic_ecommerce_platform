@@ -13,6 +13,7 @@
 - [Chat and Channels](Chat-and-Channels)
 - [Monitoring and Alerting](Monitoring-and-Alerting)
 - [Backups](Backups)
+- [Accounting Export](Accounting-Export)
 - [Integrations](Integrations)
 - [Configuration](Configuration)
 - [Settings](Settings)

@@ -9,7 +9,8 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from aecom.db import LedgerEntry, new_id, session
+from aecom import periods
+from aecom.db import LedgerEntry, new_id, now, session
 from aecom.money import cents, quantize, to_decimal, vat_split
 
 # debit-normal accounts grow with debits; the rest grow with credits
@@ -26,12 +27,17 @@ def post(lines: list[tuple], memo: str, ref: str | None = None, *, session: Sess
     """lines = [(account, debit, credit), ...] or (account, debit, credit, country, vat_rate) for VAT lines.
 
     Balance is checked in integer cents and amounts are stored rounded to cents. With ``session`` the lines are
-    added to that session and commit (or roll back) with it.
+    added to that session and commit (or roll back) with it. Entries are always timestamped now, so this refuses
+    (J8) only in the rare case that the *current* month has already been closed - post the correction once the
+    next month opens (or reopen the closed one first, if it really belongs there).
     """
     debit = sum(cents(line[1]) for line in lines)
     credit = sum(cents(line[2]) for line in lines)
     if debit != credit:
         raise ValueError(f"unbalanced transaction: debit={debit / 100:.2f} credit={credit / 100:.2f}")
+    moment = now()
+    if periods.status(moment.strftime("%Y-%m")) == "closed":
+        raise periods.PeriodClosed(f"{moment:%B %Y} is closed; post the correction in the current month")
     txn = new_id("txn")
     with _use(session) as s:
         for account, d, c, *detail in lines:

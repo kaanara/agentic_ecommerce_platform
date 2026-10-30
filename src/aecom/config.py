@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     backup_target: str | None = None
     # Customer download route (GET /download/{order_id}?token=...): off until the API has a public URL
     download_route_enabled: bool = False
+    # Accountant export (DATEV): numbers your accountant gives you; empty is fine for a first draft
+    datev_berater_nr: str = ""
+    datev_mandant_nr: str = ""
+    datev_wj_beginn: str = ""  # financial year start as YYYYMMDD; empty = 1 January of the exported year
     downloads_dir: Path = ROOT / "data" / "downloads"
 
     # --- Integrations --------------------------------------------------------

@@ -78,6 +78,15 @@ Direct conversation with any available agent. Messages and attachments are store
 
 Still CLI-only, on purpose: `aecom scenario`, `aecom simulate`, `aecom chaos` (developer tools that create test data) and `aecom init` (run on every update).
 
+## Accounting
+**Govern > Accounting** (enter your name in the sidebar first):
+- **Months:** every month with ledger lines, its status and a fingerprint. **Close month** (a confirmation; months close in order, only once the month is over and the books balance) stops any posting into it and stores a fingerprint of its ledger lines. **Verify all** recomputes the fingerprints and flags a month whose lines changed. **Reopen newest** needs your password again and a reason. Only humans can do this: no agent tool exists for it. CLI: `aecom period list|close|reopen|verify`.
+- **Month-end report:** P&L, cash, VAT per country and rate, budget against spend and checks, as an immutable report with downloads. Payout reconciliation is listed as open until that feature exists. CLI: `aecom month-end YYYY-MM`.
+- **Accountant export:** a DATEV draft or a plain CSV journal for a finished month, with warnings for expenses that have no receipt. Account numbers are defaults for you to confirm with your accountant. See [Accounting Export](Accounting-Export). CLI: `aecom export datev|csv YYYY-MM`.
+- **Decision review:** each quarter, decisions older than 60 days that are still accepted come up for a look back (delivered, partly, not delivered, superseded) with the facts that help you judge. A weekly reminder is sent once per quarter. CLI: `aecom decisions`.
+
+The ledger is append-only: a mistake is fixed with a new balancing entry, never by editing a row.
+
 ## Settings
 - **Security**: toggle dashboard login on/off, set password.
 - **AI and models**: Anthropic API key, model ids, max steps per run, token prices, web search config.
