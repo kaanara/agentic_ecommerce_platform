@@ -32,6 +32,7 @@
     aecom autonomy promote|demote TOOL --by NAME [--reason TEXT]   evidence-gated promotion / demotion to stage 1
     aecom autonomy log [--days N]          stage changes and autonomous actions
     aecom doctor [--json]                  health report (paste into an issue); exit 1 if any check fails
+    aecom live-check [SCENARIO ...] [--max-eur N]   run scenarios against real Claude on a throwaway DB (needs a capped key)
     aecom engineer clear-branch --by NAME   free the Engineer agent's single open branch after you handled its PR
     aecom payouts [list] | import FILE.csv --provider P --by NAME | reconcile [ID] | fetch-stripe [YYYY-MM-DD]
     aecom month-end YYYY-MM [--by NAME]    create the month-end close report for a finished month (J9)
@@ -194,6 +195,10 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--note", default="")
     s = sub.add_parser("doctor")
     s.add_argument("--json", action="store_true", help="machine-readable report")
+    s = sub.add_parser("live-check", help="run scenarios against real Claude on a throwaway database, with a spend cap")
+    s.add_argument("scenario", nargs="*", help="scenario name(s); default: all")
+    s.add_argument("--max-eur", type=float, default=2.0)
+    s.add_argument("--by", default="cli-user")
     s = sub.add_parser("engineer", help="the Engineer agent's workspace (human-only actions)")
     s.add_argument("action", choices=["clear-branch"])
     s.add_argument("--by", default="")
@@ -290,6 +295,14 @@ def main(argv: list[str] | None = None) -> None:
         from aecom.scheduler import main as sched_main
 
         return sched_main(demo=a.demo)
+    if a.cmd == "live-check":  # before init(): it must never touch the company database
+        from aecom.live_validation import LiveValidationRefused, run
+
+        try:
+            run(names=a.scenario or None, max_eur=a.max_eur, by=a.by)
+        except LiveValidationRefused as exc:
+            sys.exit(str(exc))
+        return None
     if a.cmd == "chaos":  # before init(): by default it must never touch the company DB
         return _chaos(a.name, a.seed, a.use_configured_db)
     if a.cmd == "doctor":  # before init(): report the database as it is (e.g. missing columns), don't fix it
