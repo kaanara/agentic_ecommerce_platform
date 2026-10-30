@@ -35,7 +35,9 @@ nano .env                                           # fill in the keys; keep the
 uv run aecom init
 ```
 
-Set `AECOM_API_TOKEN` and the dashboard password hash (`DASHBOARD_PASSWORD_HASH`, see [Dashboards](Dashboards)) in `.env`. Do not set `DASHBOARD_AUTH=off` on the Pi.
+Set `AECOM_API_TOKEN` in `.env`, then set the dashboard password with `uv run aecom dashboard reset-password` (at least 12 characters; see [Dashboards](Dashboards)). Do not set `DASHBOARD_AUTH=off` on the Pi.
+
+The repository is public and `main` is the default branch, so `git clone https://github.com/kaanara/agentic_ecommerce_platform.git` needs no credentials.
 
 ## 3. Services
 
@@ -62,6 +64,32 @@ echo "aecom ALL=(root) NOPASSWD: $S start aecom-scheduler, $S stop aecom-schedul
   > /tmp/aecom-update.sudoers && sudo visudo -cf /tmp/aecom-update.sudoers \
   && sudo install -m 440 -o root -g root /tmp/aecom-update.sudoers /etc/sudoers.d/aecom-update
 ```
+
+### Always on: start at boot and after a power cut
+
+The units are `WantedBy=multi-user.target` with `Restart=always`, so once they are **enabled** they start by themselves whenever the Pi boots and come back if a process dies. Do not run `uv run aecom dashboard` by hand while the service is enabled: it fails with "Port 8501 is not available" (a job suspended with Ctrl-Z still holds its port).
+
+Fastest path, on the Pi, as your normal user, after `.env` and the dashboard password are set:
+
+```bash
+cd ~/agentic_ecommerce_platform
+bash scripts/pi-bootstrap.sh --allow-update-sudo --enable-services    # installs the units, enables and starts them
+systemctl is-enabled aecom-scheduler aecom-api aecom-dashboard         # each prints "enabled"
+systemctl is-active  aecom-scheduler aecom-api aecom-dashboard         # each prints "active"
+sudo reboot                                                            # the real test; check again after boot
+```
+
+To watch logs: `journalctl -u aecom-dashboard -f` (also `aecom-scheduler`, `aecom-api`).
+
+The dashboard unit listens on `127.0.0.1:8501` only (see section 5). To open it from other devices on your home network, prefer Tailscale or an SSH tunnel. If you accept plain HTTP on a trusted LAN, override the host with a drop-in instead of editing the unit file: `sudo systemctl edit aecom-dashboard`, add
+
+```
+[Service]
+ExecStart=
+ExecStart=/home/<user>/.local/bin/uv run aecom dashboard --host 0.0.0.0 --port 8501
+```
+
+then `sudo systemctl restart aecom-dashboard`. Never forward the port on your router.
 
 ### Journald limits
 

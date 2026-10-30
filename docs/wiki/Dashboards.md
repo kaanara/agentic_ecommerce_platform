@@ -9,12 +9,12 @@ All pages read the company database directly. Approval buttons call `aecom.appro
 Every page asks for a password before it shows any data or button, because the dashboard can approve spending and flip the kill switch.
 
 ```bash
-uv run python -m aecom.dashboard_auth   # prompts twice (hidden), prints DASHBOARD_PASSWORD_HASH=scrypt$...
+uv run aecom dashboard reset-password   # on the machine: prompts twice (hidden), at least 12 characters, turns the login on
 ```
-Paste the printed line into `.env` and restart the dashboard. Only the scrypt hash is stored; the password is never printed or saved.
-- **Fails closed**: if `DASHBOARD_PASSWORD_HASH` is unset, the dashboard only explains how to set it.
+The password is stored as a scrypt hash in the database (never printed or saved in clear). You can also set, change or turn off the login in **Settings > Security** (changing it needs the current password). The older `.env` route still works until you save from the UI: `uv run python -m aecom.dashboard_auth` prints a `DASHBOARD_PASSWORD_HASH=` line for `.env`; precedence is database, then `.env`.
+- **Fails closed**: with the login on but no password set, the dashboard shows "Dashboard login is not configured" and nothing else. Run `reset-password` above.
 - After 5 wrong attempts in a browser session, logins are refused for 60 s.
-- **Log out** is in the sidebar. To change the password, generate a new line and restart.
+- **Log out** is in the sidebar. Sessions end after the idle timeout (12 h by default, a setting).
 - The login is a second line of defence, not a reason to expose the port. Streamlit serves plain HTTP, so keep it bound to localhost/the private network and reach it remotely only through Tailscale or an SSH tunnel (`ssh -L 8501:localhost:8501 pi`).
 - **Reviewer name**: enter your name in the sidebar text box for the audit log (recorded on every approval, switch or settings change).
 

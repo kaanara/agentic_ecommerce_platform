@@ -54,6 +54,9 @@ The header shows the version (git short sha, or the package version outside a ch
 | MCP tools missing | Server not `approved`+granted (or `sandboxed` for the Foreman), load timeout, or `MCP_AUTOLOAD=false`. Check the audit log for `mcp_load:<name>` |
 | Emails not arriving | `AGENTMAIL_LIVE=false` keeps them in the outbox (Dashboard → Home/Agents, table `ops_outbox_emails`) |
 | Approval shows `failed` | Underlying tool raised (for example `approve_tool` before `sandbox_tool`). The result column has the error |
+| Dashboard says "Dashboard login is not configured" | The login is on but no password is set. Run `uv run aecom dashboard reset-password` on the machine (at least 12 characters) |
+| `Port 8501 is not available` when starting the dashboard | The `aecom-dashboard` service (or a suspended `Ctrl-Z` job) already uses it. Use the service, or stop it with `sudo systemctl stop aecom-dashboard` / `kill %1` first |
+| Chat page says chat is disabled | Chat needs the dashboard login on and a password set (Settings > Security) |
 | Dashboard Agents page errors on Postgres | Replace `GROUP_CONCAT` with `string_agg(a.agent_id, ',')` in `pages/2_Agents.py` |
 
 ## Security checklist
