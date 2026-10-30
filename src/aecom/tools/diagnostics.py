@@ -112,4 +112,12 @@ def submit_diagnosis(incident_id: str, summary: str, root_cause: str, evidence: 
     you already called marked "done: <tool>(<args>) -> <result>", the rest for a human."""
     from aecom.sentinel import append_diagnosis
 
-    return append_diagnosis(incident_id, summary, root_cause, evidence, next_actions)
+    result = append_diagnosis(incident_id, summary, root_cause, evidence, next_actions)
+    try:
+        from aecom import notify
+
+        notify.route({"kind": "diagnosis", "text": f"Sentinel diagnosis for {incident_id}: {summary}",
+                      "urgency": "normal", "agent_id": "sentinel"})
+    except Exception:  # noqa: BLE001 - the diagnosis is already saved
+        pass
+    return result

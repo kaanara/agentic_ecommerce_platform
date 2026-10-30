@@ -187,4 +187,10 @@ def send_daily_flash(now: datetime | None = None) -> dict[str, Any]:
             record_error("flash", exc, context={"step": "email", "report_id": report["id"]})
     if fallback_reason:
         log.info("daily flash %s is numbers-only: %s", report["id"], fallback_reason)
+    try:
+        from aecom import notify
+
+        notify.route({"kind": "flash", "text": f"Daily flash {data['date']} is ready.", "urgency": "info"})
+    except Exception:  # noqa: BLE001 - the flash is already stored and emailed
+        pass
     return {"report_id": report["id"], "emailed": emailed, "fallback_reason": fallback_reason}

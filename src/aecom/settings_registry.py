@@ -146,7 +146,7 @@ _FIELDS: list[Field] = [
       for name, label in (("drain", "Event bus drain"), ("stock_check", "Stock check"), ("reconcile", "Order reconciler"),
                           ("monitors", "Monitors"), ("provisioning", "Provisioning check"),
                           ("expire_approvals", "Expire stale approvals"), ("sync_store_catalog", "Store catalog sync"),
-                          ("poll_email", "Email poll"), ("finance_daily", "Daily finance report"),
+                          ("poll_email", "Email poll"), ("poll_telegram", "Telegram poll"), ("finance_daily", "Daily finance report"),
                           ("weekly_review", "Weekly review"), ("governance_report", "Monthly governance report"))],
     # --- Security
     _f("dashboard_idle_hours", "Security", "Sign out after idle (hours)", kind="float", min=0.1, max=720),
@@ -158,6 +158,9 @@ _FIELDS: list[Field] = [
     _f("backup_enabled", "Backups and updates", "Scheduled backups", kind="bool", risk="sensitive"),
     _f("backup_schedule", "Backups and updates", "Backup schedule", _SCHED, "schedule"),
     _f("backup_verify_after", "Backups and updates", "Verify after every backup", kind="bool"),
+    _f("backup_keep_daily", "Backups and updates", "Keep newest daily backups", kind="int", min=1, max=365),
+    _f("backup_keep_weeks", "Backups and updates", "Keep one per ISO week, for (weeks)", kind="int", min=0, max=52),
+    _f("backup_keep_labelled", "Backups and updates", "Keep newest labelled backups", kind="int", min=0, max=50),
     _f("backup_target", "Backups and updates", "Off-device copy target", "A local path or user@host:/path (rsync). Backups hold customer data: use an encrypted target.", risk="sensitive"),
     _f("backup_dir", "Backups and updates", "Backup directory", "Changing it from the running app is not offered.", "path", storage="readonly"),
     # --- Autonomy (evidence gate: lowering these weakens it)

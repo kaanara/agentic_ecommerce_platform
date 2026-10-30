@@ -16,6 +16,14 @@ _RANGES = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))
 MIN_INTERVAL_S = 5
 
 
+_WEEKDAYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _weekday_names(part: str) -> str:
+    """Cron numbers weekdays 0/7=Sunday..6=Saturday but APScheduler numbers 0=Monday, so use names."""
+    return part if part == "*" else ",".join(_WEEKDAYS[int(i)] for i in part.split(","))
+
+
 def parse_schedule(spec: str) -> tuple[str, dict[str, Any]]:
     """('interval', {'minutes': 15}) or ('cron', {'minute': '15', 'hour': '3', ...}). Raises ValueError."""
     spec = (spec or "").strip().lower()
@@ -36,7 +44,7 @@ def parse_schedule(spec: str) -> tuple[str, dict[str, Any]]:
                 for item in part.split(","):
                     if not item.isdigit() or not lo <= int(item) <= hi:
                         raise ValueError(f"{name}: '{item}' must be * or a number {lo}-{hi}")
-            out[name] = part
+            out[name] = _weekday_names(part) if name == "day_of_week" else part
         return "cron", out
     raise ValueError("use 30s, 15m, 6h or cron:M H D M W")
 

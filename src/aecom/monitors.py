@@ -254,12 +254,87 @@ def policy_deny_spike(now: datetime) -> list[Problem]:
     return autonomy_guard.deny_spike_findings(now)
 
 
+# --- stale backups (§5c) ------------------------------------------------------------------------------------
+
+STALE_BACKUP_WARN_AFTER = timedelta(hours=26)
+STALE_BACKUP_CRIT_AFTER = timedelta(days=3)
+BACKUP_SUBJECT = "verified_backup"
+
+
+def _backups_ever_attempted() -> bool:
+    """Whether BACKUP_DIR exists at all. A directory that was never created means backups were never started on
+    this machine (a fresh install, or a test/dev environment with no ``backup_dir`` of its own): nothing to alert
+    on yet. Once it exists (the first `aecom backup` on a real deployment, per the Pi bootstrap guide), staleness
+    is tracked from then on."""
+    from aecom import backup
+
+    return backup.backup_dir().is_dir()
+
+
+def _verified_backup_age(now: datetime) -> timedelta | None:
+    """Age of the newest backup whose manifest records a clean verify (set by ``backup.run_backup_job`` /
+    ``run_verify_job``, or the ``aecom backup verify`` CLI). ``None`` when no backup has ever verified clean."""
+    from aecom import backup
+
+    for p in backup.list_backups():
+        try:
+            m = backup.read_manifest(p)
+        except backup.BackupError:
+            continue
+        if m.get("verified"):
+            return now - backup.created_at(p).replace(tzinfo=None)  # monitors compare naive UTC (``db.now()``)
+    return None
+
+
+def _last_off_device_failed() -> bool:
+    """True only when an off-device target is configured and the newest backup's copy to it failed."""
+    from aecom import backup
+    from aecom.config import get_settings
+
+    if not get_settings().backup_target:
+        return False
+    backups = backup.list_backups()
+    if not backups:
+        return False
+    try:
+        return backup.read_manifest(backups[0]).get("copied_off_device") is False
+    except backup.BackupError:
+        return False
+
+
+def stale_backup(now: datetime) -> list[Problem]:
+    """P2: the last verified backup is older than 26 h, or the last off-device copy failed. Catches the scheduler
+    being down (nothing new is ever verified) as well as a broken off-device target."""
+    if not _backups_ever_attempted():
+        return []
+    age = _verified_backup_age(now)
+    problems = []
+    if age is not None and STALE_BACKUP_WARN_AFTER <= age < STALE_BACKUP_CRIT_AFTER:
+        problems.append(f"last verified backup is {age.total_seconds() / 3600:.1f} h old (max 26 h)")
+    if _last_off_device_failed():
+        problems.append("the last off-device copy failed")
+    return [(BACKUP_SUBJECT, "; ".join(problems))] if problems else []
+
+
+def stale_backup_critical(now: datetime) -> list[Problem]:
+    """P1: the last verified backup is more than 3 days old, or none has ever verified clean (once backups have
+    started on this machine - see ``_backups_ever_attempted``)."""
+    if not _backups_ever_attempted():
+        return []
+    age = _verified_backup_age(now)
+    if age is None:
+        return [(BACKUP_SUBJECT, "no backup has ever verified clean")]
+    if age >= STALE_BACKUP_CRIT_AFTER:
+        return [(BACKUP_SUBJECT, f"last verified backup is {age.days} day(s) old (max 3)")]
+    return []
+
+
 MONITORS: dict[str, tuple[str, Monitor]] = {fn.__name__: (sev, fn) for sev, fn in (
     ("P1", undelivered_order), ("P1", unemailed_order), ("P1", ledger_imbalance), ("P1", duplicate_key),
-    ("P1", order_dead_letter), ("P1", restock_failed),
+    ("P1", order_dead_letter), ("P1", restock_failed), ("P1", stale_backup_critical),
     ("P2", other_dead_letter), ("P2", event_backlog), ("P2", stuck_run), ("P2", errors), ("P2", approval_ageing),
-    ("P2", kill_switch_long), ("P2", refund_abuse), ("P2", policy_deny_spike), ("P3", awaiting_consent_order),
-    ("P3", revenue_milestone))}
+    ("P2", kill_switch_long), ("P2", refund_abuse), ("P2", policy_deny_spike), ("P2", stale_backup),
+    ("P3", awaiting_consent_order), ("P3", revenue_milestone))}
 MONITOR_ERROR = "monitor_error"
 
 

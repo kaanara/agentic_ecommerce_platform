@@ -93,6 +93,9 @@ class Settings(BaseSettings):
     backup_enabled: bool = True
     backup_schedule: str = "cron:15 3 * * *"
     backup_verify_after: bool = True
+    backup_keep_daily: int = 7
+    backup_keep_weeks: int = 4
+    backup_keep_labelled: int = 5
 
     # --- Job schedules (see aecom.schedule_spec: "30s", "15m", "6h" or "cron:M H DOM MON DOW") ----
     schedule_drain: str = "30s"
@@ -103,6 +106,7 @@ class Settings(BaseSettings):
     schedule_expire_approvals: str = "30m"
     schedule_sync_store_catalog: str = "6h"
     schedule_poll_email: str = "60s"
+    schedule_poll_telegram: str = "10s"
     schedule_finance_daily: str = "cron:0 7 * * *"
     schedule_weekly_review: str = "cron:0 8 * * 1"
     schedule_governance_report: str = "cron:30 7 1 * *"

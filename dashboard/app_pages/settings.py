@@ -2,13 +2,15 @@
 #
 # Only `aecom.settings_registry` public functions touch stored values here (never ops_settings/.env directly), and
 # Security uses only `aecom.dashboard_auth` service functions. Secrets are never rendered: only set/not set, the last
-# 4 characters and a write-only input. Policy and Agents editing, and the Backups actions (now/verify, jobs,
-# restore), are placeholders for a later wave; this page only renders the Backups tab as a placeholder too.
+# 4 characters and a write-only input. Policy, Agents and Backups tabs are rendered by the `_settings_*` partials.
 
 import pandas as pd
 import streamlit as st
 import yaml
 
+from _settings_agents import render_agents_tab
+from _settings_backups import render_backups_tab
+from _settings_policy import render_policy_tab
 from _common import confirm_dialog, page_header, require_login, reviewer_name, step_up
 from aecom import dashboard_auth as auth
 from aecom import settings_registry as reg
@@ -22,12 +24,7 @@ _SECTION_FIELDS: dict[str, list[str]] = {}
 for _key, _field in reg.FIELDS.items():
     _SECTION_FIELDS.setdefault(_field.section, []).append(_key)
 
-PLACEHOLDER_TABS = {
-    "Policy": "Policy rules (tier, agents, limits), a YAML view, diff, versions and rollback arrive in a later wave.",
-    "Agents": "A markdown editor per persona file, with preview, diff and reset, arrives in a later wave.",
-    "Backups and updates": "Backup now / Verify now, scheduled backups and the update status arrive in a later wave. "
-                           "The underlying settings already live in the registry.",
-}
+PLACEHOLDER_TABS: dict[str, str] = {}
 
 TAB_NAMES: list[str] = []
 for _section in reg.SECTIONS:
@@ -327,6 +324,13 @@ for tab, name in zip(st.tabs(TAB_NAMES), TAB_NAMES):
             _history_tab()
         elif name == "Export / Import":
             _export_import_tab(by)
+        elif name == "Policy":
+            render_policy_tab(by)
+        elif name == "Agents":
+            render_agents_tab(by)
+        elif name == "Backups and updates":
+            _section_tab(name, by)
+            render_backups_tab(by)
         elif name in PLACEHOLDER_TABS:
             st.caption(PLACEHOLDER_TABS[name])
         else:

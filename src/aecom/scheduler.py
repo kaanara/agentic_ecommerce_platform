@@ -12,9 +12,12 @@ import logging
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
+import aecom.backup  # noqa: F401  (registers backup/verify job handlers and event subscribers)
 import aecom.handlers  # noqa: F401  (registers event subscribers)
 from aecom.bootstrap import init
+from aecom import schedule_spec
 from aecom.bus.events import drain, publish
+from aecom.config import get_settings
 from aecom.secrets import secrets
 from aecom.store.adapter import get_store
 
@@ -123,29 +126,81 @@ def simulate_market_day() -> None:
     log.info("market day: %s", simulate_day(support_emails=True))
 
 
+def poll_telegram() -> None:
+    from aecom.channels.telegram import poll_updates
+
+    if (n := poll_updates()):
+        log.info("telegram: %d update(s) processed", n)
+
+
+def backup_job() -> None:
+    if not get_settings().backup_enabled:
+        return
+    try:
+        log.info("scheduled backup: %s", aecom.backup.run_backup_job({}))
+    except Exception as exc:  # noqa: BLE001
+        from aecom.observability import record_error
+
+        record_error("scheduler", exc, context={"job": "backup"})
+
+
+def run_jobs() -> None:
+    from aecom import jobs
+
+    if (ran := jobs.run_pending()):
+        log.info("jobs: ran %s", ran)
+
+
+def _schedule_jobs(sched: BlockingScheduler, demo: bool) -> None:
+    """(Re)schedule every settings-driven job; safe to call again when the settings change."""
+    s = get_settings()
+    add = schedule_spec.add_job
+    add(sched, drain, s.schedule_drain, "drain", "30s")
+    add(sched, stock_check, s.schedule_stock_check, "stock_check", "60m")
+    add(sched, reconcile_orders, s.schedule_reconcile, "reconcile", "15m")
+    add(sched, monitors, s.schedule_monitors, "monitors", "5m")
+    add(sched, provisioning_check, s.schedule_provisioning, "provisioning", "15m")
+    add(sched, expire_approvals, s.schedule_expire_approvals, "expire_approvals", "30m")
+    add(sched, sync_store_catalog, s.schedule_sync_store_catalog, "sync_store_catalog", "6h")
+    add(sched, backup_job, s.backup_schedule, "backup", "cron:15 3 * * *")
+    for job_id in ("poll_email", "poll_telegram"):
+        if sched.get_job(job_id):
+            sched.remove_job(job_id)
+    if secrets.has("AGENTMAIL_API_KEY"):
+        add(sched, poll_email, s.schedule_poll_email, "poll_email", "60s")
+    if secrets.has("TELEGRAM_BOT_TOKEN") and s.telegram_enabled:
+        add(sched, poll_telegram, s.schedule_poll_telegram, "poll_telegram", "10s")
+    if demo:
+        return
+    add(sched, daily_finance_report, s.schedule_finance_daily, "finance_daily", "cron:0 7 * * *")
+    add(sched, weekly_review, s.schedule_weekly_review, "weekly_review", "cron:0 8 * * 1")
+    add(sched, weekly_review_report, s.schedule_weekly_review, "weekly_review_report", "cron:0 8 * * 1")
+    add(sched, governance_report, s.schedule_governance_report, "governance_report", "cron:30 7 1 * *")
+
+
 def build_scheduler(demo: bool = False) -> BlockingScheduler:
     """All jobs registered, not started (so the setup can be inspected)."""
+    from aecom import settings_registry
+
     sched = BlockingScheduler()
-    sched.add_job(drain, "interval", seconds=30, id="drain")
-    sched.add_job(stock_check, "interval", minutes=60, id="stock_check")
-    sched.add_job(reconcile_orders, "interval", minutes=15, id="reconcile")
-    sched.add_job(monitors, "interval", minutes=5, id="monitors")
-    sched.add_job(provisioning_check, "interval", minutes=15, id="provisioning")
-    sched.add_job(expire_approvals, "interval", minutes=30, id="expire_approvals")
-    sched.add_job(sync_store_catalog, "interval", hours=6, id="sync_store_catalog")
-    if secrets.has("AGENTMAIL_API_KEY"):
-        sched.add_job(poll_email, "interval", seconds=60, id="poll_email")
+    _schedule_jobs(sched, demo)
+    sched.add_job(run_jobs, "interval", seconds=30, id="jobs")
     if demo:
         sched.add_job(simulate_market_day, "interval", minutes=1, id="market")
         sched.add_job(daily_finance_report, "interval", minutes=10, id="finance_daily")
         sched.add_job(weekly_review, "interval", minutes=60, id="weekly_review")
         sched.add_job(weekly_review_report, "interval", minutes=60, id="weekly_review_report")
         sched.add_job(governance_report, "interval", minutes=240, id="governance_report")
-    else:
-        sched.add_job(daily_finance_report, "cron", hour=7, id="finance_daily")
-        sched.add_job(weekly_review, "cron", day_of_week="mon", hour=8, id="weekly_review")
-        sched.add_job(weekly_review_report, "cron", day_of_week="mon", hour=8, id="weekly_review_report")
-        sched.add_job(governance_report, "cron", day=1, hour=7, minute=30, id="governance_report")
+
+    seen = {"v": settings_registry.config_version()}
+
+    def reload_settings() -> None:
+        if settings_registry.refresh_if_changed() and settings_registry.config_version() != seen["v"]:
+            seen["v"] = settings_registry.config_version()
+            _schedule_jobs(sched, demo)
+            log.info("scheduler: settings changed, jobs rescheduled")
+
+    sched.add_job(reload_settings, "interval", seconds=30, id="reload_settings")
     return sched
 
 

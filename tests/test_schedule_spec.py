@@ -12,7 +12,7 @@ def test_intervals():
 def test_cron():
     assert parse_schedule("cron:15 3 * * *") == (
         "cron", {"minute": "15", "hour": "3", "day": "*", "month": "*", "day_of_week": "*"})
-    assert parse_schedule("cron:0 8 * * 1,4")[1]["day_of_week"] == "1,4"
+    assert parse_schedule("cron:0 8 * * 1,4")[1]["day_of_week"] == "mon,thu"  # cron 1 = Monday (APScheduler's 1 would be Tuesday)
 
 
 @pytest.mark.parametrize("bad", ["", "0s", "2s", "abc", "cron:", "cron:1 2 3", "cron:61 * * * *", "cron:* 24 * * *",

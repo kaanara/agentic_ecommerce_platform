@@ -95,17 +95,20 @@ def test_page_renders_with_login_off(envp):
     assert at.title[0].value == ":material/settings: Settings"
 
 
+def _top_tabs(at):
+    return [t for t in at.tabs if t.proto.label in TAB_NAMES]
+
+
 def test_tab_order_matches_the_plan(envp):
     at = _app().run()
-    assert [t.proto.label for t in at.tabs] == TAB_NAMES
+    assert [t.proto.label for t in _top_tabs(at)] == TAB_NAMES
 
 
-def test_policy_agents_backups_are_placeholders(envp):
+def test_policy_agents_backups_tabs_render_their_partials(envp):
     at = _app().run()
-    captions = " ".join(c.value for t in at.tabs for c in t.get("caption"))
-    assert "later wave" in captions
-    for word in ("Policy rules", "persona file", "Backup now"):
-        assert word in captions
+    assert not at.exception, _messages(at)
+    labels = {t.proto.label for t in at.tabs}
+    assert {"Policy", "Agents", "Backups and updates"} <= labels
 
 
 def test_autonomy_fields_link_to_trust_instead_of_a_raw_field(envp):
@@ -247,7 +250,7 @@ def test_history_lists_a_change_made_on_the_page(envp):
     rows = reg.history(key="agent_max_steps")
     assert rows and rows[0]["by"] == "Ada" and rows[0]["new"] == 7
     at = at.run()
-    history_tab = at.tabs[TAB_NAMES.index("History")]
+    history_tab = _top_tabs(at)[TAB_NAMES.index("History")]
     assert history_tab.get("dataframe")
 
 
@@ -259,7 +262,7 @@ def test_export_contains_a_ui_override_but_never_a_secret(envp):
     assert exported.get("agent_max_steps") == 11
     assert "anthropic_api_key" not in exported
     at = at.run()
-    export_tab = at.tabs[TAB_NAMES.index("Export / Import")]
+    export_tab = _top_tabs(at)[TAB_NAMES.index("Export / Import")]
     assert export_tab.get("download_button")
     yaml_text = yaml.safe_dump(exported, sort_keys=True)
     assert "agent_max_steps: 11" in yaml_text

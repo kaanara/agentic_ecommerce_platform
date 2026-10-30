@@ -206,11 +206,11 @@ def test_status_reports_switches_and_counters(client):
     assert isinstance(body["open_incidents"], dict) and isinstance(body["pending_approvals"], int)
 
 
-def test_status_last_backup_shape_when_a_backup_exists(client, tmp_path):
+def test_status_last_backup_shape_when_a_backup_exists(client, tmp_path, monkeypatch):
     from aecom import backup
     from aecom.config import get_settings
 
-    get_settings().backup_dir = str(tmp_path / "backups")
+    monkeypatch.setattr(get_settings(), "backup_dir", str(tmp_path / "backups"))
     path = backup.create_backup()
 
     body = client.get("/status", headers=AUTH).json()
