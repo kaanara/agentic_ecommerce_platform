@@ -40,6 +40,19 @@ def test_dry_run_changes_nothing_and_never_calls_sudo(tmp_path):
     assert not (tmp_path / "home" / ".local").exists()
 
 
+def test_backups_are_started_from_the_dashboard_not_a_timer(tmp_path):
+    """§5c: the scheduler owns the backup job; the script neither installs nor enables the old timer, and disables
+    one left over from an older install."""
+    r, _ = dry_run(tmp_path, "--enable-services")
+    assert r.returncode == 0, r.stderr
+    assert "systemctl disable --now aecom-backup.timer" in r.stdout
+    enable_line = next(l for l in r.stdout.splitlines() if "systemctl enable --now" in l)
+    assert "aecom-backup.timer" not in enable_line
+    install_lines = [l for l in r.stdout.splitlines() if "sed ..." in l]
+    assert install_lines and all("aecom-backup" not in l for l in install_lines)
+    assert not (SCRIPT.parent.parent / "deploy" / "pi" / "aecom-backup.timer").exists()
+
+
 def test_services_firewall_and_sudo_rules_are_opt_in(tmp_path):
     r, _ = dry_run(tmp_path)
     assert r.returncode == 0, r.stderr
@@ -53,6 +66,7 @@ def test_update_sudo_rule_lists_exact_commands_without_wildcards(tmp_path):
     assert "*" not in rule
     for svc in ("aecom-scheduler", "aecom-api", "aecom-dashboard"):
         assert f"start {svc}," in rule + "," and f"stop {svc}" in rule  # exactly what scripts/update.sh runs
+    assert "start aecom-restore.service" in rule  # §5c: the dashboard's Restore button needs exactly this, too
 
 
 def test_script_never_reads_or_prints_the_env_file():

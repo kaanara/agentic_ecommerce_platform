@@ -10,7 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 PI = ROOT / "deploy" / "pi"
 UPDATE = ROOT / "scripts" / "update.sh"
 LONG = ["aecom-scheduler.service", "aecom-api.service", "aecom-dashboard.service"]
-UNITS = LONG + ["aecom-backup.service", "aecom-backup.timer"]
+UNITS = LONG + ["aecom-backup.service", "aecom-restore.service"]
+
+
+ONESHOT = {"aecom-backup.service", "aecom-restore.service"}
 
 
 def _text(name):
@@ -21,15 +24,15 @@ def _text(name):
 def test_units_have_expected_keys_and_placeholders(name):
     t = _text(name)
     assert "[Unit]" in t
-    assert "[Install]" in t or name == "aecom-backup.service"  # oneshot, triggered by the timer
+    assert "[Install]" in t or name in ONESHOT  # oneshot units are started on demand
     placeholders = set(re.findall(r"@[A-Z_]+@", t))
     assert placeholders <= {"@USER@", "@APP_DIR@"}
     if name.endswith(".service"):
         assert "User=@USER@" in t
         assert "WorkingDirectory=@APP_DIR@" in t
-        assert "ExecStart=/home/@USER@/.local/bin/uv run aecom " in t
-        for key in ("NoNewPrivileges=true", "PrivateTmp=true", "ProtectControlGroups=true",
-                    "ProtectKernelTunables=true", "RestrictSUIDSGID=true", "ReadWritePaths=@APP_DIR@"):
+        assert "ExecStart=/home/@USER@/.local/bin/uv run " in t
+        for key in (*(() if name == "aecom-restore.service" else ("NoNewPrivileges=true",)),  # restore needs sudo
+                    "PrivateTmp=true", "ProtectControlGroups=true", "ProtectKernelTunables=true", "RestrictSUIDSGID=true", "ReadWritePaths=@APP_DIR@"):
             assert key in t
         assert "After=network-online.target" in t
 
@@ -52,8 +55,9 @@ def test_bind_addresses_are_local():
 def test_backup_units():
     s = _text("aecom-backup.service")
     assert "Type=oneshot" in s and re.search(r"aecom backup$", s, re.M)
-    t = _text("aecom-backup.timer")
-    assert "Persistent=true" in t and "RandomizedDelaySec=" in t and "03:15" in t
+    r = _text("aecom-restore.service")
+    assert "Type=oneshot" in r and "aecom.backup" in r and "[Install]" not in r
+    assert not (PI / "aecom-backup.timer").exists()  # the in-app scheduler owns the backup schedule
 
 
 def test_journald_conf():

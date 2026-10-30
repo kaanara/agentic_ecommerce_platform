@@ -1,0 +1,33 @@
+# Replace the placeholders before installing (see docs/wiki/Raspberry-Pi.md):
+#   sed -e 's|@USER@|aecom|g' -e 's|@APP_DIR@|/home/aecom/agentic_ecommerce_platform|g' aecom-restore.service
+#
+# One-shot restore, started from the dashboard (§5c: Settings > Backups > Restore), never enabled at boot and
+# never run automatically. It stops the scheduler/API/dashboard, restores the backup named in the ops_setting
+# ``restore_requested`` (set by the dashboard after step-up and a typed confirmation), runs `aecom doctor`, writes
+# the result to ops_jobs and alerts, then starts the services back up - even when the restore itself failed, so the
+# Pi is never left down. Runs as the normal app user (not root), so every file it touches keeps its usual owner;
+# stopping/starting the three services reuses the exact sudo rule from `pi-bootstrap.sh --allow-update-sudo`
+# (the same one `scripts/update.sh` uses). Starting *this* unit needs exactly one more sudoers line:
+# `systemctl start aecom-restore.service` (see pi-bootstrap.sh). Without that rule, the dashboard shows the
+# operator the exact commands to run on the Pi instead of a button.
+[Unit]
+Description=aecom restore (one-shot: stop services, restore the requested backup, doctor, restart)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=@USER@
+WorkingDirectory=@APP_DIR@
+ExecStartPre=-/usr/bin/sudo -n /usr/bin/systemctl stop aecom-scheduler
+ExecStartPre=-/usr/bin/sudo -n /usr/bin/systemctl stop aecom-api
+ExecStartPre=-/usr/bin/sudo -n /usr/bin/systemctl stop aecom-dashboard
+ExecStart=/home/@USER@/.local/bin/uv run python -m aecom.backup
+ExecStartPost=-/usr/bin/sudo -n /usr/bin/systemctl start aecom-scheduler
+ExecStartPost=-/usr/bin/sudo -n /usr/bin/systemctl start aecom-api
+ExecStartPost=-/usr/bin/sudo -n /usr/bin/systemctl start aecom-dashboard
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+ProtectSystem=full
+ReadWritePaths=@APP_DIR@

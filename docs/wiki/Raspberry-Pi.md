@@ -2,7 +2,7 @@
 
 Decision (2026-10-28): the company runs on a Raspberry Pi 4 first. Once cumulative net revenue reaches about USD 20-30 it moves to a cloud server (see [Moving to the cloud](#moving-to-the-cloud)). Until then accounting stays the built-in ledger.
 
-Files used here: `deploy/pi/aecom-scheduler.service`, `deploy/pi/aecom-api.service`, `deploy/pi/aecom-dashboard.service`, `deploy/pi/aecom-backup.service`, `deploy/pi/aecom-backup.timer`, `deploy/pi/journald-aecom.conf` and `scripts/update.sh`.
+Files used here: `deploy/pi/aecom-scheduler.service`, `deploy/pi/aecom-api.service`, `deploy/pi/aecom-dashboard.service`, `deploy/pi/aecom-backup.service`, `deploy/pi/aecom-restore.service`, `deploy/pi/journald-aecom.conf` and `scripts/update.sh`.
 
 ## 1. Hardware
 
@@ -43,13 +43,12 @@ The unit files contain two placeholders, `@USER@` and `@APP_DIR@`. Replace them 
 
 ```bash
 cd /home/aecom/agentic_ecommerce_platform/deploy/pi
-for f in aecom-scheduler.service aecom-api.service aecom-dashboard.service aecom-backup.service aecom-backup.timer; do
+for f in aecom-scheduler.service aecom-api.service aecom-dashboard.service aecom-backup.service aecom-restore.service; do
   sed -e 's|@USER@|aecom|g' -e 's|@APP_DIR@|/home/aecom/agentic_ecommerce_platform|g' "$f" \
     | sudo tee "/etc/systemd/system/$f" >/dev/null
 done
 sudo systemctl daemon-reload
-sudo systemctl enable --now aecom-scheduler.service aecom-api.service aecom-dashboard.service aecom-backup.timer
-systemctl list-timers aecom-backup.timer
+sudo systemctl enable --now aecom-scheduler.service aecom-api.service aecom-dashboard.service
 ```
 
 All three long-running units restart on failure (`Restart=always`, 5 s delay, and a start limit that is generous but not unlimited). The API listens on 127.0.0.1:8000 and the dashboard on 127.0.0.1:8501 only.
@@ -116,7 +115,7 @@ Everything outside `/webhooks/*` returns 404 at the edge, and the rest of the AP
 
 1. `timedatectl` shows the clock synchronized.
 2. `systemctl status aecom-scheduler aecom-api aecom-dashboard` are all active.
-3. `systemctl list-timers aecom-backup.timer` shows the next run.
+3. Settings > Backups and updates shows the next scheduled run (the in-app scheduler owns the backup schedule; the old systemd timer is disabled).
 4. `uv run aecom backup` creates a backup, then `uv run aecom backup verify` passes.
 5. `uv run aecom doctor` reports no FAIL (fix WARN items you care about).
 6. `uv run aecom backup verify` once more after the first real data arrives.
@@ -133,7 +132,7 @@ The update stops the three services for the whole window, takes a `pre-update` b
 
 ## 9. After a power cut
 
-1. Let the Pi boot; the services and the backup timer start by themselves.
+1. Let the Pi boot; the services start by themselves.
 2. `uv run aecom doctor`. SQLite recovers from a clean journal; if doctor reports a database problem, stop the services and restore: `uv run aecom backup list`, `uv run aecom backup verify`, `uv run aecom backup restore <path> --yes`.
 3. Check the time is synchronized (`timedatectl`) and that no webhook was missed (provider dashboards list failed deliveries; they can be redelivered).
 

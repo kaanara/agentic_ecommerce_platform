@@ -12,7 +12,7 @@ set -euo pipefail
 
 DRY=0; YES=0; REPO=""; BRANCH="feat/agentic-ecommerce-poc"; APP_DIR="$HOME/agentic_ecommerce_platform"
 FIREWALL=0; ENABLE=0; SUDOERS=0
-UNITS=(aecom-scheduler.service aecom-api.service aecom-dashboard.service aecom-backup.service aecom-backup.timer)
+UNITS=(aecom-scheduler.service aecom-api.service aecom-dashboard.service)
 SERVICES=(aecom-scheduler aecom-api aecom-dashboard)
 
 usage() {
@@ -25,7 +25,7 @@ usage: pi-bootstrap.sh [options]
   --branch NAME        branch to clone (default: feat/agentic-ecommerce-poc)
   --allow-update-sudo  let this user start/stop exactly the three aecom services without a password (for update.sh)
   --firewall           ufw: deny incoming, allow outgoing, allow ssh (CAN LOCK YOU OUT if ssh is on another port)
-  --enable-services    enable and start the scheduler, API, dashboard and the backup timer (after .env is filled in!)
+  --enable-services    enable and start the scheduler, API and dashboard (after .env is filled in!)
 EOF
 }
 
@@ -136,12 +136,18 @@ if [ "$CODE" -eq 1 ]; then
   run sudo cp "$APP_DIR/deploy/pi/journald-aecom.conf" /etc/systemd/journald.conf.d/aecom.conf
   run sudo systemctl restart systemd-journald
   run sudo systemctl daemon-reload
+  # Backups are now started and scheduled from the dashboard (the scheduler owns the `backup` job, §5c), not a
+  # systemd timer: disable any timer a previous run of this script installed, so backups never run twice.
+  run sudo systemctl disable --now aecom-backup.timer 2>/dev/null || true
 fi
 
 if [ "$SUDOERS" -eq 1 ]; then
   say "   sudo rule for update.sh: exactly start/stop of ${SERVICES[*]} for $USER, nothing else"
   SYSTEMCTL="$(command -v systemctl || echo /usr/bin/systemctl)"; SYSTEMCTL="$(readlink -f "$SYSTEMCTL")"
   rules=(); for s in "${SERVICES[@]}"; do rules+=("$SYSTEMCTL start $s" "$SYSTEMCTL stop $s"); done
+  # §5c: lets the dashboard start the restore one-shot unit (aecom-restore.service); that unit itself reuses the
+  # start/stop rules above to stop and restart the three services around the restore.
+  rules+=("$SYSTEMCTL start aecom-restore.service")
   line="$USER ALL=(root) NOPASSWD: $(IFS=,; echo "${rules[*]}" | sed 's/,/, /g')"
   echo "    $line"
   if [ "$DRY" -eq 0 ] && confirm "install this rule into /etc/sudoers.d/aecom-update (validated with visudo first)?"; then
@@ -167,7 +173,7 @@ if [ "$ENABLE" -eq 1 ] && [ "$CODE" -eq 1 ]; then
   say "   enabling and starting the services"
   warn "make sure .env is filled in (keys, AECOM_API_TOKEN, dashboard password) before continuing"
   if confirm "start the services now?"; then
-    run sudo systemctl enable --now aecom-scheduler.service aecom-api.service aecom-dashboard.service aecom-backup.timer
+    run sudo systemctl enable --now aecom-scheduler.service aecom-api.service aecom-dashboard.service
   fi
 fi
 

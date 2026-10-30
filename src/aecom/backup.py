@@ -202,6 +202,22 @@ def created_at(path: Path) -> datetime:
         return datetime.strptime(Path(path).name[:15], "%Y%m%d-%H%M%S").replace(tzinfo=UTC)
 
 
+def update_manifest(path: Path, **fields: Any) -> None:
+    """Patch extra fields (``verified``, ``verified_at``, ``copied_off_device``) into an existing manifest.json,
+    used by the job handlers below so the Backups tab and the stale-backup monitor (§5c) can read per-backup status
+    without a separate table. Never raises: a manifest that cannot be read/written is left alone."""
+    path = Path(path)
+    try:
+        manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    manifest.update(fields)
+    try:
+        (path / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def check_hashes(path: Path) -> list[str]:
     """Problems found comparing the files to the manifest (empty list = intact)."""
     path = Path(path)
@@ -223,9 +239,23 @@ def check_hashes(path: Path) -> list[str]:
 
 # --- rotation ------------------------------------------------------------------------------------------------
 
-def select_deletions(names: list[str], now: datetime) -> list[str]:
-    """Pure retention policy over backup directory names. Keeps the newest 7 unlabelled, the newest of each of the
-    last 4 ISO weeks, the newest 5 labelled, and always the newest backup of all."""
+def _retention() -> tuple[int, int, int]:
+    """(keep_daily, keep_weeks, keep_labelled), overridable from the settings registry (Settings > Backups) once
+    ``backup_keep_daily``/``backup_keep_weeks``/``backup_keep_labelled`` land there; the built-in defaults until then."""
+    s = get_settings()
+    return (getattr(s, "backup_keep_daily", KEEP_DAILY), getattr(s, "backup_keep_weeks", KEEP_WEEKS),
+            getattr(s, "backup_keep_labelled", KEEP_LABELLED))
+
+
+def select_deletions(names: list[str], now: datetime, keep_daily: int | None = None, keep_weeks: int | None = None,
+                     keep_labelled: int | None = None) -> list[str]:
+    """Pure retention policy over backup directory names. Keeps the newest ``keep_daily`` unlabelled, the newest of
+    each of the last ``keep_weeks`` ISO weeks, the newest ``keep_labelled`` labelled, and always the newest backup
+    of all. Defaults come from the settings registry (or the built-in constants before those keys exist)."""
+    default_daily, default_weeks, default_labelled = _retention()
+    keep_daily = default_daily if keep_daily is None else keep_daily
+    keep_weeks = default_weeks if keep_weeks is None else keep_weeks
+    keep_labelled = default_labelled if keep_labelled is None else keep_labelled
     parsed = []
     for n in names:
         m = NAME_RE.match(n)
@@ -236,7 +266,7 @@ def select_deletions(names: list[str], now: datetime) -> list[str]:
     if parsed:
         keep.add(parsed[0][1])
     plain = [p for p in parsed if not p[2]]
-    keep.update(n for _, n, _lab in plain[:KEEP_DAILY])
+    keep.update(n for _, n, _lab in plain[:keep_daily])
     this_monday = (now - timedelta(days=now.weekday())).date()
     seen: set[tuple[int, int]] = set()
     for ts, n, _lab in plain:  # newest first, so the first of a week is that week's newest
@@ -244,9 +274,9 @@ def select_deletions(names: list[str], now: datetime) -> list[str]:
         if week in seen:
             continue
         seen.add(week)  # type: ignore[arg-type]
-        if 0 <= (this_monday - (ts - timedelta(days=ts.weekday())).date()).days // 7 < KEEP_WEEKS:
+        if 0 <= (this_monday - (ts - timedelta(days=ts.weekday())).date()).days // 7 < keep_weeks:
             keep.add(n)
-    keep.update(n for _, n, _lab in [p for p in parsed if p[2]][:KEEP_LABELLED])
+    keep.update(n for _, n, _lab in [p for p in parsed if p[2]][:keep_labelled])
     return [n for _, n, _lab in parsed if n not in keep]
 
 
@@ -418,9 +448,11 @@ def run_cli(action: str, path: str | None = None, *, label: str | None = None, d
             if bt:
                 try:
                     copy_to_target(bt, dest)
+                    update_manifest(target, copied_off_device=True)
                 except TargetError as e:
                     from aecom.observability import record_error
 
+                    update_manifest(target, copied_off_device=False)
                     record_error("backup.target", e, context={"target": bt})
                     print(f"backup: off-device copy failed, local backup kept: {e}", file=sys.stderr)
                     code = EXIT_TARGET_FAILED
@@ -441,6 +473,8 @@ def run_cli(action: str, path: str | None = None, *, label: str | None = None, d
             if target is None:
                 return err("no backups to verify")
             rep = verify_backup(target)
+            if rep["ok"]:
+                update_manifest(target, verified=True, verified_at=_utcnow().isoformat())
             print(json.dumps(rep, indent=2, default=str))
             return EXIT_OK if rep["ok"] else EXIT_ERROR
         if action == "restore":
@@ -453,3 +487,142 @@ def run_cli(action: str, path: str | None = None, *, label: str | None = None, d
         return err(f"unknown action {action!r}")
     except BackupError as e:
         return err(str(e))
+
+
+# --- UI jobs and events (§5c: backup now / verify now, started and scheduled from the dashboard) --------------
+#
+# The dashboard only ever *publishes* ``backup.requested``/``backup.verify_requested`` on the durable event bus
+# (never runs the backup itself): a subscriber here turns that into an ``ops_jobs`` row, and the scheduler's
+# ``jobs.run_pending()`` tick (see the ``scheduler.py`` patch in the wave-2 report) runs the handler registered
+# below, out of the dashboard process. Restore is deliberately NOT wired this way (see ``restore_apply_from_settings``):
+# it needs the scheduler itself stopped, so it can never run from inside ``run_pending``.
+
+def run_backup_job(params: dict[str, Any]) -> dict[str, Any]:
+    """``jobs`` handler for kind ``backup``: create, rotate, optionally copy off-device and verify. Problems with
+    the off-device copy or the post-backup verify are recorded in the result (so the Backups tab and the
+    stale-backup monitor can see them) rather than raised, mirroring how ``doctor`` jobs report findings without
+    failing the job itself. Only a failure to create the local backup at all raises (nothing usable happened)."""
+    settings = get_settings()
+    target = create_backup(label=params.get("label"))
+    result: dict[str, Any] = {"backup": str(target)}
+    result["rotated"] = rotate()
+    bt = settings.backup_target
+    if bt:
+        try:
+            copy_to_target(bt)
+            update_manifest(target, copied_off_device=True)
+            result["copied_off_device"] = True
+        except TargetError as e:
+            from aecom.observability import record_error
+
+            update_manifest(target, copied_off_device=False)
+            record_error("backup.target", e, context={"target": bt})
+            result["copied_off_device"] = False
+            result["target_error"] = str(e)
+    if settings.backup_verify_after:
+        report = verify_backup(target)
+        if report["ok"]:
+            update_manifest(target, verified=True, verified_at=_utcnow().isoformat())
+        result["verified"] = report["ok"]
+        result["verify_problems"] = report["problems"]
+    return result
+
+
+def run_verify_job(params: dict[str, Any]) -> dict[str, Any]:
+    """``jobs`` handler for kind ``verify``: verify a named backup, or the newest one. Raises only when there is
+    nothing to verify; a failed verify is a normal (not-ok) result, not a job error."""
+    name = params.get("backup")
+    target = backup_dir() / name if name else next(iter(list_backups()), None)
+    if target is None:
+        raise BackupError("no backups to verify")
+    report = verify_backup(Path(target))
+    if report["ok"]:
+        update_manifest(Path(target), verified=True, verified_at=_utcnow().isoformat())
+    return report
+
+
+def _on_backup_requested(payload: dict[str, Any]) -> None:
+    from aecom import jobs
+
+    jobs.enqueue("backup", str(payload.get("requested_by") or ""), {"label": payload.get("label")})
+
+
+def _on_backup_verify_requested(payload: dict[str, Any]) -> None:
+    from aecom import jobs
+
+    jobs.enqueue("verify", str(payload.get("requested_by") or ""), {"backup": payload.get("backup")})
+
+
+def _register() -> None:
+    """Idempotent: importing this module twice (tests, reload) must not double-subscribe or re-raise."""
+    from aecom import jobs
+    from aecom.bus.events import subscribe
+
+    jobs.register("backup", run_backup_job)
+    jobs.register("verify", run_verify_job)
+    subscribe("backup.requested")(_on_backup_requested)
+    subscribe("backup.verify_requested")(_on_backup_verify_requested)
+
+
+_register()
+
+
+# --- restore from the UI (§5c): ops_settings "restore_requested" + the aecom-restore.service one-shot unit ----
+#
+# Restore is critical and needs the scheduler/API/dashboard stopped first, so it is never run through the normal
+# ops_jobs queue. The dashboard (step-up + typed backup name) only sets the ``restore_requested`` ops_setting and
+# either starts ``aecom-restore.service`` (with the opt-in sudo rule) or shows the operator the exact commands.
+# The unit's ExecStart is ``uv run python -m aecom.backup``, which calls this function.
+
+def restore_apply_from_settings(now: datetime | None = None) -> dict[str, Any]:
+    """Restore the backup named by the ``restore_requested`` ops_setting. Verifies it first, takes a pre-restore
+    safety backup, restores, runs ``aecom doctor``, writes the result to ``ops_jobs`` and alerts, then clears the
+    request. Never raises: every failure is recorded in the returned/stored result (``"error"`` key) instead, so the
+    one-shot unit can always start the services back up."""
+    from aecom import jobs
+    from aecom.company_settings import get_setting, set_setting
+
+    t = now or _utcnow()
+    name = (get_setting("restore_requested") or "").strip()
+    result: dict[str, Any] = {"requested": name}
+    status = "error"
+    if not name:
+        result["error"] = "no restore_requested setting; nothing to do"
+    else:
+        try:
+            path = backup_dir() / name
+            if not path.is_dir():
+                raise BackupError(f"backup {name!r} not found in {backup_dir()}")
+            report = verify_backup(path)
+            result["verify"] = report
+            if not report["ok"]:
+                raise BackupError("backup failed verification, not restoring: " + "; ".join(report["problems"]))
+            pre = create_backup(label="pre-restore", now=t)
+            result["pre_restore_backup"] = str(pre)
+            result["restore"] = restore_backup(path, now=t)
+            from aecom import doctor
+
+            result["doctor"] = doctor.run_checks()
+            status = "ok"
+        except Exception as exc:  # noqa: BLE001 - must always record and alert, never crash the unit
+            result["error"] = f"{type(exc).__name__}: {exc}"
+    jobs.record("restore", "system", result, status=status)
+    set_setting("restore_requested", "")
+    try:
+        from aecom import alerts
+
+        alerts.route({"monitor": "restore", "severity": "P1" if status == "error" else "P2", "subject": name,
+                     "detail": f"restore of {name!r}: {status}" + (f" - {result['error']}" if "error" in result else "")})
+    except Exception:  # noqa: BLE001 - the restore result is already recorded; alerting is best-effort
+        pass
+    return result
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised by deploy/pi/aecom-restore.service, not by pytest
+    import sys as _sys
+
+    from aecom.bootstrap import init as _init
+
+    _init()
+    _res = restore_apply_from_settings()
+    _sys.exit(0 if "error" not in _res else 1)

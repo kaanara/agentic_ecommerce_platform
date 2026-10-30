@@ -114,6 +114,14 @@ if ! svc stop; then
   exit 1
 fi
 
+# Backups are started and scheduled from the dashboard now (the scheduler owns the `backup` job, §5c), not a
+# systemd timer: disable one left over from an older install, so backups never run twice.
+if [ "$SYSTEMD" -eq 1 ]; then
+  if [ "$(id -u)" -eq 0 ]; then systemctl disable --now aecom-backup.timer 2>/dev/null || true
+  else sudo -n systemctl disable --now aecom-backup.timer 2>/dev/null || true
+  fi
+fi
+
 STAGE="backup"
 if ! OUT=$(uv run aecom backup --label pre-update); then
   say "backup failed; aborting before any change" >&2

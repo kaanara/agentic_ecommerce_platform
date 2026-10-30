@@ -50,6 +50,21 @@ def enqueue(kind: str, requested_by: str, params: dict[str, Any] | None = None) 
     return job_id
 
 
+def record(kind: str, requested_by: str, result: dict[str, Any], status: str = "ok") -> str:
+    """Write a job row already in its final state, for one-shot scripts that run outside the ``run_pending`` loop
+    (``aecom-restore.service``, which runs while the scheduler itself is stopped)."""
+    if kind not in KINDS:
+        raise ValueError(f"unknown job kind {kind!r}")
+    t = now()
+    with session() as s:
+        job = Job(kind=kind, requested_by=requested_by, status=status, started_at=t, finished_at=t, result=result)
+        s.add(job)
+        s.flush()
+        job_id = job.id
+    audit(f"human:{requested_by}" if requested_by else "system", f"job_{kind}_recorded", status, {"job_id": job_id})
+    return job_id
+
+
 def get(job_id: str) -> dict[str, Any] | None:
     with session() as s:
         j = s.get(Job, job_id)
