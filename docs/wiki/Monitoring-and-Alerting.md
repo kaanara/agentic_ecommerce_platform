@@ -47,7 +47,7 @@ Plain SQL checks, no LLM, so they work when Claude is down or a budget is exhaus
 | P2 | Telegram (every paired chat) + email to `ALERT_EMAIL` | once, when the incident opens |
 | P3 | none yet (daily digest planned) | - |
 
-Routing order: paired Telegram chat (if available) → ntfy (if no Telegram) → dashboard inbox (always). Quiet hours (`QUIET_HOURS_START` / `QUIET_HOURS_END`, format "HH:MM") suppress non-high alerts; P1 high-urgency alerts always get through.
+Routing order for owner notifications (`notify.route`): paired Telegram chat → paired WhatsApp chat (if enabled) → ntfy (only if neither delivered) → dashboard inbox (always). Quiet hours (`QUIET_HOURS_START` / `QUIET_HOURS_END`, format "HH:MM") suppress non-high alerts; P1 high-urgency alerts always get through.
 
 - Acknowledge to stop repeats: `uv run aecom incidents ack <id> --by <you>`; resolve by hand with `aecom incidents resolve`, or let the monitor auto-resolve it.
 - Email goes through AgentMail and stays in the local outbox unless `AGENTMAIL_LIVE=true`. The push is a plain HTTP POST, so it does not depend on AgentMail or Claude.

@@ -160,7 +160,7 @@ Build what makes the company different (the governed agent organisation); use pr
 | L2 | **Off-the-shelf ops tooling** | Sentry (errors with tracebacks), healthchecks.io (external heartbeat), ntfy (phone push), LangSmith (traces). Build only the business monitors: undelivered orders, refund spikes, ROAS, budgets, invariants | K1 becomes Sentry integration plus a thin `ops_errors` link; B heartbeat and push become configuration |
 | L3 ✅ 2026-10-26 | **Start with fewer active agents** | Active at launch: Support (event-driven), Finance (daily), Store Ops reflexes (no LLM), CEO (weekly), Researcher (on demand). Others switched on when there is work. Needs a per-agent enabled flag in `ops_settings`, respected by the scheduler and the Foreman | AI cost per order measured from day one (target ≤ €0.50) |
 | L4 | **First 10 sales before autonomy** | Launch one product with agents assisting and a human approving almost everything | G4–G6 start only after real approvals exist; becomes the entry gate of Phase 5 |
-| L5 | **Phase 0 unchanged; merge the PoC** | Security fixes stay first. Merge `feat/agentic-ecommerce-poc` into `main`; afterwards small PRs with CI | — |
+| L5 ✅ 2026-10-30 | **Phase 0 unchanged; merge the PoC** | Security fixes stay first. The PoC branch is merged into `main` (and the branch deleted); afterwards small PRs with CI | — |
 
 ### M. Web access
 Today only the Researcher has web access: Anthropic's server-side `web_search` and `fetch_url` (plain HTTP GET, no JavaScript, no login, first 6,000 characters). There is no browser. Agents never create accounts or log in, and that stays a human task (legal responsibility, KYC, platform rules against automated sign-ups, and the risk of a logged-in agent reading untrusted pages).

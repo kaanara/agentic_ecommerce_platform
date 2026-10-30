@@ -96,7 +96,7 @@ All tools are gated: agents must pass the policy check before calling them.
 
 `consult_agent(agent: str, question: str) -> str` (chat-mode only, depth 0).
 
-Allows one agent to ask another a question and get the answer. Returns a JSON object with:
+Allows one agent to ask another a question and get the answer. It is a chat-only tool: it is built inside the chat run and never appears in automated runs, `TOOLS.md` or the tool registry. It goes through the policy gate like any other side-effecting tool (rule `consult_agent`, tier T1, for the chat agents), so the kill switch, safe mode, "agents paused", audit and the tool-call log all apply. The reply is a JSON object with:
 - `output`: the agent's free-text reply.
 - `status`: ok | error | max_steps | etc.
 - `messages`: array of tool steps (if any).
@@ -105,7 +105,7 @@ Allows one agent to ask another a question and get the answer. Returns a JSON ob
 - At most 2 calls per turn.
 - Both must be depth 1 (no three-level nesting).
 - The target agent must be in `chat_agents` settings.
-- Calls are audited per `run_id-consult<N>`.
+- The consulted agent's own tools still go through the gate.
 
 Example: the CEO asks the Researcher to investigate a topic, or the Finance agent asks the Foreman to check production status.
 
@@ -122,8 +122,9 @@ Send the owner a message outside the current chat turn (e.g. an alert or a quest
 
 **Delivery**:
 1. Paired Telegram chat first (if active).
-2. ntfy second (if configured).
-3. Dashboard inbox always.
+2. WhatsApp second (paired and enabled; free-form messages only, so outside Meta's 24-hour window it can fail and falls through).
+3. ntfy third (if configured; only tried when neither Telegram nor WhatsApp delivered).
+4. Dashboard inbox always.
 
 Starts a new conversation with `started_by="agent"`. Capped by `owner_message_daily_limit` per agent (default: 5 per day).
 
@@ -225,23 +226,23 @@ All routes require `Authorization: Bearer <AECOM_API_TOKEN>` (from `secrets.get(
 
 **Retention period** (`chat_retention_days`, Settings > Chat > Delete conversations idle for, default: 90 days):
 - Conversations not updated for N days are hard-deleted (messages cascade).
-- Job: `retention_job()` runs per the `schedule_chat_retention` scheduler job (typically daily).
-- Set to 0 to keep conversations forever.
+- Job: the scheduler's `chat_retention` job runs every night at 03:30 (`cron:30 3 * * *`) and calls `conversations.purge_older_than(chat_retention_days)`. It reschedules itself when settings change.
+- Set to 0 to keep conversations forever (the job then does nothing).
 
-**Hard delete**:
+**Hard delete** (manual delete in the dashboard or API, and the retention job):
 - Deletes all messages in `ops_messages` (masking was applied on write, so messages are already safe).
 - Deletes the conversation in `ops_conversations`.
-- Attachment files are removed by the chat layer (on message write).
+- Deletes the conversation's attachment files under `data/chat_files/`; the delete is limited to that folder and never raises.
 - No archive or soft-delete: retention is final.
 
 **Audit trail**:
-- The retention job is audited: `audit("system", "retention_job", "ok", {"kind": "chat_conversations", "deleted": N})`.
+- The retention job is audited: `audit("system", "conversation_purge", "ok", {"count": N, "older_than_days": D})`.
 - Manual deletion (API or dashboard) is audited: `audit("human:<user>", "conversation_delete", "ok", {"conversation_id": "..."})`.
 
 **Export / erasure**:
 - A data-subject erasure request includes all messages: see [GDPR and Retention](GDPR-and-Retention.md) section H5 for the procedure.
 - The conversation table references no personal data other than `owner` (usually empty for dashboard chats) and `summary` (masked).
-- Attachments are stored as files and also subject to retention.
+- Attachments are stored as files under `data/chat_files/` and are deleted together with their conversation.
 
 ## Blocked Reason
 
@@ -265,6 +266,6 @@ Display and export apply masking again (layered), so sensitive data is doubly pr
 
 - **Handlers** (`aecom.handlers`): agents are run via `run_agent()`, which calls chat's entry point `converse()` via `run_sync()`.
 - **CLI** (`aecom.cli`): `uv run aecom chat <agent_id>` for interactive chat.
-- **Scheduler** (`poll_telegram`, `poll_whatsapp`): frequent jobs that fetch waiting updates and route replies.
+- **Scheduler**: `poll_telegram` fetches waiting Telegram updates (only when `TELEGRAM_BOT_TOKEN` is set and Telegram is enabled); `chat_retention` purges old conversations nightly. WhatsApp has no poller: Meta calls `POST /webhooks/whatsapp`.
 - **Event bus** (`aecom.bus.events`, `aecom.handlers`): chats can trigger events (e.g. a message_owner call publishes an event that handlers pick up).
 - **Notifications** (`aecom.notify`): message_owner delivery uses the notify router.

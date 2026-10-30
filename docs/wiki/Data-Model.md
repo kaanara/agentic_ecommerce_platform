@@ -33,6 +33,18 @@ One SQLAlchemy model (`src/aecom/db.py`). Tables are prefixed by domain so the s
 
 The LangGraph checkpoints live in a separate file, `data/aecom.checkpoints.db` (on Postgres, the same database).
 
+## Chat, channels, jobs and UI-edited configuration (migration 0010)
+| Table | Purpose |
+|---|---|
+| `ops_conversations` | One chat: agent, channel (`dashboard`, `telegram`, `whatsapp`, `cli`), who started it (`owner` or `agent`), a summary of folded older turns, unread count, total cost, timestamps |
+| `ops_messages` | Messages of a conversation (cascade delete): role, masked content, tool steps, status, cost, `agent_run_id` (links to Run detail), escalation approval ids, attachment metadata |
+| `ops_channel_links` | Paired messaging chats (unique per channel and chat id), `active`, and `max_approve_tier`, the highest tier approvable from that chat |
+| `ops_jobs` | UI-requested background jobs run by the scheduler: kind `backup`, `verify`, `restore`, `doctor` or `update` (recorded by `update.sh`), status, result JSON |
+| `ops_policy_versions` | Versions of `policy.yaml` saved from the Settings page; the single active row wins over the file in git |
+| `ops_persona_overrides` | Persona and `company/` file edits made in the UI (scope, file name, content, hash of the git file at edit time); the loader prefers them |
+
+UI settings are rows in `ops_settings` with the key `config:<name>`, plus `config_version`, which every process checks to reload. Secrets are never stored in the database: they go to `.env` only.
+
 ## Ledger accounts
 | Account | Normal side | Written by |
 |---|---|---|

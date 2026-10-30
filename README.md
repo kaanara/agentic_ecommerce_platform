@@ -23,9 +23,20 @@ uv sync
 cp .env.example .env
 uv run aecom init --demo                 # schema, registry, OKRs, demo catalogue, 30 days of history
 uv run aecom scenario all --offline      # 8 end-to-end scenarios with scripted agents
-uv run aecom dashboard                   # Business · Agents · Approvals
+uv run aecom dashboard reset-password    # set the dashboard password (12+ characters); the login is on by default
+uv run aecom dashboard                   # Overview · Chat · Approvals · Business · Agents · Costs · Reports · Trust · Health · Settings
 uv run pytest
 ```
+
+## Talk to the agents
+
+- **Dashboard > Chat:** streamed replies, tools through the policy gate, attachments, agents can consult each other. Needs the dashboard login on.
+- **Telegram:** pair a bot in Settings > Channels, then chat, approve or reject from your phone. WhatsApp is built but off by default; iMessage is not supported.
+- **CLI:** `uv run aecom ask ceo "How are sales?"` or `uv run aecom chat finance`.
+- **Agents write to you:** `message_owner` reaches Telegram, WhatsApp or ntfy, and always the dashboard inbox.
+- **Everything is a setting:** keys, budgets, schedules, alert routing, policy rules and agent personas are edited in the dashboard (Settings); secrets go to `.env` only.
+
+Stuck? See the [Help page](docs/wiki/Help.md). To run it as always-on services on a Raspberry Pi (start at boot, restart after a power cut), see [Raspberry Pi](docs/wiki/Raspberry-Pi.md).
 
 ## Live mode (Claude decides)
 
