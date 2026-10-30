@@ -6,13 +6,16 @@ terminal "submit_*" tools and per-step audit are visible and easy to change.
 
 from __future__ import annotations
 
+import inspect
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import StructuredTool
 from sqlalchemy import func, select
 
 from aecom import ledger
@@ -41,6 +44,10 @@ class AgentResult:
     escalations: list[str] = field(default_factory=list)
     web_searches: int = 0
     web_fetches: int = 0
+    # One entry per model turn: {"role": "assistant", "content": str, "tool_steps": [{"name", "args", "decision",
+    # "result", "terminal", "approval_id"?}, ...]}. Populated for every run (chat and automated); chat.py uses it to
+    # fill ChatTurn.tool_steps and consult_agent nests it in its own result so depth is checkable.
+    messages: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _text(msg: AIMessage) -> str:
@@ -102,12 +109,65 @@ def _book_ai_costs_safe(run_id: str, agent_id: str) -> None:
         record_error("agent", exc, run_id=run_id, context={"agent_id": agent_id, "step": "book_ai_costs"})
 
 
+def _step_decision(content: str) -> str:
+    if content.startswith("ESCALATED"):
+        return "escalated"
+    if content.startswith("DENIED"):
+        return "denied"
+    if content.startswith("ERROR"):
+        return "error"
+    return "ok"
+
+
+CONSULT_MAX_PER_TURN = 2
+
+
+def _build_consult_tool(agent_id: str, run_id: str, depth: int) -> StructuredTool:
+    """Chat-only tool: ask another eligible agent a question in chat mode, one level deep, rate-limited per turn.
+
+    Built here (not in the catalog registry) because it only makes sense inside a chat run: it recurses into
+    ``_run_core`` directly, carries no side effects of its own, and must never be offered to an agent it consulted
+    (``depth`` stops it from going further; ``consulted`` caps how many calls one turn may make).
+    """
+    consulted = [0]
+
+    async def consult_agent(agent: str, question: str) -> str:
+        """Ask another eligible agent a question and get their answer (one level deep; at most 2 per turn)."""
+        eligible = get_settings().chat_agents
+        if agent not in eligible or agent == agent_id:
+            return f"ERROR: '{agent}' is not available to consult (eligible: {', '.join(eligible)})."
+        if consulted[0] >= CONSULT_MAX_PER_TURN:
+            return f"ERROR: consult_agent limit ({CONSULT_MAX_PER_TURN} per turn) reached."
+        consulted[0] += 1
+        audit(agent_id, "consult_agent", "ok", {"target": agent, "question": question[:200]}, run_id)
+        sub = await _run_core(agent, question, run_id=f"{run_id}-consult{consulted[0]}", chat=True, depth=depth + 1)
+        return json.dumps({"output": sub.output, "status": sub.status, "messages": sub.messages}, default=str)[:12000]
+
+    return StructuredTool.from_function(coroutine=consult_agent, name="consult_agent",
+                                        description=inspect.getdoc(consult_agent) or "consult_agent",
+                                        metadata={"terminal": False, "side_effect": False})
+
+
 async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str | None = None) -> AgentResult:
+    """Automated entry point (handlers, scheduler, scenarios, chaos): a thin wrapper over ``_run_core`` so their
+    behaviour stays byte-identical. Chat (dashboard, API, messaging channels) calls ``_run_core`` directly."""
+    return await _run_core(agent_id, task, context=context, run_id=run_id)
+
+
+async def _run_core(agent_id: str, task: str, *, context: str = "", run_id: str | None = None,
+                    history: list[BaseMessage] | None = None, chat: bool = False,
+                    on_event: Callable[[dict[str, Any]], None] | None = None, depth: int = 0) -> AgentResult:
+    """Shared run loop. With ``chat=True``: terminal tools are dropped, a ``consult_agent`` tool is offered at
+    ``depth`` 0 only, the whole history is checked for taint, and ``on_event`` (if given) streams the model's reply
+    token by token plus tool_start/tool_end/escalation events."""
     settings = get_settings()
     spec = load_spec(agent_id)
     run_id = run_id or current_run.get() or new_id("run")
     t_run, t_agent = current_run.set(run_id), current_agent.set(agent_id)
-    reset_taint(task, context)  # I15: a run starts clean unless its task already carries fenced (untrusted) content
+    history = history or []
+    # I15: a run starts clean unless its task, context or history already carries fenced (untrusted) content.
+    history_texts = [m.content for m in history if isinstance(m.content, str)]
+    reset_taint(task, context, *history_texts)
     row_id: str | None = None
     result = AgentResult(agent_id, "", status="max_steps")
     tin = tout = steps = 0  # kept outside the try: a crash after the model ran still has to pay for its tokens
@@ -130,6 +190,10 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
 
         prompt = system_prompt(spec, lessons) + "\n".join(["", *skills_for(agent_id)])
         tools = await build_tools(agent_id, context=task)
+        if chat:
+            tools = [t for t in tools if not t.metadata.get("terminal")]  # a chat turn never ends in a terminal tool
+            if depth == 0:
+                tools = [*tools, _build_consult_tool(agent_id, run_id, depth)]
         by_name = {t.name: t for t in tools}
         model = get_model(spec.model_tier, agent_id)
 
@@ -147,7 +211,9 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
         system: SystemMessage = SystemMessage(
             content=prompt if settings.llm_mode == "scripted"
             else [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}])  # cache the long persona prompt
-        messages: list[BaseMessage] = [system, HumanMessage(content=task + (f"\n\n# Context\n{context}" if context else ""))]
+        messages: list[BaseMessage] = [system, *history,
+                                       HumanMessage(content=task + (f"\n\n# Context\n{context}" if context else ""))]
+        step_log: list[dict[str, Any]] = []
 
         for steps in range(1, settings.agent_max_steps + 1):
             # max_uses only limits one API call; clip it to what is left of the run cap (rebinding when that shrinks
@@ -162,7 +228,16 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
                 elif min(left, settings.web_search_max_uses) != min(bound_left, settings.web_search_max_uses):
                     bound_left = left
                     bound = bind(server_tools, left)
-            ai: AIMessage = await bound.ainvoke(messages)
+            if on_event is not None:  # streaming: model.astream (scripted mode's default astream yields one chunk)
+                ai = None
+                async for chunk in bound.astream(messages):
+                    piece = _text(chunk) if not isinstance(chunk.content, str) else chunk.content
+                    if piece:
+                        on_event({"type": "text_delta", "agent_id": agent_id, "text": piece})
+                    ai = chunk if ai is None else ai + chunk
+                ai = ai if ai is not None else AIMessage(content="")
+            else:
+                ai = await bound.ainvoke(messages)
             usage = ai.usage_metadata or {}
             tin += usage.get("input_tokens", 0)
             tout += usage.get("output_tokens", 0)
@@ -172,25 +247,43 @@ async def run_agent(agent_id: str, task: str, *, context: str = "", run_id: str 
             messages.append(ai)
             if not ai.tool_calls:
                 result.output, result.status = _text(ai), "ok"
+                step_log.append({"role": "assistant", "content": result.output, "tool_steps": []})
                 break
             done = False
+            tool_steps: list[dict[str, Any]] = []
             for call in ai.tool_calls:
                 tool = by_name.get(call["name"])
+                if on_event is not None:
+                    on_event({"type": "tool_start", "agent_id": agent_id, "name": call["name"], "args": call["args"]})
                 content = (await tool.ainvoke(call["args"])) if tool else f"ERROR: tool {call['name']} is not available to you."
                 result.tool_calls += 1
-                if content.startswith("ESCALATED"):
-                    result.escalations.append(content.split("id=")[1].split(")")[0])
+                decision = _step_decision(content)
+                step: dict[str, Any] = {"name": call["name"], "args": call["args"], "decision": decision,
+                                        "result": content[:500],
+                                        "terminal": bool(tool is not None and tool.metadata.get("terminal"))}
+                if decision == "escalated":
+                    approval_id = content.split("id=")[1].split(")")[0]
+                    result.escalations.append(approval_id)
+                    step["approval_id"] = approval_id
+                tool_steps.append(step)
+                if on_event is not None:
+                    on_event({"type": "tool_end", "agent_id": agent_id, "name": call["name"], "decision": decision})
+                    if decision == "escalated":
+                        on_event({"type": "escalation", "agent_id": agent_id, "name": call["name"],
+                                 "approval_id": step["approval_id"]})
                 messages.append(ToolMessage(content=content, tool_call_id=call["id"]))
                 if tool is not None and tool.metadata.get("terminal") and not content.startswith(("DENIED", "ERROR")):
                     result.structured = json.loads(content)
                     result.output = json.dumps(result.structured, indent=1)
                     done = True
+            step_log.append({"role": "assistant", "content": _text(ai), "tool_steps": tool_steps})
             if done:
                 result.status = "ok"
                 break
         else:
             result.output = _text(messages[-1]) if isinstance(messages[-1], AIMessage) else "stopped: max steps reached"
 
+        result.messages = step_log
         result.cost_eur = (settings.cost_eur(spec.model_tier, tin, tout)
                            + settings.web_cost_eur(result.web_searches, result.web_fetches))
         with session() as s:
