@@ -15,6 +15,9 @@ Each delivery is recorded once in ``WebhookReceipt`` (unique ``(provider, event_
 its side effects (a failure rolls back both, so the provider's retry is processed); a repeat returns
 200 ``{"duplicate": true}`` without side effects. Only these routes may be reachable from the internet (via a
 tunnel); the dashboard and the rest of the API must never be exposed.
+
+* ``GET``/``POST /webhooks/whatsapp``: Meta Cloud API, see the dedicated section near the bottom of this file -
+  signed differently (``X-Hub-Signature-256``) and, unlike the two above, 404 while disabled rather than 503.
 """
 
 from __future__ import annotations
@@ -27,12 +30,14 @@ import json
 import time
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
 from aecom import consent
 from aecom.bus.events import drain, publish
+from aecom.channels import whatsapp as wa
+from aecom.channels.router import handle_inbound as whatsapp_handle_inbound
 from aecom.db import WebhookReceipt, session
 from aecom.observability import record_error
 from aecom.secrets import secrets
@@ -188,5 +193,71 @@ async def agentmail_webhook(request: Request, bg: BackgroundTasks) -> dict[str, 
     result = await run_in_threadpool(_agentmail, raw, h.get("svix-id"), h.get("svix-timestamp"),
                                      h.get("svix-signature"))
     if result.get("event_id"):
+        bg.add_task(drain)
+    return result
+
+
+# --------------------------------------------------------------------------- WhatsApp (Meta Cloud API)
+# Disabled (404 on both routes, same as a URL nobody registered) until ``whatsapp_enabled`` and all four
+# ``WHATSAPP_*`` secrets are set (``aecom.channels.whatsapp.WhatsAppChannel.enabled``) - see that module's
+# docstring. Unlike Lemon Squeezy/AgentMail above, a delivery can batch several messages; each gets its own
+# ``WebhookReceipt`` (keyed by the WhatsApp message id) so a provider retry of a partially-processed batch only
+# replays the messages not yet recorded. A message that fails after its receipt is recorded (a `router.py` or
+# `chat.py` bug, not a signature/delivery problem) is logged via ``record_error`` rather than retried: WhatsApp
+# would otherwise redeliver the whole batch and risk sending a reply twice for the messages that *did* succeed,
+# exactly what Telegram's ``poll_updates`` also avoids by advancing its offset over every update it saw.
+
+
+@router.get("/whatsapp")
+async def whatsapp_verify(request: Request) -> Response:
+    """Meta's handshake, sent once when the webhook URL is (re)registered: echo ``hub.challenge`` back as plain
+    text if ``hub.mode=subscribe`` and ``hub.verify_token`` matches ``WHATSAPP_VERIFY_TOKEN``, else refuse.
+    (https://developers.facebook.com/docs/graph-api/webhooks/getting-started#verification-requests)"""
+    if not wa.CHANNEL.enabled():
+        raise HTTPException(404, "whatsapp channel disabled")
+    params = request.query_params
+    verify_token = secrets.get("WHATSAPP_VERIFY_TOKEN") or ""
+    sent_token = params.get("hub.verify_token") or ""
+    if params.get("hub.mode") != "subscribe" or not verify_token or not hmac.compare_digest(sent_token, verify_token):
+        raise HTTPException(403, "hub.verify_token mismatch")
+    return Response(content=params.get("hub.challenge", ""), media_type="text/plain")
+
+
+def _whatsapp(raw: bytes, signature: str | None) -> dict[str, Any]:
+    if not wa.CHANNEL.enabled():
+        raise HTTPException(404, "whatsapp channel disabled")
+    app_secret = secrets.get("WHATSAPP_APP_SECRET")
+    if not app_secret or not wa.verify_signature(raw, signature, app_secret):
+        raise HTTPException(401, "invalid or missing X-Hub-Signature-256")
+    payload = _json(raw)
+    processed = 0
+    duplicates = 0
+    for msg in wa.iter_inbound(payload):
+        event_key = msg.message_id or hashlib.sha256(f"{msg.external_chat_id}:{msg.text}:{msg.callback_data}"
+                                                      .encode()).hexdigest()
+        try:
+            with session() as s:  # the receipt alone: see the section docstring for why processing is not in here
+                s.add(WebhookReceipt(provider="whatsapp", event_key=event_key, topic="message"))
+                s.flush()
+        except IntegrityError:
+            duplicates += 1
+            continue
+        try:
+            for reply in whatsapp_handle_inbound(msg):
+                wa.CHANNEL.send(msg.external_chat_id, reply.text, reply.buttons)
+        except Exception as exc:  # noqa: BLE001 - logged, not retried; see the section docstring above
+            record_error("webhook.whatsapp", exc, context={"message_id": msg.message_id})
+        processed += 1
+    return {"duplicate": processed == 0 and duplicates > 0, "processed": processed, "duplicates": duplicates}
+
+
+@router.post("/whatsapp")
+async def whatsapp_webhook(request: Request, bg: BackgroundTasks) -> dict[str, Any]:
+    """WhatsApp Cloud API message webhook: ``X-Hub-Signature-256`` HMAC check, one ``WebhookReceipt`` per message
+    id, inbound text/button-tap routed through ``channels.router.handle_inbound``, replies sent back through the
+    Graph API (``channels.whatsapp.CHANNEL.send``)."""
+    raw = await request.body()
+    result = await run_in_threadpool(_whatsapp, raw, request.headers.get("x-hub-signature-256"))
+    if result["processed"]:
         bg.add_task(drain)
     return result

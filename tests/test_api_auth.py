@@ -102,5 +102,6 @@ def test_webhooks_are_not_behind_the_bearer_token(client, method, path):
     for token in (TOKEN, None):
         client.use_token(token)
         r = client.request(method, path, content=b"{}")
-        assert r.status_code in (401, 503), (path, r.status_code)
+        allowed = (401, 503, 404) if "whatsapp" in path else (401, 503)  # WhatsApp is 404 while disabled
+        assert r.status_code in allowed, (path, r.status_code)
         assert r.json()["detail"] not in (BEARER_401, UNCONFIGURED_503), (path, r.json())

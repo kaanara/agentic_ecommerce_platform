@@ -1,0 +1,27 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "WABA_ID",
+      "changes": [
+        {
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {"display_phone_number": "16505551111", "phone_number_id": "123456123"},
+            "contacts": [{"profile": {"name": "A Stranger"}, "wa_id": "19995550000"}],
+            "messages": [
+              {
+                "from": "19995550000",
+                "id": "wamid.HBgLMTk5OTU1NTAwMDAVAgARGBI5QTNDQTVCM0Q0RTdGRTM1RTA",
+                "timestamp": "1730000100",
+                "text": {"body": "hello?"},
+                "type": "text"
+              }
+            ]
+          },
+          "field": "messages"
+        }
+      ]
+    }
+  ]
+}

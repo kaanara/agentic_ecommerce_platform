@@ -1,0 +1,27 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "WABA_ID",
+      "changes": [
+        {
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {"display_phone_number": "16505551111", "phone_number_id": "123456123"},
+            "contacts": [{"profile": {"name": "Ann Owner"}, "wa_id": "16315551234"}],
+            "messages": [
+              {
+                "from": "16315551234",
+                "id": "wamid.HBgLMTYzMTU1NTEyMzQVAgARGBI5QTNDQTVCM0Q0RTdGRTM1RTkA",
+                "timestamp": "1730000000",
+                "text": {"body": "how's business?"},
+                "type": "text"
+              }
+            ]
+          },
+          "field": "messages"
+        }
+      ]
+    }
+  ]
+}
