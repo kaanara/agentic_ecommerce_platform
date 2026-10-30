@@ -29,7 +29,7 @@ from aecom.secrets import secrets
 CONFIG_PREFIX = "config:"
 VERSION_KEY = "config_version"
 
-SECTIONS = ("General", "AI and models", "Budgets and costs", "Store and email", "Alerts and notifications", "Channels",
+SECTIONS = ("AI and models", "Budgets and costs", "Store and email", "Alerts and notifications", "Channels",
             "Chat", "Schedules", "Security", "Backups and updates", "Autonomy", "Advanced")
 
 

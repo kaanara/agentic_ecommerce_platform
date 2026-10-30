@@ -27,6 +27,7 @@ backgroundColor = "#f3f5f9"
 secondaryBackgroundColor = "#e6eaf1"
 
 [theme.dark]
+base = "dark"
 primaryColor = "#6aa8ff"
 backgroundColor = "#0f141b"
 secondaryBackgroundColor = "#18202b"
@@ -36,6 +37,11 @@ greenColor = "#3fb97a"
 orangeColor = "#f0a04b"
 redColor = "#f26d6d"
 blueColor = "#6aa8ff"
+blueBackgroundColor = "#16263d"
+greenBackgroundColor = "#14301f"
+orangeBackgroundColor = "#3a2a14"
+redBackgroundColor = "#3b1b1b"
+yellowBackgroundColor = "#363014"
 chartCategoricalColors = ["#5b9cf0", "#f0845a", "#3cc496", "#f2b830", "#ee95b8", "#35a835", "#8b7ee0", "#f06c6b"]
 
 [theme.dark.sidebar]

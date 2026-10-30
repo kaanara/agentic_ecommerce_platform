@@ -22,7 +22,7 @@ DASHBOARD = Path(__file__).resolve().parents[1] / "dashboard"
 sys.path.insert(0, str(DASHBOARD))  # the page does `from _common import ...`
 HOME = str(DASHBOARD / "Home.py")
 
-TAB_NAMES = ["General", "AI and models", "Budgets and costs", "Store and email", "Alerts and notifications",
+TAB_NAMES = ["AI and models", "Budgets and costs", "Store and email", "Alerts and notifications",
              "Channels", "Chat", "Schedules", "Security", "Policy", "Agents", "Backups and updates", "Autonomy",
              "Advanced", "History", "Export / Import"]
 

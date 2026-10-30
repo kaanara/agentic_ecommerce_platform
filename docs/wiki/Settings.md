@@ -2,7 +2,7 @@
 
 Govern > Settings is the one place to change options. Search at the top, or open a tab. Most changes apply live; a few show a "restart needed" banner with the command to run.
 
-**Tabs:** General, AI and models, Budgets and costs, Store and email, Alerts and notifications, Channels, Chat, Schedules, Security, Policy, Agents, Backups and updates, Autonomy, Advanced, History, Export / Import.
+**Tabs:** AI and models, Budgets and costs, Store and email, Alerts and notifications, Channels, Chat, Schedules, Security, Policy, Agents, Backups and updates, Autonomy, Advanced, History, Export / Import.
 
 ## Where a value comes from
 
