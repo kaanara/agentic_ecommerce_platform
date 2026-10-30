@@ -2,8 +2,8 @@
 
 | Sev | Channel |
 |---|---|
-| P1 | phone push via ntfy (``NTFY_URL``, optional ``NTFY_TOKEN``) + email to ``ALERT_EMAIL`` |
-| P2 | email to ``ALERT_EMAIL`` |
+| P1 | Telegram (every paired chat) + phone push via ntfy (``NTFY_URL``, optional ``NTFY_TOKEN``) + email to ``ALERT_EMAIL`` |
+| P2 | Telegram (every paired chat) + email to ``ALERT_EMAIL`` |
 | P3 | none here (daily digest, planned) |
 
 Email goes through AgentMail, so it stays in the local outbox unless ``AGENTMAIL_LIVE=true``. ``heartbeat`` GETs
@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 TIMEOUT = 10
 PUSH_SEVERITIES = ("P1",)
 EMAIL_SEVERITIES = ("P1", "P2")
+TELEGRAM_SEVERITIES = ("P1", "P2")
 
 
 def _failed(channel: str, exc: BaseException, url: str, **context: Any) -> None:
@@ -83,11 +84,34 @@ def email(incident: dict[str, Any]) -> bool:
         return False
 
 
+def telegram(incident: dict[str, Any]) -> bool:
+    """Send the incident to every paired Telegram chat. Returns True if at least one chat was sent to (no-op,
+    returning False, when Telegram is off/unconfigured or no chat is paired)."""
+    from aecom.channels.router import active_links
+    from aecom.channels.telegram import TelegramChannel
+
+    channel = TelegramChannel()
+    if not channel.enabled():
+        return False
+    links = active_links("telegram")
+    if not links:
+        return False
+    text = f"{_title(incident)}\n{_body(incident)}"
+    sent = False
+    for link in links:
+        try:
+            sent = channel.send(link.external_chat_id, text) or sent
+        except Exception as exc:
+            _failed("telegram", exc, "", incident_id=incident["id"])
+    return sent
+
+
 def route(incident: dict[str, Any]) -> dict[str, bool]:
     """Send the incident to the channels of its severity. Never raises."""
     sev = incident["severity"]
     return {"push": push(incident) if sev in PUSH_SEVERITIES else False,
-            "email": email(incident) if sev in EMAIL_SEVERITIES else False}
+            "email": email(incident) if sev in EMAIL_SEVERITIES else False,
+            "telegram": telegram(incident) if sev in TELEGRAM_SEVERITIES else False}
 
 
 def heartbeat() -> bool:

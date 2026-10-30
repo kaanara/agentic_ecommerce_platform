@@ -1,10 +1,10 @@
 """B/L2: deterministic monitors open and auto-resolve incidents, alert routing (ntfy, email), heartbeat, /health."""
 
-from datetime import timedelta
+from datetime import UTC, timedelta
 
 import httpx
 import pytest
-from aecom import alerts, db, incidents, monitors
+from aecom import alerts, backup, db, incidents, monitors
 from aecom.api import app as api_app
 from aecom.bootstrap import seed_demo
 from aecom.bus import events
@@ -230,6 +230,86 @@ def test_event_backlog(demo):
     assert "oldest due event" in active("event_backlog")["event_bus"]["detail"]
 
 
+# ------------------------------------------------------------------------------------- stale backups (§5c)
+@pytest.fixture
+def bk(tmp_path, monkeypatch):
+    from aecom.config import get_settings
+
+    d = tmp_path / "backups"
+    monkeypatch.setattr(get_settings(), "backup_dir", d)
+    monkeypatch.setattr(get_settings(), "backup_target", None)
+    return d
+
+
+def _verified(now, age, **extra):
+    """A fake backup directory whose manifest says it verified clean ``age`` ago (``now`` is the naive UTC the
+    monitors compare against; the backup itself is created with an explicit tz-aware timestamp)."""
+    t_aware = (now.replace(tzinfo=UTC) if now.tzinfo is None else now) - age
+    p = backup.create_backup(now=t_aware)
+    backup.update_manifest(p, verified=True, verified_at=t_aware.isoformat(), **extra)
+    return p
+
+
+def test_no_backup_dir_yet_raises_nothing(demo):
+    """A fresh machine/test with no BACKUP_DIR of its own is not yet in scope for this monitor."""
+    r = monitors.run_monitors(now=later())
+    assert "stale_backup" not in r["failing"] and "stale_backup_critical" not in r["failing"]
+
+
+def test_backup_dir_with_no_verified_backup_is_p1(demo, bk):
+    bk.mkdir()  # backups have started on this machine, but none has ever verified clean
+    r = monitors.run_monitors(now=later())
+    assert active("stale_backup_critical")["verified_backup"]["severity"] == "P1"
+    assert "no backup has ever verified clean" in active("stale_backup_critical")["verified_backup"]["detail"]
+    assert active("stale_backup") == {}
+
+
+def test_recently_verified_backup_is_not_stale(demo, bk):
+    t = later()
+    _verified(t, timedelta(hours=1))
+    monitors.run_monitors(now=t)
+    assert active("stale_backup") == {} and active("stale_backup_critical") == {}
+
+
+def test_backup_older_than_26h_is_p2(demo, bk):
+    t = later()
+    _verified(t, timedelta(hours=27))
+    monitors.run_monitors(now=t)
+    inc = active("stale_backup")["verified_backup"]
+    assert inc["severity"] == "P2" and "27.0 h old" in inc["detail"]
+    assert active("stale_backup_critical") == {}
+
+
+def test_backup_older_than_3_days_escalates_to_p1(demo, bk):
+    t = later()
+    _verified(t, timedelta(days=4))
+    monitors.run_monitors(now=t)
+    assert active("stale_backup_critical")["verified_backup"]["severity"] == "P1"
+    assert "4 day(s) old" in active("stale_backup_critical")["verified_backup"]["detail"]
+    assert active("stale_backup") == {}  # the P2 window (26h-3d) no longer applies
+
+
+def test_off_device_failure_is_p2_even_when_recently_verified(demo, bk, monkeypatch):
+    from aecom.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "backup_target", "pi@nas:/srv/aecom")
+    t = later()
+    p = _verified(t, timedelta(hours=1))
+    backup.update_manifest(p, copied_off_device=False)
+    monitors.run_monitors(now=t)
+    assert "off-device copy failed" in active("stale_backup")["verified_backup"]["detail"]
+
+
+def test_backup_fixed_auto_resolves(demo, bk):
+    t = later()
+    bk.mkdir()
+    monitors.run_monitors(now=t)
+    assert active("stale_backup_critical")
+    _verified(t, timedelta(minutes=1))
+    monitors.run_monitors(now=t + timedelta(minutes=1))
+    assert active("stale_backup_critical") == {} and active("stale_backup") == {}
+
+
 def test_raising_monitor_becomes_monitor_error_and_others_still_run(demo, monkeypatch):
     def broken(now):
         raise RuntimeError("monitor exploded")
@@ -289,7 +369,7 @@ def test_p2_is_email_only_and_alerts_once(demo, config, net, mail):
 def test_p3_is_not_routed(config, net, mail):
     config.update(NTFY_URL="https://ntfy.example/aecom", ALERT_EMAIL="ops@example.com")
     inc, _ = incidents.raise_incident("drift", "P3", "roas")
-    assert alerts.route(inc) == {"push": False, "email": False} and net.calls == [] and mail == []
+    assert alerts.route(inc) == {"push": False, "email": False, "telegram": False} and net.calls == [] and mail == []
 
 
 def test_alert_text_is_masked(config, net, mail):
@@ -317,7 +397,7 @@ def test_network_errors_never_raise_and_are_recorded(config, net, mail):
     config.update(NTFY_URL="https://ntfy.example/secret-topic", HEALTHCHECKS_PING_URL="https://hc-ping.example/uuid-1")
     net.fail = True
     inc, _ = incidents.raise_incident("ledger_imbalance", "P1", "ledger", "x")
-    assert alerts.route(inc) == {"push": False, "email": False}
+    assert alerts.route(inc) == {"push": False, "email": False, "telegram": False}
     assert alerts.heartbeat() is False
     with session() as s:
         rows = list(s.scalars(select(ErrorRow).where(ErrorRow.component == "alerts")))

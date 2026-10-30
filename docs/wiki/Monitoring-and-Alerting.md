@@ -1,11 +1,11 @@
 # Monitoring and Alerting
 
-> **Status:** deterministic monitors run every 5 minutes in `aecom scheduler`, open incidents in `ops_incidents` (deduplicated, auto-resolved), and alert a human: P1 by phone push (ntfy) and email, P2 by email. An external dead-man's switch (healthchecks.io) is pinged after every monitor run. `/health` reports real state and returns HTTP 503 when unhealthy. Still planned: P3 daily digest, a Health dashboard page, the Sentinel agent and the remaining monitors (see *Target design*). Work items are tracked in [Roadmap](Roadmap) → *Production readiness backlog*.
+> **Status:** deterministic monitors run every 5 minutes in `aecom scheduler`, open incidents in `ops_incidents` (deduplicated, auto-resolved), and alert a human: P1 by Telegram (every paired chat) + phone push (ntfy) + email, P2 by Telegram + email. An external dead-man's switch (healthchecks.io) is pinged after every monitor run. `/health` reports real state and returns HTTP 503 when unhealthy. Still planned: P3 daily digest, a Health dashboard page, the Sentinel agent and the remaining monitors (see *Target design*). Work items are tracked in [Roadmap](Roadmap) → *Production readiness backlog*.
 
 ## What exists today
 | Signal | Where you see it | Alerts? |
 |---|---|---|
-| Monitors and incidents (below) | `aecom incidents`, `ops_incidents` | ✅ P1 push + email, P2 email |
+| Monitors and incidents (below) | `aecom incidents`, `ops_incidents` | ✅ P1 Telegram + push + email, P2 Telegram + email |
 | Agent runs (status, steps, cost, task, output) | Dashboard → Agents → Recent runs | ✅ stuck runs (P2) |
 | Policy decisions (allow / escalate / deny), errors | Dashboard → Agents → Audit trail (`ops_audit_log`), `aecom errors` (`ops_errors`) | ✅ any `ops_errors` row in the last hour (P2) |
 | Event handler failures / dead letters | Audit trail, `aecom events dead` | ✅ order/inventory dead letter P1, others P2 |
@@ -39,8 +39,8 @@ Plain SQL checks, no LLM, so they work when Claude is down or a budget is exhaus
 ## Alert routing (`src/aecom/alerts.py`)
 | Sev | Channel | Timing |
 |---|---|---|
-| P1 | ntfy phone push (title, priority high) + email to `ALERT_EMAIL` | when the incident opens, repeated every 30 min until acknowledged |
-| P2 | email to `ALERT_EMAIL` | once, when the incident opens |
+| P1 | Telegram (every paired chat) + ntfy phone push (title, priority high) + email to `ALERT_EMAIL` | when the incident opens, repeated every 30 min until acknowledged |
+| P2 | Telegram (every paired chat) + email to `ALERT_EMAIL` | once, when the incident opens |
 | P3 | none yet (daily digest planned) | - |
 
 - Acknowledge to stop repeats: `uv run aecom incidents ack <id> --by <you>`; resolve by hand with `aecom incidents resolve`, or let the monitor auto-resolve it.
@@ -94,12 +94,12 @@ These failures are **neither detected nor alerted** today:
 | P3 | Policy-deny spike | Denies per agent well above normal (misbehaviour or prompt injection) |
 
 ### 2. Alert routing
-*Implemented for P1 and P2 (see above); the P3 daily digest and Telegram/Pushover are still planned.*
+*Implemented for P1 and P2 (see above), including Telegram; the P3 daily digest and Pushover are still planned.*
 
 | Sev | Meaning | Channel | Timing |
 |---|---|---|---|
-| P1 | Money or customers at risk | Phone push (ntfy, Telegram or Pushover) + email | Immediately, repeat every 30 min until acknowledged |
-| P2 | Degraded, no direct loss yet | Email | Within 1 h |
+| P1 | Money or customers at risk | Telegram + phone push (ntfy; Pushover planned) + email | Immediately, repeat every 30 min until acknowledged |
+| P2 | Degraded, no direct loss yet | Telegram + email | Within 1 h |
 | P3 | Worth knowing | Daily digest email | 07:00 |
 
 - **P1 must not depend on the Pi alone.** The scheduler pings an external dead-man's switch (for example healthchecks.io). If the pings stop, *that* service alerts you.

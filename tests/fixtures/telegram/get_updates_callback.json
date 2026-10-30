@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "result": [
+    {
+      "update_id": 100002,
+      "callback_query": {
+        "id": "cbq-1",
+        "from": {"id": 555000111, "first_name": "Owner"},
+        "message": {
+          "message_id": 5002,
+          "date": 1770000001,
+          "chat": {"id": 555000111, "type": "private", "first_name": "Owner"},
+          "text": "appr_1 [T1] fake_tool for ceo"
+        },
+        "data": "approve:appr_1"
+      }
+    }
+  ]
+}
