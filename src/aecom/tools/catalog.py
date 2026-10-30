@@ -651,3 +651,10 @@ def submit_brief(summary: str, findings: list[dict] | None = None, recommendatio
     """Final structured answer: summary, findings [{"topic","detail","source"}], recommendation."""
     return {"summary": summary, "findings": findings or [], "recommendation": recommendation}
 
+
+# E3: the Engineer's workspace/git tools (eng_read_file, eng_list_files, eng_search, eng_diff, eng_write_file,
+# eng_run_tests, eng_open_pr). Imported from here (rather than aecom.tools.__init__, like the Sentinel's
+# diagnostics/remediation) because aecom.engineer.tools itself imports `tool` from this module: this import must
+# come after `tool`/`CATALOG` are defined above, which the bottom of this file already is.
+from aecom.engineer import tools as _engineer_tools  # noqa: F401
+

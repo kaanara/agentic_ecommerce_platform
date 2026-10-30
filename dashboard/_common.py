@@ -63,10 +63,9 @@ def require_login() -> None:
         _boot()
         return
     if not dashboard_auth.is_configured():
-        st.error("Dashboard login is not configured, so nothing is shown.")
-        st.markdown("Run `uv run aecom dashboard reset-password` on the machine, or set "
-                    f"`{dashboard_auth.ENV_VAR}` in `.env` (create it with `uv run python -m aecom.dashboard_auth`), "
-                    "then reload this page.")
+        st.error("No dashboard password is set yet, so no one can log in.")
+        st.markdown("Run `uv run aecom dashboard reset-password` on the machine to create one, then reload this "
+                    f"page. (The older way still works: set `{dashboard_auth.ENV_VAR}` in `.env`.)")
         st.stop()
     if not st.session_state.get("authenticated"):
         st.title(":material/lock: Log in")
@@ -80,7 +79,7 @@ def require_login() -> None:
             if dashboard_auth.attempt_login(password, st.session_state):
                 dashboard_auth.touch(st.session_state)
                 st.rerun()
-            st.error("Wrong password.")
+            st.error("That password does not match. Try again, or reset it with `uv run aecom dashboard reset-password` on the machine.")
         st.stop()
     from aecom.config import get_settings
 
@@ -135,11 +134,26 @@ def mask_df(df: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- layout helpers (shared by every page)
+GLOSSARY = {
+    "Tier (T0 to T4)": "How much an action matters. T0 only reads, T1 and T2 are small and logged, T3 needs your "
+                       "approval, T4 is never allowed for an agent.",
+    "Approval": "A request from an agent to do something risky. Nothing happens until you approve it.",
+    "Kill switch": "Stops every action that could spend money or contact a customer. Deliveries of paid orders continue.",
+    "Safe mode": "Set automatically when something serious is wrong. Only you can turn it off.",
+    "Step-up": "Asking for your dashboard password again before a sensitive change, such as saving a key.",
+    "Dead letter": "An internal message that could not be processed after several tries. Retry it after fixing the cause.",
+}
+
+
 def page_header(title: str, icon: str, subtitle: str | None = None) -> None:
-    """Page title with a Material icon (name without colons, e.g. "dashboard") and an optional caption."""
+    """Page title with a Material icon (name without colons, e.g. "dashboard"), an optional caption and a small
+    popover that explains the terms used across the dashboard."""
     st.title(f":material/{icon}: {title}")
     if subtitle:
         st.caption(subtitle)
+    with st.popover("What do these terms mean?", icon=":material/help:"):
+        for term, meaning in GLOSSARY.items():
+            st.markdown(f"**{term}**: {meaning}")
 
 
 def kpi_row(items: Iterable[Kpi | tuple]) -> None:
@@ -213,6 +227,40 @@ def confirm_dialog(title: str, body: str, on_confirm: Callable[[], None], *, con
     _dialog()
 
 
+NEED_NAME = ("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log."
+             "It is recorded in the audit log.")
+
+
+def need_name(action: str = "") -> str | None:
+    """The reviewer's name, or None after showing one consistent hint. Call before an action that is audited."""
+    name = reviewer_name()
+    if not name:
+        st.warning(NEED_NAME if not action else f"{NEED_NAME} Needed to {action}.")
+    return name or None
+
+
+def field_error(message: str) -> None:
+    """One line directly under a field, for live validation (use fields outside st.form to get it on each change)."""
+    st.caption(f":red[:material/error: {message}]")
+
+
+def field_ok(message: str) -> None:
+    st.caption(f":green[:material/check_circle: {message}]")
+
+
+def validated_text_input(label: str, *, key: str, validate: Callable[[str], str | None], success: str | None = None,
+                         **kwargs: Any) -> tuple[str, bool]:
+    """A text input with live feedback. ``validate`` returns an error message or None. Returns (value, is_valid);
+    an empty value is not valid but shows no error until the owner has typed something."""
+    value = st.text_input(label, key=key, **kwargs)
+    error = validate(value) if value else None
+    if error:
+        field_error(error)
+    elif value and success:
+        field_ok(success)
+    return value, bool(value) and error is None
+
+
 STEP_UP_SECONDS = 300
 
 
@@ -237,7 +285,7 @@ def step_up(reason: str, key: str = "stepup") -> bool:
         if dashboard_auth.confirm_password(password, st.session_state):
             st.session_state["_stepup_until"] = time.time() + STEP_UP_SECONDS
             st.rerun()
-        st.error("Wrong password.")
+        st.error("That password does not match. Try again, or reset it with `uv run aecom dashboard reset-password` on the machine.")
     return False
 
 

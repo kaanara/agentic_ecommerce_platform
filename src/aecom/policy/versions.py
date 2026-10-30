@@ -52,7 +52,7 @@ def validate_yaml(yaml_text: str) -> dict[str, Any]:
         raise ValueError("the policy must be a YAML mapping")
     defaults = policy.get("defaults")
     if not isinstance(defaults, dict):
-        raise ValueError("defaults: is required")
+        raise ValueError("Add a top-level `defaults:` section with the default tiers (see the active policy for an example).")
     for key in ("unknown_tool_tier", "sandboxed_tool_tier"):
         if defaults.get(key) not in TIER_ORDER:
             raise ValueError(f"defaults.{key} must be one of {TIER_ORDER}")
@@ -60,7 +60,7 @@ def validate_yaml(yaml_text: str) -> dict[str, Any]:
         raise ValueError(f"defaults.mcp_unclassified_tier must be one of {TIER_ORDER}")
     rules = policy.get("rules")
     if not isinstance(rules, dict):
-        raise ValueError("rules: is required")
+        raise ValueError("Add a top-level `rules:` section listing a tier for each tool (see the active policy for an example).")
     for name, rule in rules.items():
         if not isinstance(rule, dict) or rule.get("tier") not in TIER_ORDER:
             raise ValueError(f"rules.{name}.tier must be one of {TIER_ORDER}")

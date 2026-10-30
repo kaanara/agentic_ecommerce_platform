@@ -182,6 +182,7 @@ for m in convo["messages"]:
             st.caption(f"{cost}{run}")
 
 pending = st.session_state.pop("_chat_pending", None)
+st.caption("You can attach text, CSV, PDF or image files (txt, csv, pdf, png, jpg), up to 5 MB each.")
 submitted = st.chat_input("Message", accept_file=True, file_type=["txt", "csv", "pdf", "png", "jpg", "jpeg"],
                           max_upload_size=5, submit_mode="disable", key=f"chat_input_{convo['id']}")
 text = pending or (submitted.text if submitted else None)

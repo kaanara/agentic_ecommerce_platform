@@ -11,7 +11,7 @@ import difflib
 import pandas as pd
 import streamlit as st
 
-from _common import agent_label, confirm_dialog
+from _common import NEED_NAME, agent_label, confirm_dialog
 from aecom.persona import loader as pl
 from aecom.persona import overrides as po
 
@@ -78,6 +78,9 @@ def render_agents_tab(by: str) -> None:
     current = po.current_text(scope, file_name) or ""
     edit_key = f"_agents_edit_{scope}_{file_name}"
     edited = st.text_area(f"{scope}/{file_name}", value=current, height=400, key=edit_key)
+    if not edited.strip():
+        st.warning("This file would become empty: agents reading it will see nothing until you add content back. "
+                  "Make sure that's intended before saving.", icon=":material/warning:")
 
     tab_preview, tab_diff = st.tabs(["Preview", "Diff vs. tracked file"])
     with tab_preview:
@@ -86,24 +89,24 @@ def render_agents_tab(by: str) -> None:
         st.code(_diff(tracked, edited) or "(no changes)", language="diff")
 
     col_save, col_reset = st.columns([1, 1])
-    if col_save.button("Save override", key=f"_agents_save_{scope}_{file_name}", icon=":material/save:"):
-        if not by:
-            st.warning("Enter your name in the sidebar before saving.")
-        elif file_name == po.TOOLS_FILE and scope != "company":
+    save_clicked = col_save.button("Save override", key=f"_agents_save_{scope}_{file_name}", icon=":material/save:",
+                                   type="primary", disabled=not by)
+    reset_clicked = col_reset.button("Reset to file version", key=f"_agents_reset_{scope}_{file_name}",
+                                     disabled=(detail is None) or not by, icon=":material/restart_alt:")
+    if not by:
+        st.caption(NEED_NAME)
+    if save_clicked:
+        if file_name == po.TOOLS_FILE and scope != "company":
             confirm_dialog(f"Save {scope}/{file_name}?",
                            "Tools newly listed here are added to this agent's allowlist through the existing "
                            "additive resync. Nothing is ever auto-revoked; use `aecom registry revoke` for that.",
                            lambda: _do_save(scope, file_name, edited, by), confirm_label="Save")
         else:
             _do_save(scope, file_name, edited, by)
-    if col_reset.button("Reset to file version", key=f"_agents_reset_{scope}_{file_name}",
-                        disabled=detail is None, icon=":material/restart_alt:"):
-        if not by:
-            st.warning("Enter your name in the sidebar before resetting.")
-        else:
-            confirm_dialog(f"Reset {scope}/{file_name} to the tracked file?",
-                           "Your override is deleted; the version from git applies again.",
-                           lambda: _do_reset(scope, file_name, by), confirm_label="Reset")
+    if reset_clicked:
+        confirm_dialog(f"Reset {scope}/{file_name} to the tracked file?",
+                       "Your override is deleted; the version from git applies again.",
+                       lambda: _do_reset(scope, file_name, by), confirm_label="Reset")
 
     st.divider()
     st.subheader("All overrides")

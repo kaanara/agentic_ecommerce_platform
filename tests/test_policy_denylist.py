@@ -20,8 +20,9 @@ def test_forbidden_patterns_deny_as_t4(tool, side_effect):
 
 @pytest.mark.parametrize("agent,tool,side_effect,expected", [
     ("researcher", "list_products", True, "allow"),
-    ("anyone", "mcp:playwright/browser_navigate", False, "allow"),
-    ("anyone", "mcp:playwright/browser_navigate", True, "escalate"),
+    ("researcher", "mcp:playwright/browser_navigate", False, "allow"),  # M2: read-only browser, researcher only
+    ("anyone", "mcp:playwright/browser_navigate", True, "deny"),
+    ("anyone", "mcp:somewhere/unclassified_tool", True, "escalate"),
     ("supply", "register_vendor", True, "allow"),
 ])
 def test_non_matching_tools_follow_existing_rules(agent, tool, side_effect, expected):

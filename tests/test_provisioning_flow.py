@@ -343,14 +343,14 @@ def run_sync_runs():
 def test_confirm_refuses_without_a_working_credential(monkeypatch):
     provision()  # no credential in the environment
     monkeypatch.delenv("ACME_ADS_TOKEN", raising=False)
-    with pytest.raises(ValueError, match="not set"):
+    with pytest.raises(ValueError, match="to be set"):
         provisioning.confirm("Acme Ads", "kaan")
     with pytest.raises(ValueError, match="--by"):
         provisioning.confirm("Acme Ads", " ")
     provision(LS)
     monkeypatch.setenv("LEMONSQUEEZY_API_KEY", SECRET)
     monkeypatch.setattr(httpx, "get", FakeHttp({"/v1/users/me": 401}))
-    with pytest.raises(ValueError, match="fails"):
+    with pytest.raises(ValueError, match="did not pass the check"):
         provisioning.confirm("Lemon Squeezy", "kaan")
     assert vendor().status == "provisioning" and vendor("Lemon Squeezy").status == "provisioning"
 

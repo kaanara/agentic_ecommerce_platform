@@ -13,7 +13,7 @@ from aecom.tools.catalog import CATALOG
 
 EXPECTED = {"ceo": "opus", "researcher": "sonnet", "judge": "sonnet", "foreman": "sonnet", "finance": "sonnet",
             "store_ops": "haiku", "marketing": "haiku", "support": "haiku", "supply": "haiku",
-            "sentinel": "sonnet"}
+            "sentinel": "sonnet", "engineer": "sonnet"}
 
 
 def test_all_agents_load_with_expected_tiers_and_known_tools():

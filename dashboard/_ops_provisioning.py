@@ -98,7 +98,7 @@ def render_provisioning_tab(by: str) -> None:
     st.caption("Vendors a human approved that are still waiting on a credential, a checklist step, or your "
               "confirmation that they work. Credentials themselves never show here, only their env var name.")
     if not by:
-        st.warning("Enter your name in the sidebar first.")
+        st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
         return
     vendors = provisioning.list_provisioning()
     if not vendors:

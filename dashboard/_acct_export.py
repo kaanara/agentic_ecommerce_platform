@@ -39,7 +39,7 @@ def render_export_tab(by: str) -> None:
               "the accountant must confirm, and this is not tax advice - have them validate the file before using "
               "it, especially the first time.")
     if not by:
-        st.warning("Enter your name in the sidebar first.")
+        st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
         return
 
     periods = _recent_finished_periods()

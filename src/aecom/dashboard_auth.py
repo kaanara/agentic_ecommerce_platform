@@ -152,17 +152,28 @@ def _enforced() -> bool:
     return not disabled() and configured_hash() is not None
 
 
+def _require_current_password(current: str, state: MutableMapping[str, Any] | None) -> None:
+    """Raises ValueError with a message that tells the owner exactly what is wrong: a wrong password, or a lockout
+    with how long is left to wait (split from one vague message so the page can act on either case)."""
+    live_state = state if state is not None else {}
+    wait = locked_out(live_state)
+    if wait > 0:
+        raise ValueError(f"Too many tries. Wait {wait:.0f} seconds, then try again.")
+    if not confirm_password(current, live_state):
+        raise ValueError("That current password does not match.")
+
+
 def set_password(new: str, repeat: str, by: str, current: str = "", state: MutableMapping[str, Any] | None = None) -> None:
     """Store a new password hash and turn the login on. While the login is enforced the current password is required.
     Raises ValueError with a message fit for the page."""
     if not by.strip():
-        raise ValueError("enter your name so the change is recorded")
+        raise ValueError("Enter your name so the change is recorded.")
     if len(new) < MIN_PASSWORD_LENGTH:
-        raise ValueError(f"the password needs at least {MIN_PASSWORD_LENGTH} characters")
+        raise ValueError(f"Use at least {MIN_PASSWORD_LENGTH} characters.")
     if new != repeat:
-        raise ValueError("the two passwords do not match")
-    if _enforced() and not confirm_password(current, state if state is not None else {}):
-        raise ValueError("the current password is wrong (or too many tries: wait a minute)")
+        raise ValueError("The two passwords are different. Type the same one twice.")
+    if _enforced():
+        _require_current_password(current, state)
     _put(HASH_KEY, hash_password(new))
     _put(MODE_KEY, "on")
     _record(by, "password_set")
@@ -177,8 +188,8 @@ def turn_login_on(by: str) -> None:
 
 def turn_login_off(by: str, current: str = "", state: MutableMapping[str, Any] | None = None) -> None:
     """Switch the login off. If a password exists the current one is required."""
-    if configured_hash() is not None and not confirm_password(current, state if state is not None else {}):
-        raise ValueError("the current password is wrong (or too many tries: wait a minute)")
+    if configured_hash() is not None:
+        _require_current_password(current, state)
     _put(MODE_KEY, "off")
     _record(by, "off")
 
@@ -186,7 +197,7 @@ def turn_login_off(by: str, current: str = "", state: MutableMapping[str, Any] |
 def reset_password_local(new: str, by: str = "shell") -> None:
     """Recovery from a shell on the machine (`aecom dashboard reset-password`): no current password needed."""
     if len(new) < MIN_PASSWORD_LENGTH:
-        raise ValueError(f"the password needs at least {MIN_PASSWORD_LENGTH} characters")
+        raise ValueError(f"Use at least {MIN_PASSWORD_LENGTH} characters.")
     _put(HASH_KEY, hash_password(new))
     _put(MODE_KEY, "on")
     _record(by, "password_reset")

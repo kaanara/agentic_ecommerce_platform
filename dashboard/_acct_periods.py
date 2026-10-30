@@ -57,7 +57,7 @@ def _close_section(by: str, open_periods: list[str]) -> None:
     note = st.text_input("Note (optional)", key="_period_close_note")
     if st.button("Close month", key="_period_close_btn", icon=":material/task_alt:"):
         if not by:
-            st.warning("Enter your name in the sidebar first.")
+            st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
         else:
             confirm_dialog(f"Close {period}?",
                            "Nothing more can be posted into it afterwards; corrections go into the current month "
@@ -87,7 +87,7 @@ def _reopen_section(by: str, newest_closed: str | None) -> None:
     reason = st.text_area("Reason (required)", key="_period_reopen_reason")
     if st.button(f"Reopen {newest_closed}", key="_period_reopen_btn", icon=":material/lock_open:"):
         if not by:
-            st.warning("Enter your name in the sidebar first.")
+            st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
         else:
             _do_reopen(newest_closed, by, reason)
 

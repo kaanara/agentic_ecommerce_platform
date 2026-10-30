@@ -32,6 +32,7 @@
     aecom autonomy promote|demote TOOL --by NAME [--reason TEXT]   evidence-gated promotion / demotion to stage 1
     aecom autonomy log [--days N]          stage changes and autonomous actions
     aecom doctor [--json]                  health report (paste into an issue); exit 1 if any check fails
+    aecom engineer clear-branch --by NAME   free the Engineer agent's single open branch after you handled its PR
     aecom payouts [list] | import FILE.csv --provider P --by NAME | reconcile [ID] | fetch-stripe [YYYY-MM-DD]
     aecom month-end YYYY-MM [--by NAME]    create the month-end close report for a finished month (J9)
     aecom period [list] | close|reopen YYYY-MM --by NAME [--note|--reason TEXT] | verify [YYYY-MM]   accounting months
@@ -193,6 +194,9 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--note", default="")
     s = sub.add_parser("doctor")
     s.add_argument("--json", action="store_true", help="machine-readable report")
+    s = sub.add_parser("engineer", help="the Engineer agent's workspace (human-only actions)")
+    s.add_argument("action", choices=["clear-branch"])
+    s.add_argument("--by", default="")
     s = sub.add_parser("payouts", help="platform payouts: list, import a CSV export, reconcile (F4)")
     s.add_argument("action", nargs="?", default="list", choices=["list", "import", "reconcile", "fetch-stripe"])
     s.add_argument("target", nargs="?", help="import: CSV file; reconcile: payout id (omit for all pending); "
@@ -464,6 +468,16 @@ def main(argv: list[str] | None = None) -> None:
         code = backup.run_cli(a.action, a.path, label=a.label, dest=a.dest, yes=a.yes)
         if code:
             sys.exit(code)
+    elif a.cmd == "engineer":
+        from aecom.engineer import workspace
+
+        try:
+            if not a.by.strip():
+                sys.exit("usage: aecom engineer clear-branch --by NAME")
+            workspace.clear_open_branch(a.by)
+            print("The Engineer's open branch slot is free again.")
+        except (ValueError, PermissionError) as exc:
+            sys.exit(str(exc))
     elif a.cmd == "payouts":
         from pathlib import Path
 

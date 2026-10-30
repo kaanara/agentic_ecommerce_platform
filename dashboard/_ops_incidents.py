@@ -52,7 +52,7 @@ def render_incident_reports_tab(by: str) -> None:
     st.caption("Issue markdown and postmortem drafts for incidents, already masked and redacted by the service. "
               "Nothing here deploys or merges; a human still opens the PR.")
     if not by:
-        st.warning("Enter your name in the sidebar first.")
+        st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
         return
 
     include_resolved = st.checkbox("Include resolved incidents", value=True, key="_inc_include_resolved")

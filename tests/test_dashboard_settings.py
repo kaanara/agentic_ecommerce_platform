@@ -22,8 +22,12 @@ DASHBOARD = Path(__file__).resolve().parents[1] / "dashboard"
 sys.path.insert(0, str(DASHBOARD))  # the page does `from _common import ...`
 HOME = str(DASHBOARD / "Home.py")
 
+GROUP_NAMES = ["Money and AI", "Channels and chat", "Security and backups", "Schedules and rules", "Advanced"]
+
+# N4: nested nested-tab order after the 15 original tabs were regrouped into 5 top-level tabs (each with these as
+# nested `st.tabs`), in `dashboard/app_pages/settings.py` / `aecom.settings_registry.GROUPS`.
 TAB_NAMES = ["AI and models", "Budgets and costs", "Store and email", "Alerts and notifications",
-             "Channels", "Chat", "Schedules", "Security", "Policy", "Agents", "Backups and updates", "Autonomy",
+             "Channels", "Chat", "Security", "Backups and updates", "Schedules", "Policy", "Agents", "Autonomy",
              "Advanced", "History", "Export / Import"]
 
 TEST_SECRET = "a long test secret"  # 12+ chars, meets dashboard_auth.MIN_PASSWORD_LENGTH
@@ -96,12 +100,22 @@ def test_page_renders_with_login_off(envp):
 
 
 def _top_tabs(at):
+    """The *nested* section tabs, found regardless of which of the 5 top-level group tabs they live inside - AppTest
+    walks the whole element tree, so a nested `st.tabs` call still shows up in `at.tabs` (N4)."""
     return [t for t in at.tabs if t.proto.label in TAB_NAMES]
 
 
 def test_tab_order_matches_the_plan(envp):
     at = _app().run()
     assert [t.proto.label for t in _top_tabs(at)] == TAB_NAMES
+
+
+def test_the_15_tabs_are_regrouped_into_5_top_level_tabs(envp):
+    at = _app().run()
+    labels = [t.proto.label for t in at.tabs]
+    assert labels[:len(GROUP_NAMES)] == GROUP_NAMES  # the 5 group tabs render before any nested section tab
+    assert set(GROUP_NAMES) <= set(labels)
+    assert len(_top_tabs(at)) == len(TAB_NAMES)  # every former top-level tab still exists, now nested
 
 
 def test_policy_agents_backups_tabs_render_their_partials(envp):
@@ -124,11 +138,13 @@ def test_readonly_advanced_fields_are_disabled(envp):
 
 
 # --------------------------------------------------------------------------- generic field editing
-def test_saving_a_normal_field_needs_a_name_first(envp):
+def test_saving_a_normal_field_is_disabled_without_a_name_first(envp):
     at = _app().run()
     at.number_input(key="input_agent_max_steps").set_value(9)
-    at.button(key="FormSubmitter:form_agent_max_steps-Save").click().run()
-    assert any("name" in w.value for w in at.warning)
+    save_button = at.button(key="FormSubmitter:form_agent_max_steps-Save")
+    assert save_button.disabled  # N6: no click-then-warn - the button itself is disabled until a name is given
+    captions = " ".join(c.value for t in at.tabs for c in t.get("caption"))
+    assert "Enter your name" in captions
     assert reg.value("agent_max_steps") != 9
 
 
@@ -159,6 +175,21 @@ def test_search_box_hides_non_matching_fields(envp):
     assert not _has(at.number_input, "input_usd_to_eur")
 
 
+def test_search_box_is_labelled_find_a_setting_with_example_placeholder(envp):
+    at = _app().run()
+    search = at.text_input(key="_settings_search")
+    assert search.label == "Find a setting"
+    assert search.placeholder and "e.g." in search.placeholder
+
+
+def test_search_results_show_which_group_and_tab_each_hit_lives_in(envp):
+    at = _set_name(_app())
+    at.text_input(key="_settings_search").set_value("agent_max_steps")
+    at = at.run()
+    captions = " ".join(c.value for c in at.caption)
+    assert "Money and AI" in captions and "AI and models" in captions
+
+
 # --------------------------------------------------------------------------- critical fields need step-up
 def test_critical_field_needs_the_dashboard_secret_before_saving(envp):
     at = _set_name(_app(login_off=False))
@@ -180,7 +211,7 @@ def test_wrong_step_up_secret_does_not_apply_the_change(envp):
     at.text_input(key="stepup_llm_mode_pw").set_value("totally the wrong one")
     at.button(key="FormSubmitter:stepup_llm_mode_form-Confirm password").click().run()
     assert reg.value("llm_mode") != "anthropic"
-    assert any("Wrong" in e.value for e in at.error)
+    assert any("does not match" in e.value for e in at.error)
 
 
 # --------------------------------------------------------------------------- secrets: never shown, write-only
@@ -244,7 +275,7 @@ def test_change_secret_needs_the_current_one(envp):
     fields["New password"].set_value("a brand new dashboard secret")
     fields["Repeat new password"].set_value("a brand new dashboard secret")
     _button(at, "Change password").click().run()
-    assert any("wrong" in e.value for e in at.error)
+    assert any("does not match" in e.value for e in at.error)
     assert not auth.verify_password("a brand new dashboard secret")
 
 

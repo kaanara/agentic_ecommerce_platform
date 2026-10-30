@@ -3,12 +3,20 @@ import streamlit as st
 
 from _common import confirm_dialog, empty_state, kpi_row, mask_df, page_header, require_login, reviewer_name, sql
 from aecom import approvals, incidents
+from aecom import dashboard_auth
 from aecom.company_settings import agents_paused_on, get_setting, kill_switch_on, leave_safe_mode, safe_mode_on, set_flag
 from aecom.conversations import unread_total
 
 require_login()
 page_header("Overview", "dashboard",
            "Digital products, operated by agents, governed by policy, approved by humans.")
+
+if dashboard_auth.disabled() or not dashboard_auth.is_configured():
+    with st.container(border=True):
+        st.markdown("#### :material/lock_open: Secure your dashboard")
+        st.caption("Right now anyone who can reach this page can approve spending and use the kill switch, and Chat "
+                   "stays off. Set a password (12 or more characters) to turn the login on.")
+        st.page_link("app_pages/settings.py", label="Set a password", icon=":material/lock:")
 
 
 def _leave_safe_mode(by: str) -> None:

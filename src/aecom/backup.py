@@ -173,7 +173,7 @@ def create_backup(label: str | None = None, dest: str | Path | None = None, now:
     root = backup_dir(dest)
     target = root / name
     if target.exists():
-        raise BackupError(f"backup {target} already exists (wait a second and retry)")
+        raise BackupError(f"A backup with this name already exists ({target.name}). Wait a moment, then back up again.")
     root.mkdir(parents=True, exist_ok=True)
     work = root / f".tmp-{name}"
     shutil.rmtree(work, ignore_errors=True)

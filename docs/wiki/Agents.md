@@ -12,6 +12,7 @@
 | `support` | 💬 Iris | Haiku | foreman | Customer email, access issues, refunds within limits |
 | `supply` | 🔗 Relay | Haiku | foreman | Vendors, key pools, third-party APIs, continuity |
 | `sentinel` | 🛰️ Argus | Sonnet | ceo | Read-only incident diagnosis: evidence, ranked root-cause hypotheses, safe next actions |
+| `engineer` | 🧰 Forge | Sonnet | ceo | Writes adapters/webhooks on a branch in its own workspace clone, opens a PR; never deploys |
 
 **Sentinel (`sentinel`, Argus).** An Ops agent in the evaluation layer, not a Foreman department: the monitors start it
 (`monitors.diagnose_new`) for each **new P1/P2 incident**, at most once per incident. It reads the incident, gathers
@@ -21,6 +22,14 @@ follows the matching runbook skill (`runbook_<monitor>`, seeded from [Runbooks](
 `submit_diagnosis`, which appends the diagnosis to the incident's notes. It never changes anything itself: no
 side-effecting tools (apart from `request_account_need`, which every agent has), `submit_diagnosis` is T1 and reserved
 for it, budget €3/day. Details: [Incident Response](Incident-Response#sentinel).
+
+**Engineer (`engineer`, Forge).** Roadmap **E3**, the highest-risk agent, so containment is in code, not only in
+the prompt: it works only inside its own workspace clone (`aecom.engineer.workspace`, never the live checkout), on
+one `engineer/<slug>` branch at a time, writing only to an explicit allowlist (adapters, webhooks, tests, one
+integrations doc). Opening a PR (`eng_open_pr`) is T3 - a human always approves it first - and even then refuses an
+oversized diff, a denied path, a secret-looking string, or a HEAD `eng_run_tests` has not passed. Not chat-eligible,
+not dispatched by the Foreman: a human starts its work directly. There is no tool that merges, deploys or restarts
+anything. Details: [Engineer Agent](Engineer-Agent).
 
 ## Enabling and disabling agents
 Each agent has an on/off flag in `ops_settings` under `agent_enabled:<id>` (`on`/`off`, **default on**, so existing

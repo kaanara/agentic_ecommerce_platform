@@ -97,7 +97,7 @@ def render_connections_tab(by: str) -> None:
     st.caption("OAuth connections for ad and marketplace platforms. A refresh token never shows here once saved - "
               "only whether the provider is connected, when it last refreshed and its last error, if any.")
     if not by:
-        st.warning("Enter your name in the sidebar first.")
+        st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
         return
     statuses = oauth_tokens.status()
     if not statuses:

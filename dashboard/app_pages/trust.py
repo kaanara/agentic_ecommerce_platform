@@ -53,7 +53,7 @@ with tab_report:
     tool = st.selectbox("Action", [r["tool"] for r in rows])
     name = reviewer_name()
     if not name:
-        st.caption("Enter your name in the sidebar before changing a stage.")
+        st.caption("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
     reason = st.text_input("Reason")
     actions = st.container(horizontal=True)
     if actions.button("Promote one stage", disabled=not name):

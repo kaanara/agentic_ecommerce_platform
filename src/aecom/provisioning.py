@@ -468,10 +468,11 @@ def confirm(vendor: str, by: str, note: str = "") -> dict[str, Any]:
             raise ValueError(f"{v.name} is {v.status}, not waiting for provisioning")
         snap = {"name": v.name, "category": v.category, "credential_env": v.credential_env}
     if not snap["credential_env"] or not secrets.has(snap["credential_env"]):
-        raise ValueError(f"{snap['name']}: the credential in {snap['credential_env'] or '(no env var)'} is not set yet")
+        raise ValueError(f"{snap['name']} needs {snap['credential_env'] or 'a credential'} to be set before this step. "
+                         "Add it in Settings, then come back here.")
     ok, error, warnings = verify(snap)
     if not ok:
-        raise ValueError(f"{snap['name']}: the credential check fails ({error}); fix the credential first")
+        raise ValueError(f"{snap['name']}'s credential did not pass the check: {error}. Update it in Settings, then try again.")
     with session() as s:
         v = _find(s, snap["name"])
         if v.status != "provisioning":

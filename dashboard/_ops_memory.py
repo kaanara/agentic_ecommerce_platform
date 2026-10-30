@@ -45,7 +45,7 @@ def render_memory_tab(by: str) -> None:
     st.caption("Shared memories an agent wrote that no human has reviewed yet. Only **approved** shared memories "
               "are recalled by other agents; rejecting keeps the row for the record but it is never recalled.")
     if not by:
-        st.warning("Enter your name in the sidebar first.")
+        st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
         return
     pending = memory_review.list_pending()
     if not pending:

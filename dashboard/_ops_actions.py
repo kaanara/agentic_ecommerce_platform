@@ -23,7 +23,7 @@ OPS_KINDS = ("run", "sync_store", "reconcile", "monitors", "agentmail_poll")
 
 def _queue(kind: str, by: str, **params: Any) -> None:
     if not by:
-        st.warning("Enter your name in the sidebar first.")
+        st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
         return
     try:
         ops_actions.request(kind, by, **params)

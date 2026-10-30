@@ -1,0 +1,61 @@
+# M2 (docs/wiki/Roadmap.md): the optional, read-only Playwright MCP browser for the Researcher.
+#
+# OFF BY DEFAULT. Nothing in aecom runs `docker compose` for you. A human brings this container into existence
+# (or the Foreman does, on the human's instruction) by registering it in the registry first — see README.md in
+# this directory for the exact `propose_tool`/`sandbox_tool`/`approve_tool`/`grant_tool` steps — and only then
+# does `docker compose ... run --rm playwright-mcp` ever get invoked, once per agent call, by
+# `aecom.registry.mcp_manager._connection()` (stdio transport). `docker compose up -d` is for a human to test the
+# image manually; the live path never leaves it running as a long-lived daemon.
+#
+# Image: pinned by tag (see PINNED-VERSION.md in this directory for how to also pin the digest, which this file
+# intentionally does not hardcode — a digest is a point-in-time fact that goes stale and belongs in a dated note a
+# human re-checks, not silently in the file an agent might read as authoritative).
+services:
+  playwright-mcp:
+    image: mcr.microsoft.com/playwright/mcp:v0.0.83
+    # --headless: no GUI needed on the Pi. --isolated: a brand-new, in-memory browser profile every container run
+    # (no saved cookies/history/credentials); the image's own default user-data-dir is never touched because
+    # --isolated keeps the profile in memory instead.
+    command: ["--headless", "--isolated"]
+    init: true                        # tini (bundled in the image) reaps orphaned Chromium zombie processes
+    read_only: true                   # the container's filesystem is read-only; nothing is written to the image layer
+    tmpfs:
+      - /tmp                          # Chromium needs a writable /tmp (shm, lock files); never persisted to disk
+    cap_drop: ["ALL"]                  # no Linux capabilities beyond the unprivileged default
+    security_opt:
+      - "no-new-privileges:true"
+    user: "node"                      # the image's own non-root runtime user (see its Dockerfile) — never root
+    networks:
+      - playwright-egress
+    # No "network_mode: host" anywhere in this file - the Pi's own network stack, services and other containers
+    # must never be reachable from inside this container. No "ports:" (nothing needs to reach in). No "volumes:"
+    # besides the tmpfs above (no saved profile, no shared host paths). No "environment:" secrets - this server
+    # needs none, and a credential handed to the browser process would defeat --isolated.
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
+
+# DNS / egress note (compose alone cannot express this - read before relying on it):
+# `playwright-egress` keeps this container off the default bridge and off every other compose project's network,
+# but a user-defined bridge can still route to the Pi's own LAN (RFC1918) and to the link-local metadata address
+# 169.254.169.254 unless something outside compose blocks it. aecom.browser_guard.check_navigation refuses to
+# *ask* the browser to go to a private/loopback/link-local address, which covers every navigation this app's own
+# agents make; it is not a substitute for a network-level block against a compromised/malicious page redirecting
+# the browser via JS, a DNS rebind the guard's one-time check can't see, or a non-navigation request (image/XHR)
+# the page itself issues. Pick one before exposing this to a page you don't fully trust:
+#   1. iptables/nftables rule on the host, scoped to the bridge's interface/subnet (find it with
+#      `docker network inspect deploy_playwright-egress` after `docker compose up`, e.g. `br-xxxxxxxx`):
+#        nft add rule inet filter forward iifname "br-xxxxxxxx" ip daddr { 10.0.0.0/8, 172.16.0.0/12,
+#          192.168.0.0/16, 169.254.0.0/16 } drop
+#      (or the iptables equivalent: `-A FORWARD -i br-xxxxxxxx -d 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,
+#      169.254.0.0/16 -j DROP`). Re-run after every `docker compose up` that recreates the network, or make the
+#      rule persistent (e.g. via a systemd unit / netfilter-persistent) - compose does not survive a reboot here.
+#   2. an egress proxy container on `playwright-egress` with an explicit domain allowlist (e.g. squid/tinyproxy),
+#      set via `--proxy-server` in `command:` above; the proxy itself still needs the same RFC1918 block, since a
+#      proxy without one just forwards the private request instead of refusing it.
+# Either way, this is infrastructure a human sets up once per host, not something this compose file can enforce.
+networks:
+  playwright-egress:
+    driver: bridge

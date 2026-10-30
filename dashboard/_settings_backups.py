@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 import pandas as pd
 import streamlit as st
 
-from _common import step_up
+from _common import NEED_NAME, field_error, field_ok, step_up
 from aecom import backup, jobs
 from aecom import settings_registry as reg
 from aecom.bus.events import publish
@@ -111,15 +111,14 @@ def _schedule_editor(by: str) -> None:
             weekday = c3.selectbox("On", WEEKDAYS, index=WEEKDAYS.index(cur["weekday"]), key="_bk_weekday")
             verify = st.toggle("Verify every backup after it is made", value=bool(settings.backup_verify_after),
                                key="_bk_verify")
-            saved = st.form_submit_button("Save schedule", icon=":material/save:")
+            saved = st.form_submit_button("Save schedule", icon=":material/save:", type="primary", disabled=not by)
         if cur["custom"]:
             st.caption(f"Current schedule `{settings.backup_schedule}` is a custom expression; saving here replaces it.")
         st.caption(f"Now: {'on' if settings.backup_enabled else 'off'}, schedule `{settings.backup_schedule}`, "
                    f"next run {_next_run()}.")
-        if not saved:
-            return
         if not by:
-            st.warning("Enter your name in the sidebar first.")
+            st.caption(NEED_NAME)
+        if not saved:
             return
         spec = schedule_from_form(frequency, hours, at.hour, at.minute, weekday)
         try:
@@ -222,16 +221,14 @@ def render_backups_tab(by: str) -> None:
     cols[3].metric("Free disk", _free_disk())
 
     c1, c2 = st.columns(2)
-    if c1.button("Back up now", icon=":material/backup:"):
-        if not by:
-            st.warning("Enter your name in the sidebar first.")
-        else:
-            _request("backup.requested", by)
-    if c2.button("Verify the newest backup", icon=":material/verified:"):
-        if not by:
-            st.warning("Enter your name in the sidebar first.")
-        else:
-            _request("backup.verify_requested", by)
+    back_up_clicked = c1.button("Back up now", icon=":material/backup:", disabled=not by)
+    verify_clicked = c2.button("Verify the newest backup", icon=":material/verified:", disabled=not by)
+    if not by:
+        st.caption(NEED_NAME)
+    if back_up_clicked:
+        _request("backup.requested", by)
+    if verify_clicked:
+        _request("backup.verify_requested", by)
 
     st.subheader("Backups")
     table = _backups_table()
@@ -243,11 +240,11 @@ def render_backups_tab(by: str) -> None:
     names = [p.name for p in backup.list_backups()]
     choice = st.selectbox("Backup", names, key="_backups_row_choice")
     r1, r2, r3 = st.columns(3)
-    if r1.button("Verify this backup", key="_verify_row"):
-        if not by:
-            st.warning("Enter your name in the sidebar first.")
-        else:
-            _request("backup.verify_requested", by, backup=choice)
+    verify_row_clicked = r1.button("Verify this backup", key="_verify_row", disabled=not by)
+    if not by:
+        st.caption(NEED_NAME)
+    if verify_row_clicked:
+        _request("backup.verify_requested", by, backup=choice)
 
     st.divider()
     st.subheader("Restore and download (critical)")
@@ -259,11 +256,14 @@ def render_backups_tab(by: str) -> None:
         return
 
     typed = st.text_input("Type the backup name in full to restore it", key="_restore_typed")
-    if r2.button("Restore", key="_restore_btn", type="primary", disabled=(typed != choice)):
-        if not by:
-            st.warning("Enter your name in the sidebar first.")
-        else:
-            _do_restore(choice, by)
+    if typed and typed != choice:
+        field_error(f"Type {choice} exactly to enable Restore.")
+    elif typed == choice:
+        field_ok("Matches - Restore is enabled.")
+    if r2.button("Restore", key="_restore_btn", type="primary", disabled=(typed != choice) or not by):
+        _do_restore(choice, by)
+    if not by:
+        st.caption(NEED_NAME)
 
     if r3.button("Prepare download", key="_download_btn"):
         from aecom.audit import audit

@@ -8,26 +8,38 @@ Server config (registry_tools.config): {"transport": "stdio", "command": "...", 
 Grant levels live in the same config, ``config["grants"][agent_id]``: "read_only" (the default, also for grants
 that predate levels) loads only ``read_only_tools``; "full" loads every tool, still gated (side-effect tools
 without a policy rule are T3). Upgrading to "full" is ``grant_tool(level="full")``, which is T3 (human).
+
+M2 (Roadmap.md, ``aecom.browser_guard``): the server named exactly ``"playwright"`` gets one extra wrap, here and
+only here — every other server's tools go through the gate unchanged. ``_wrap_playwright_tool`` runs
+``browser_guard.check_tool_call`` before the underlying Playwright MCP tool is actually invoked (denying a call
+the policy tier alone can't see, e.g. a private-network URL or a budget overrun, with a clear message instead of
+an exception trace) and, for an allowed call, treats the result as untrusted web content: ``catalog.fence`` wraps
+it and marks the run tainted (I15), exactly like ``fetch_url`` does for a public page.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any
 
-from langchain_core.tools import BaseTool
+from langchain_core.tools import BaseTool, StructuredTool
 from sqlalchemy import select
 
+from aecom import browser_guard
 from aecom.audit import audit
 from aecom.config import get_settings
 from aecom.context import current_agent
 from aecom.db import Allowlist, RegistryTool, session
 from aecom.policy.gate import gate_external
+from aecom.tools.catalog import fence
 
 log = logging.getLogger(__name__)
 
 GRANT_LEVELS = ("read_only", "full")
+
+PLAYWRIGHT_SERVER = "playwright"  # the one MCP server browser_guard applies to (M2)
 
 
 def grant_level(cfg: dict[str, Any], agent_id: str) -> str:
@@ -54,6 +66,33 @@ def visible_tools(cfg: dict[str, Any], agent_id: str, names: list[str], *, sandb
         return list(names)
     read_only = set(cfg.get("read_only_tools", []))
     return [n for n in names if n in read_only]
+
+
+def _stringify(result: Any) -> str:
+    return result if isinstance(result, str) else json.dumps(result, default=str)
+
+
+def _wrap_playwright_tool(t: BaseTool) -> BaseTool:
+    """M2: wrap one Playwright MCP tool so ``load_mcp_tools`` can gate it exactly like any other MCP tool
+    afterwards, while adding the two checks a policy tier alone can't express. Same name/description/args_schema
+    as ``t`` (so the model still sees the real Playwright tool signature), but its coroutine:
+
+    1. runs ``browser_guard.check_tool_call`` *before* the real tool is invoked, denying with a clear, model-facing
+       message (deny-by-default for any tool not on the read-only allow list, URL/SSRF checks for navigation,
+       per-run and per-domain rate limits) instead of letting the call reach the container;
+    2. on an allowed call, fences the result as untrusted web content (``aecom.tools.catalog.fence``), which also
+       marks the run tainted (I15) — the same treatment ``fetch_url`` gives a public page.
+    """
+
+    async def _call(**kwargs: Any) -> str:
+        try:
+            browser_guard.check_tool_call(t.name, kwargs)
+        except browser_guard.BrowserGuardError as exc:
+            return f"DENIED by browser guard: {exc}"
+        result = await t.ainvoke(kwargs)
+        return fence(f"mcp:{PLAYWRIGHT_SERVER}/{t.name}", _stringify(result))
+
+    return StructuredTool(name=t.name, description=t.description, args_schema=t.args_schema, coroutine=_call)
 
 
 def _connection(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -96,6 +135,8 @@ async def load_mcp_tools(agent_id: str) -> list[BaseTool]:
         for t in loaded:
             if t.name not in allowed:
                 continue
+            if name == PLAYWRIGHT_SERVER:  # M2: browser_guard + fence, this server only
+                t = _wrap_playwright_tool(t)
             tools.append(gate_external(t, agent_id, f"mcp:{name}/{t.name}", side_effect=t.name not in read_only,
                                        sandboxed=sandboxed))
     return tools
@@ -119,5 +160,8 @@ async def call_mcp_tool(server: str, tool: str, args: dict[str, Any]) -> Any:
     client = MultiServerMCPClient({server: _connection(cfg)})
     for t in await client.get_tools():
         if t.name == tool:
+            if server == PLAYWRIGHT_SERVER:  # M2: same guard + fence as the live path, this server only
+                browser_guard.check_tool_call(t.name, args)
+                return fence(f"mcp:{PLAYWRIGHT_SERVER}/{t.name}", _stringify(await t.ainvoke(args)))
             return await t.ainvoke(args)
     raise ValueError(f"{server} has no tool {tool}")

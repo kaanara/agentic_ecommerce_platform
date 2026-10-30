@@ -135,7 +135,7 @@ def test_first_password_needs_no_current_one_and_turns_login_on(no_hash, monkeyp
     assert not auth.disabled() and auth.is_configured()
 
 
-@pytest.mark.parametrize("new,repeat,by,msg", [("short", "short", "kaan", "at least"), ("long enough pw", "different pw!!", "kaan", "match"),
+@pytest.mark.parametrize("new,repeat,by,msg", [("short", "short", "kaan", "at least"), ("long enough pw", "different pw!!", "kaan", "different"),
                                               ("long enough pw", "long enough pw", " ", "name")])
 def test_set_password_validation(no_hash, new, repeat, by, msg):
     with pytest.raises(ValueError, match=msg):
@@ -153,6 +153,8 @@ def test_changing_or_disabling_needs_the_current_password_and_is_rate_limited(wi
     for _ in range(auth.MAX_FAILURES):
         auth.confirm_password("nope", state)
     assert not auth.confirm_password("correct horse", state)  # locked out, even with the right one
+    with pytest.raises(ValueError, match="Wait"):  # the lockout gets its own message, with how long is left
+        auth.set_password("yet another secret", "yet another secret", "kaan", current="correct horse", state=state)
     auth.turn_login_off("kaan", "correct horse", {})
     assert auth.disabled()
     auth.turn_login_on("kaan")

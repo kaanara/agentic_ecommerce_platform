@@ -9,6 +9,7 @@ base = "light"
 primaryColor = "#1f5fbf"
 font = "sans-serif"
 baseRadius = "0.6rem"
+headingFontSizes = ["28px", "22px", "18px", "16px", "14px", "12px"]
 showSidebarBorder = true
 chartCategoricalColors = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
 

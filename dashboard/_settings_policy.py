@@ -11,7 +11,7 @@ import pandas as pd
 import streamlit as st
 import yaml
 
-from _common import step_up
+from _common import NEED_NAME, field_error, field_ok, step_up
 from aecom.config import get_settings
 from aecom.policy import versions as pv
 
@@ -34,6 +34,25 @@ def _rules_table(policy: dict) -> pd.DataFrame:
         rows.append({"tool": name, "tier": rule.get("tier", ""), "agents": ", ".join(rule.get("agents") or []) or "any",
                      "limits": limits, "reason": rule.get("reason", "")})
     return pd.DataFrame(rows)
+
+
+def _validation_status(yaml_text: str) -> tuple[bool, str]:
+    """Live feedback for the YAML editor: a parse error with its line number, a content problem, or the green
+    go-ahead - computed on every rerun (the editor lives outside any st.form), so Save can stay disabled until
+    the text is actually valid."""
+    try:
+        yaml.safe_load(yaml_text)
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None)
+        if mark is not None:
+            detail = getattr(exc, "problem", None) or str(exc).splitlines()[0]
+            return False, f"Problem near line {mark.line + 1}: {detail}"
+        return False, f"Invalid YAML: {exc}"
+    try:
+        pv.validate_yaml(yaml_text)
+    except ValueError as exc:
+        return False, str(exc)
+    return True, "Valid, ready to save."
 
 
 def _do_save(yaml_text: str, note: str, by: str, *, step_up_ok: bool) -> None:
@@ -89,7 +108,6 @@ def render_policy_tab(by: str) -> None:
     st.caption("The rules `aecom.policy.gate` evaluates before every tool call (tier, agent restriction, limits, "
               "budgets). Saving creates a new version and activates it; any version can be rolled back to. A change "
               "that loosens an existing rule needs your dashboard password again.")
-    _apply_pending_stepup()
 
     current = _effective_yaml()
     try:
@@ -109,16 +127,19 @@ def render_policy_tab(by: str) -> None:
     note = st.text_input("Note for this version", key="_policy_note", placeholder="why this change")
     if st.toggle("Show diff vs. the active version", key="_policy_show_diff"):
         st.code(_diff(current, edited) or "(no changes)", language="diff")
-    if st.button("Validate and save", key="_policy_save", icon=":material/save:"):
-        if not by:
-            st.warning("Enter your name in the sidebar before saving.")
-        else:
-            try:
-                pv.validate_yaml(edited)
-            except ValueError as exc:
-                st.error(str(exc))
-            else:
-                _do_save(edited, note, by, step_up_ok=False)
+    valid, status = _validation_status(edited)
+    if valid:
+        field_ok(status)
+    else:
+        field_error(status)
+    if st.button("Validate and save", key="_policy_save", icon=":material/save:", type="primary",
+                disabled=not (by and valid)):
+        _do_save(edited, note, by, step_up_ok=False)
+    if not by:
+        st.caption(NEED_NAME)
+    # The step-up prompt for a parked loosening save/activate lives right here, next to the YAML editor and the
+    # rollback picker below (not above the top-level tabs), so it appears where the owner is already looking.
+    _apply_pending_stepup()
 
     st.divider()
     st.subheader("Versions")
@@ -135,8 +156,7 @@ def render_policy_tab(by: str) -> None:
         st.caption("No other version to roll back to.")
         return
     choice = st.selectbox("Roll back to", list(others), key="_policy_rollback_choice")
-    if st.button("Activate this version", key="_policy_rollback_btn", icon=":material/history:"):
-        if not by:
-            st.warning("Enter your name in the sidebar before activating a version.")
-        else:
-            _do_activate(others[choice]["id"], by, step_up_ok=False)
+    if st.button("Activate this version", key="_policy_rollback_btn", icon=":material/history:", disabled=not by):
+        _do_activate(others[choice]["id"], by, step_up_ok=False)
+    if not by:
+        st.caption(NEED_NAME)

@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     backup_target: str | None = None
     # Customer download route (GET /download/{order_id}?token=...): off until the API has a public URL
     download_route_enabled: bool = False
+    # Optional read-only browser (Playwright MCP): per-run budgets enforced by aecom.browser_guard
+    browser_max_calls: int = 20
+    browser_max_navigations: int = 5
+    browser_max_calls_per_domain: int = 10
     # Accountant export (DATEV): numbers your accountant gives you; empty is fine for a first draft
     datev_berater_nr: str = ""
     datev_mandant_nr: str = ""

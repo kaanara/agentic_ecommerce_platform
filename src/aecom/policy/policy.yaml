@@ -78,10 +78,12 @@ budgets:                         # € of LLM spend per agent per day (checked b
   support: 3
   supply: 2
   sentinel: 3
+  engineer: 4
 
 company_settings_defaults:
   marketing_budget_month_eur: 1500
   vendor_budget_month_eur: 400
+  engineer_pr_daily_cap: 3        # E3: max PRs the Engineer may open per day (ops_settings overrides this)
 
 rules:
   # ---------------------------------------------------------------- read-only
@@ -134,6 +136,25 @@ rules:
     tier: T3
     agents: [sentinel]
     reason: "Correcting entry for the ledger: a human approves; it is appended (memo 'correction:'), never an edit."
+
+  # ---------------------------------------------------------------- E3: Engineer (aecom.engineer.tools)
+  # Containment is mostly in code, not the gate: aecom.engineer.workspace confines every path to the Engineer's
+  # own clone (never the live checkout) and enforces its write allow/deny list; aecom.engineer.github_api caps the
+  # diff size, scans for secrets and requires eng_run_tests to have passed on the exact commit being shipped. The
+  # gate only adds the usual escalation matrix on top: reads are T0, writes T2 (no numeric "limits" apply to a
+  # path/content pair - the allow/deny list in code is the real bound), tests T1, and opening a PR is T3, so it
+  # always goes to a human; eng_open_pr's own checks run only once that approval executes (same pattern as
+  # propose_correcting_entry above).
+  eng_read_file: {tier: T0, agents: [engineer]}
+  eng_list_files: {tier: T0, agents: [engineer]}
+  eng_search: {tier: T0, agents: [engineer]}
+  eng_diff: {tier: T0, agents: [engineer]}
+  eng_write_file: {tier: T2, agents: [engineer]}
+  eng_run_tests: {tier: T1, agents: [engineer]}
+  eng_open_pr:
+    tier: T3
+    agents: [engineer]
+    reason: "Opening a PR pushes a branch and calls the GitHub API; a human reviews the diff before it can run."
 
   # ---------------------------------------------------------------- store
   create_product: {tier: T1, agents: [store_ops]}
@@ -254,6 +275,30 @@ rules:
   mcp:aecom-store/*:
     tier: T3
     reason: "Any other aecom-store tool (create/activate/update_price, ...) needs a human until classified."
+
+  # M2: optional read-only browser (Playwright MCP, off until a human approves it). Budgets are enforced by
+  # aecom.browser_guard; everything that could act on a page or leave the sandbox is denied.
+  mcp:playwright/browser_navigate:
+    tier: T1
+    agents: [researcher]
+    limits: {max_calls_per_run: 20, max_navigations_per_run: 5, max_calls_per_domain_per_run: 10}
+    reason: "Read-only navigation; URL checks and budgets are enforced by aecom.browser_guard."
+  mcp:playwright/browser_snapshot: {tier: T1, agents: [researcher], limits: {max_calls_per_run: 20}}
+  mcp:playwright/browser_take_screenshot: {tier: T1, agents: [researcher], limits: {max_calls_per_run: 20}}
+  mcp:playwright/browser_click: {tier: T4}
+  mcp:playwright/browser_type: {tier: T4}
+  mcp:playwright/browser_fill_form: {tier: T4}
+  mcp:playwright/browser_press_key: {tier: T4}
+  mcp:playwright/browser_select_option: {tier: T4}
+  mcp:playwright/browser_file_upload: {tier: T4}
+  mcp:playwright/browser_evaluate: {tier: T4}
+  mcp:playwright/browser_run_code: {tier: T4}
+  mcp:playwright/browser_install: {tier: T4}
+  mcp:playwright/browser_drag: {tier: T4}
+  mcp:playwright/browser_hover: {tier: T4}
+  mcp:playwright/browser_handle_dialog: {tier: T4}
+  mcp:playwright/browser_tabs: {tier: T4}
+  mcp:playwright/*: {tier: T4}
 
   # ---------------------------------------------------------------- never by an agent
   delete_customer_data: {tier: T4}

@@ -51,7 +51,7 @@ def render_month_end_tab(by: str) -> None:
     st.markdown(month_end.numbers_text(data))
 
     if not by:
-        st.warning("Enter your name in the sidebar to create a report.")
+        st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
     elif st.button("Create report", key="_month_end_create_btn", type="primary", icon=":material/fact_check:"):
         _do_create(period, by)
 

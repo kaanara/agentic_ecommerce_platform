@@ -25,7 +25,7 @@ def _fact_line(facts: dict) -> str:
 
 def _save(decision_id: str, outcome: str, note: str, by: str) -> None:
     if not by:
-        st.warning("Enter your name in the sidebar before saving.")
+        st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
         return
     try:
         decision_review.record_review(decision_id, outcome, note, by)

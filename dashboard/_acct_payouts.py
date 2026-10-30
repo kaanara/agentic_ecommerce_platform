@@ -59,7 +59,7 @@ def _import_section(by: str) -> None:
     st.dataframe(preview, hide_index=True, width="stretch")
     if st.button("Import", key="_payout_import_btn", icon=":material/upload_file:"):
         if not by:
-            st.warning("Enter your name in the sidebar first.")
+            st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
             return
         try:
             result = payouts.import_csv(provider, text, by=by)
@@ -71,7 +71,7 @@ def _import_section(by: str) -> None:
 
 def _do_reconcile(payout_id: str, by: str) -> None:
     if not by:
-        st.warning("Enter your name in the sidebar first.")
+        st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
         return
     try:
         result = payouts.reconcile(payout_id, by)
@@ -87,7 +87,7 @@ def _do_reconcile(payout_id: str, by: str) -> None:
 
 def _do_reconcile_all(payout_ids: list[str], by: str) -> None:
     if not by:
-        st.warning("Enter your name in the sidebar first.")
+        st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
         return
     matched = mismatch = 0
     errors: list[str] = []

@@ -19,7 +19,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from aecom import envfile
+from aecom import backup_crypto, envfile
 from aecom.audit import audit
 from aecom.config import Settings, get_settings
 from aecom.db import AuditLog, Setting, now, session
@@ -32,6 +32,17 @@ VERSION_KEY = "config_version"
 SECTIONS = ("AI and models", "Budgets and costs", "Store and email", "Alerts and notifications", "Channels",
             "Chat", "Schedules", "Security", "Backups and updates", "Autonomy", "Advanced")
 
+# N4: the Settings page groups its (former 15) top-level tabs into 5, each with its own sections nested inside as
+# `st.tabs`. "Policy", "Agents", "History" and "Export / Import" are not registry sections (they have their own
+# dashboard/_settings_*.py partial or are built from history/export helpers below) but still need a home here.
+GROUPS: dict[str, tuple[str, ...]] = {
+    "Money and AI": ("AI and models", "Budgets and costs", "Store and email"),
+    "Channels and chat": ("Alerts and notifications", "Channels", "Chat"),
+    "Security and backups": ("Security", "Backups and updates"),
+    "Schedules and rules": ("Schedules", "Policy", "Agents", "Autonomy"),
+    "Advanced": ("Advanced", "History", "Export / Import"),
+}
+
 
 @dataclass(frozen=True)
 class Field:
@@ -39,7 +50,7 @@ class Field:
     section: str
     label: str
     help: str = ""
-    kind: str = "str"  # bool | int | float | str | enum | list | pair | schedule | time | secret | path
+    kind: str = "str"  # bool | int | float | str | url | enum | list | pair | schedule | time | secret | path
     storage: str = "config"  # config | env | secret | db | managed | readonly
     apply: str = "live"  # live | reload | restart
     risk: str = "normal"  # normal | sensitive | critical (critical = password again before saving)
@@ -106,7 +117,10 @@ _FIELDS: list[Field] = [
     _secret("lemonsqueezy_webhook_secret", "Store and email", "Lemon Squeezy webhook secret"),
     _secret("stripe_api_key", "Store and email", "Stripe API key", "Read-only key for fetching payouts (use a restricted key)."),
     _f("lemonsqueezy_store_id", "Store and email", "Lemon Squeezy store id", risk="sensitive"),
-    _f("lemonsqueezy_base_url", "Store and email", "Lemon Squeezy API URL", risk="sensitive"),
+    _f("lemonsqueezy_base_url", "Store and email", "Lemon Squeezy API URL", kind="url", risk="sensitive"),
+    _f("browser_max_calls", "AI and models", "Browser: calls per run", "Read-only browser (when approved): total tool calls an agent run may make.", kind="int", min=1, max=100),
+    _f("browser_max_navigations", "AI and models", "Browser: page visits per run", kind="int", min=1, max=50),
+    _f("browser_max_calls_per_domain", "AI and models", "Browser: calls per website per run", kind="int", min=1, max=50),
     _f("download_route_enabled", "Store and email", "Customer download route",
        "Serves GET /download/{order_id}?token=... for files stored on this machine. Needs a public URL.", "bool", risk="sensitive"),
     _f("datev_berater_nr", "Store and email", "DATEV consultant number", "From your accountant. Used by the accountant export."),
@@ -117,11 +131,11 @@ _FIELDS: list[Field] = [
     _f("lemonsqueezy_timeout_s", "Store and email", "Lemon Squeezy timeout (s)", kind="float", min=1, max=120),
     _f("license_key_source", "Store and email", "Licence key source", "mock mints fake keys (demo only); none = manual keys only.",
        "enum", choices=("mock", "none"), risk="sensitive"),
-    _f("download_base_url", "Store and email", "Download base URL", risk="sensitive"),
+    _f("download_base_url", "Store and email", "Download base URL", kind="url", risk="sensitive"),
     _f("download_link_days", "Store and email", "Download link validity (days)", kind="int", min=1, max=365),
     _secret("agentmail_api_key", "Store and email", "AgentMail API key", "Use the inbox-scoped key, not an org-wide one."),
     _secret("agentmail_webhook_secret", "Store and email", "AgentMail webhook secret"),
-    _f("agentmail_base_url", "Store and email", "AgentMail API URL", risk="sensitive"),
+    _f("agentmail_base_url", "Store and email", "AgentMail API URL", kind="url", risk="sensitive"),
     _f("agentmail_org_inbox", "Store and email", "AgentMail organisation inbox"),
     _f("agentmail_live", "Store and email", "Send real emails", "Off = emails stay in the local outbox.", "bool", risk="critical"),
     _secret("google_ads_refresh_token", "Store and email", "Google Ads refresh token"),
@@ -184,7 +198,7 @@ _FIELDS: list[Field] = [
     _f("company_dir", "Advanced", "Company directory", kind="path", storage="readonly"),
     _f("decisions_dir", "Advanced", "Decisions directory", kind="path", storage="readonly"),
     _f("policy_file", "Advanced", "Policy file", "Edit policy rules in the Policy tab.", "path", storage="readonly"),
-    _f("api_base_url", "Advanced", "API base URL", risk="sensitive"),
+    _f("api_base_url", "Advanced", "API base URL", kind="url", risk="sensitive"),
 ]
 
 FIELDS: dict[str, Field] = {f.key: f for f in _FIELDS}
@@ -192,6 +206,24 @@ assert len(FIELDS) == len(_FIELDS), "duplicate registry key"
 
 _overridden: set[str] = set()
 _seen_version: str | None = None
+
+# Shared, constructive validation hints (also used for live feedback on the Settings page, outside the field's
+# st.form, before the owner even clicks Save - see dashboard/app_pages/settings.py).
+SCHEDULE_HINT = ("Enter a schedule like 15m, 6h or 30s, or a cron expression like cron:30 3 * * * "
+                 "(minute hour day month weekday).")
+TIME_HINT = "Enter a 24-hour time like 03:15."
+URL_HINT = "Must start with http:// or https://."
+
+
+def range_message(field: Field) -> str:
+    """'Must be between {min} and {max}.' (or just a lower/upper bound when only one side is set)."""
+    if field.min is not None and field.max is not None:
+        return f"Must be between {field.min:g} and {field.max:g}."
+    if field.min is not None:
+        return f"Must be at least {field.min:g}."
+    if field.max is not None:
+        return f"Must be at most {field.max:g}."
+    return "Not a valid number."
 
 
 # --------------------------------------------------------------------------- values
@@ -206,17 +238,17 @@ def coerce(field: Field, raw: Any) -> Any:
                 return True
             if str(raw).strip().lower() in {"false", "0", "no", "off"}:
                 return False
-            raise ValueError("must be on or off")
+            raise ValueError("Choose on or off.")
         if k in ("int", "float"):
             val = int(str(raw).strip()) if k == "int" else float(str(raw).strip())
             if field.min is not None and val < field.min:
-                raise ValueError(f"must be at least {field.min:g}")
+                raise ValueError(range_message(field))
             if field.max is not None and val > field.max:
-                raise ValueError(f"must be at most {field.max:g}")
+                raise ValueError(range_message(field))
             return val
         if k == "enum":
             if str(raw) not in field.choices:
-                raise ValueError(f"must be one of: {', '.join(field.choices)}")
+                raise ValueError(f"Choose one of: {', '.join(field.choices)}.")
             return str(raw)
         if k == "list":
             items = raw if isinstance(raw, (list, tuple)) else str(raw).replace("\n", ",").split(",")
@@ -224,24 +256,31 @@ def coerce(field: Field, raw: Any) -> Any:
         if k == "pair":
             parts = raw if isinstance(raw, (list, tuple)) else str(raw).split(",")
             if len(parts) != 2:
-                raise ValueError("needs two numbers: input, output")
+                raise ValueError("Enter two numbers separated by a comma: input, output.")
             a, b = float(parts[0]), float(parts[1])
             if a < 0 or b < 0:
-                raise ValueError("must not be negative")
+                raise ValueError("Neither number can be negative.")
             return (a, b)
         if k == "schedule":
             if not is_valid_schedule(str(raw)):
-                raise ValueError("use 30s, 15m, 6h or cron:M H D M W")
+                raise ValueError(SCHEDULE_HINT)
             return str(raw).strip().lower()
         if k == "time":
             text = str(raw).strip()
             if text:
                 h, _, m = text.partition(":")
                 if not (h.isdigit() and m.isdigit() and 0 <= int(h) < 24 and 0 <= int(m) < 60 and len(m) == 2):
-                    raise ValueError("use HH:MM")
+                    raise ValueError(TIME_HINT)
+            return text
+        if k == "url":
+            text = str(raw).strip()
+            if not text.startswith(("http://", "https://")):
+                raise ValueError(URL_HINT)
+            if any(c in text for c in "\n\r\x00"):
+                raise ValueError("must be a single line")
             return text
         if k in ("path", "secret"):
-            raise ValueError("this value is not editable here")
+            raise ValueError("This value isn't editable from the dashboard.")
         text = str(raw).strip()
         if any(c in text for c in "\n\r\x00"):
             raise ValueError("must be a single line")
@@ -416,6 +455,9 @@ def set_value(key: str, raw: Any, by: str, *, step_up_ok: bool = False) -> Any:
         text = str(raw).strip()
         if not text or any(c in text for c in "\n\r\x00") or len(text) > 2000:
             raise ValueError(f"{f.label}: enter the value on one line")
+        if key == "backup_passphrase" and len(text) < backup_crypto.MIN_PASSPHRASE:
+            raise ValueError(f"{f.label}: use at least {backup_crypto.MIN_PASSPHRASE} characters, or encrypted "
+                             "backups made with it cannot be restored later.")
         envfile.set_values({f.env: text})
         if f.env in os.environ:  # a process-level variable would otherwise keep winning over the new .env value
             os.environ[f.env] = text

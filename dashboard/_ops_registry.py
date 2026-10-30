@@ -48,7 +48,7 @@ def render_grants_tab(by: str) -> None:
     note = st.text_input("Note (optional)", key=f"_grants_note_{agent_id}")
     if st.button("Revoke", key=f"_grants_revoke_{agent_id}", icon=":material/block:"):
         if not by:
-            st.warning("Enter your name in the sidebar first.")
+            st.warning("Enter your name in the sidebar first (on a phone, tap the \u00bb at the top left). It is recorded in the audit log.")
         else:
             confirm_dialog(f"Revoke {tool_name} from {agent_id}?",
                            "The agent loses this tool immediately. If it is still listed in the agent's TOOLS.md, "
