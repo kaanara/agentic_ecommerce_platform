@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 
-from aecom.config import ROOT
+from aecom import envfile
 
 
 class SecretsProvider:
@@ -16,7 +16,7 @@ class SecretsProvider:
 
     @staticmethod
     def _read_dotenv() -> dict[str, str]:
-        path = ROOT / ".env"
+        path = envfile.env_path()
         values: dict[str, str] = {}
         if path.exists():
             for line in path.read_text().splitlines():
@@ -28,6 +28,10 @@ class SecretsProvider:
 
     def get(self, name: str) -> str | None:
         return os.environ.get(name) or self._dotenv.get(name)
+
+    def reload(self) -> None:
+        """Re-read .env (after the Settings page changed it). A variable set in the process environment still wins."""
+        self._dotenv = self._read_dotenv()
 
     def has(self, name: str) -> bool:
         return bool(self.get(name))

@@ -76,6 +76,37 @@ class Settings(BaseSettings):
     # --- API -----------------------------------------------------------------
     api_base_url: str = "http://127.0.0.1:8000"
 
+    # --- Chat and owner messaging (all editable in the dashboard: Settings) ----
+    chat_agents: list[str] = ["ceo", "finance", "researcher", "sentinel", "foreman"]
+    chat_history_turns: int = 12          # last N turns sent to the model; older ones are folded into a summary
+    chat_daily_cap_share: float = 0.5     # chat may use at most this share of an agent's daily budget
+    chat_retention_days: int = 90         # conversations idle longer than this are deleted (0 = keep forever)
+    chat_max_attachment_mb: int = 5
+    owner_message_daily_limit: int = 5    # message_owner calls per agent per day
+    quiet_hours_start: str = ""           # "22:00"; empty = no quiet hours (P1 alerts ignore them)
+    quiet_hours_end: str = ""
+    dashboard_idle_hours: float = 12.0    # a dashboard session is signed out after this long idle
+    telegram_enabled: bool = False        # bot token is the secret TELEGRAM_BOT_TOKEN
+    whatsapp_enabled: bool = False        # WHATSAPP_* secrets; needs a public webhook (Cloudflare Tunnel)
+
+    # --- Backups: started and scheduled from the dashboard (the scheduler runs them) ----
+    backup_enabled: bool = True
+    backup_schedule: str = "cron:15 3 * * *"
+    backup_verify_after: bool = True
+
+    # --- Job schedules (see aecom.schedule_spec: "30s", "15m", "6h" or "cron:M H DOM MON DOW") ----
+    schedule_drain: str = "30s"
+    schedule_stock_check: str = "60m"
+    schedule_reconcile: str = "15m"
+    schedule_monitors: str = "5m"
+    schedule_provisioning: str = "15m"
+    schedule_expire_approvals: str = "30m"
+    schedule_sync_store_catalog: str = "6h"
+    schedule_poll_email: str = "60s"
+    schedule_finance_daily: str = "cron:0 7 * * *"
+    schedule_weekly_review: str = "cron:0 8 * * 1"
+    schedule_governance_report: str = "cron:30 7 1 * *"
+
     # Paths
     agents_dir: Path = ROOT / "agents"
     company_dir: Path = ROOT / "company"

@@ -118,3 +118,72 @@ def test_disabled_login_shows_a_warning_and_skips_the_gate():
     gate = src[src.index("def require_login"):]
     assert gate.index("dashboard_auth.disabled()") < gate.index("is_configured()")  # explicit opt-out checked first
     assert "st.warning" in gate[:gate.index("is_configured()")]
+
+
+# --- login managed from the dashboard (database wins over .env) -------------------------------------------------
+def test_database_mode_and_hash_win_over_env(with_hash):
+    assert not auth.disabled() and auth.verify_password("correct horse")
+    auth.set_password("a much longer secret", "a much longer secret", "kaan", current="correct horse", state={})
+    assert auth.verify_password("a much longer secret") and not auth.verify_password("correct horse")
+    assert not auth.disabled()
+
+
+def test_first_password_needs_no_current_one_and_turns_login_on(no_hash, monkeypatch):
+    monkeypatch.setenv("DASHBOARD_AUTH", "off")
+    assert auth.disabled() and not auth.is_configured()
+    auth.set_password("twelve chars ok", "twelve chars ok", "kaan")
+    assert not auth.disabled() and auth.is_configured()
+
+
+@pytest.mark.parametrize("new,repeat,by,msg", [("short", "short", "kaan", "at least"), ("long enough pw", "different pw!!", "kaan", "match"),
+                                              ("long enough pw", "long enough pw", " ", "name")])
+def test_set_password_validation(no_hash, new, repeat, by, msg):
+    with pytest.raises(ValueError, match=msg):
+        auth.set_password(new, repeat, by)
+    assert not auth.is_configured()
+
+
+def test_changing_or_disabling_needs_the_current_password_and_is_rate_limited(with_hash):
+    state = {}
+    with pytest.raises(ValueError, match="current"):
+        auth.set_password("a much longer secret", "a much longer secret", "kaan", current="nope", state=state)
+    with pytest.raises(ValueError, match="current"):
+        auth.turn_login_off("kaan", "nope", state)
+    assert not auth.disabled()
+    for _ in range(auth.MAX_FAILURES):
+        auth.confirm_password("nope", state)
+    assert not auth.confirm_password("correct horse", state)  # locked out, even with the right one
+    auth.turn_login_off("kaan", "correct horse", {})
+    assert auth.disabled()
+    auth.turn_login_on("kaan")
+    assert not auth.disabled()
+
+
+def test_turn_on_without_password_is_refused(no_hash):
+    with pytest.raises(ValueError, match="password first"):
+        auth.turn_login_on("kaan")
+
+
+def test_shell_reset_needs_no_current_password(with_hash):
+    auth.reset_password_local("recovered password!")
+    assert auth.verify_password("recovered password!") and not auth.disabled()
+
+
+def test_changes_are_audited_without_the_password(with_hash):
+    from sqlalchemy import select
+
+    from aecom.db import AuditLog, session
+
+    auth.set_password("a much longer secret", "a much longer secret", "kaan", current="correct horse", state={})
+    with session() as s:
+        rows = list(s.scalars(select(AuditLog).where(AuditLog.action == "dashboard_login_password_set")))
+    assert rows and rows[0].actor == "human:kaan" and "secret" not in str(rows[0].detail)
+
+
+def test_idle_timeout():
+    state = {}
+    assert not auth.idle_expired(state, 12)
+    auth.touch(state, now=lambda: 1000.0)
+    assert not auth.idle_expired(state, 12, now=lambda: 1000.0 + 11 * 3600)
+    assert auth.idle_expired(state, 12, now=lambda: 1000.0 + 13 * 3600)
+    assert not auth.idle_expired(state, 0, now=lambda: 1e9)
