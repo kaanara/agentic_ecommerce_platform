@@ -486,7 +486,7 @@ class Job(Base):
 
     __tablename__ = "ops_jobs"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: new_id("job"))
-    kind: Mapped[str] = mapped_column(String, index=True)  # backup | verify | restore | doctor
+    kind: Mapped[str] = mapped_column(String, index=True)  # backup | verify | restore | doctor | update
     status: Mapped[str] = mapped_column(String, default="queued")  # queued | running | ok | error
     requested_by: Mapped[str] = mapped_column(String, default="")
     params: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

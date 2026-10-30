@@ -25,6 +25,12 @@ SERVICES=(aecom-scheduler aecom-api aecom-dashboard)
 
 say() { printf '[update] %s\n' "$*"; }
 
+# Best-effort: the Health page reads this back (ops_jobs, kind "doctor" - see `aecom update-status`'s own comment
+# for why). Never allowed to fail or change update.sh's own exit code, so every call is `|| true`.
+record_status() { # record_status STATUS STAGE FROM TO
+  uv run aecom update-status record --status "$1" --stage "$2" --from "$3" --to "$4" >/dev/null 2>&1 || true
+}
+
 svc() { # svc start|stop
   [ "$SYSTEMD" -eq 1 ] || return 0
   local s rc=0
@@ -61,6 +67,7 @@ fi
 # ---------------------------------------------------------------- real update
 if [ "$FORCE" -eq 0 ] && [ -n "$(git status --porcelain)" ]; then
   say "working tree is dirty; commit/stash your changes or pass --force" >&2
+  record_status failed "preflight" "$(git rev-parse --short HEAD)" "$(git rev-parse --short HEAD)"
   exit 1
 fi
 
@@ -94,14 +101,17 @@ rollback() {
     say "ROLLBACK INCOMPLETE; services left STOPPED. Problems:" >&2
     printf '[update]   - %s\n' "${problems[@]}" >&2
     say "backup: ${BACKUP_PATH:-none}; database: $restored; fix by hand, then start the aecom-* services" >&2
+    record_status failed "$STAGE" "${FROM_COMMIT:0:7}" "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
     exit 1
   fi
   if ! svc start; then
     say "ROLLED BACK to ${FROM_COMMIT:0:7} but starting the services FAILED; start them by hand" >&2
     say "backup: ${BACKUP_PATH:-none}; database: $restored; doctor: $DOCTOR" >&2
+    record_status rolled-back "$STAGE" "${FROM_COMMIT:0:7}" "${FROM_COMMIT:0:7}"
     exit 1
   fi
   say "ROLLED BACK to ${FROM_COMMIT:0:7}; backup: ${BACKUP_PATH:-none}; database: $restored; doctor: $DOCTOR" >&2
+  record_status rolled-back "$STAGE" "${FROM_COMMIT:0:7}" "${FROM_COMMIT:0:7}"
   exit 1
 }
 
@@ -111,6 +121,7 @@ STAGE="stopping services"
 if ! svc stop; then
   say "could not stop services; aborting without changes" >&2
   svc start || true
+  record_status failed "$STAGE" "${FROM_COMMIT:0:7}" "${FROM_COMMIT:0:7}"
   exit 1
 fi
 
@@ -126,6 +137,7 @@ STAGE="backup"
 if ! OUT=$(uv run aecom backup --label pre-update); then
   say "backup failed; aborting before any change" >&2
   svc start || true
+  record_status failed "$STAGE" "${FROM_COMMIT:0:7}" "${FROM_COMMIT:0:7}"
   exit 1
 fi
 BACKUP_PATH=$(printf '%s\n' "$OUT" | tail -n 1)
@@ -155,6 +167,7 @@ fi
 trap - ERR
 if ! svc start; then
   say "doctor passed but starting the services FAILED; start them by hand (database NOT rolled back)" >&2
+  record_status failed "starting services" "${FROM_COMMIT:0:7}" "$(git rev-parse --short HEAD)"
   exit 1
 fi
 OK=0
@@ -164,6 +177,8 @@ for _ in $(seq 1 12); do
 done
 if [ "$OK" -ne 1 ]; then
   say "services started but doctor FAILED within 60 s. NOT rolling back: the database now holds new orders. Run 'uv run aecom doctor', check the logs; backup: $BACKUP_PATH" >&2
+  record_status failed "post-start doctor" "${FROM_COMMIT:0:7}" "$(git rev-parse --short HEAD)"
   exit 1
 fi
 say "summary: ${FROM_COMMIT:0:7} -> $(git rev-parse --short HEAD); backup: $BACKUP_PATH; doctor: $DOCTOR"
+record_status success "done" "${FROM_COMMIT:0:7}" "$(git rev-parse --short HEAD)"

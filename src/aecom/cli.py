@@ -32,6 +32,9 @@
     aecom autonomy promote|demote TOOL --by NAME [--reason TEXT]   evidence-gated promotion / demotion to stage 1
     aecom autonomy log [--days N]          stage changes and autonomous actions
     aecom doctor [--json]                  health report (paste into an issue); exit 1 if any check fails
+    aecom update-status record --status success|rolled-back|failed --stage NAME --from REV --to REV
+                                            record the outcome of a scripts/update.sh run (ops_jobs); best-effort,
+                                            called by update.sh itself - never run this by hand except to test it
     aecom agentmail keys|create-key NAME|inboxes   (admin, uses AGENTMAIL_API_KEY)
     aecom agentmail poll                   fetch unread inbound mail → Support (same as the scheduler job)
 """
@@ -184,6 +187,12 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--note", default="")
     s = sub.add_parser("doctor")
     s.add_argument("--json", action="store_true", help="machine-readable report")
+    s = sub.add_parser("update-status")
+    s.add_argument("action", choices=["record"])
+    s.add_argument("--status", choices=["success", "rolled-back", "failed"], required=True)
+    s.add_argument("--stage", default="", help="the step update.sh was on (e.g. 'git pull', 'doctor')")
+    s.add_argument("--from", dest="from_rev", default="", help="git revision before the update attempt")
+    s.add_argument("--to", dest="to_rev", default="", help="git revision after the update attempt")
     s = sub.add_parser("scheduler")
     s.add_argument("--demo", action="store_true")
     s = sub.add_parser("api")
@@ -423,6 +432,11 @@ def main(argv: list[str] | None = None) -> None:
         code = backup.run_cli(a.action, a.path, label=a.label, dest=a.dest, yes=a.yes)
         if code:
             sys.exit(code)
+    elif a.cmd == "update-status":
+        from aecom import jobs
+
+        result = {"status": a.status, "stage": a.stage, "from": a.from_rev, "to": a.to_rev}
+        jobs.record("update", "update.sh", result, status=a.status)
     elif a.cmd == "monitors":
         from aecom.monitors import run_monitors
 

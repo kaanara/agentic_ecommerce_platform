@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from _common import empty_state, kpi_row, mask_df, page_header, require_login, reviewer_name, sql
-from aecom import backup, doctor, incidents
+from aecom import backup, doctor, incidents, jobs
 from aecom.bus.events import dead_letters, retry
 from aecom.bus.events import status as bus_status
 
@@ -177,6 +177,12 @@ with tab_backup:
 
     st.subheader("Deployment")
     kpi_row([("Deployed revision", doctor.version())])
-    st.caption("The last `scripts/update.sh` result is not written to the database. Check the systemd journal "
-              "(`journalctl -u aecom-dashboard`) on the machine, or run `scripts/update.sh --check` for a dry run "
-              "listing any commits not yet deployed.")
+    last = (jobs.list_jobs(kind="update", limit=1) or [None])[0]
+    if last is None:
+        st.caption("No `scripts/update.sh` run has been recorded yet. Run `scripts/update.sh --check` on the machine "
+                   "for a dry run listing any commits not yet deployed.")
+    else:
+        res = last["result"] or {}
+        kpi_row([("Last update", str(res.get("status", last["status"]))), ("Stopped at", res.get("stage") or "-"),
+                 ("From", res.get("from") or "-"), ("To", res.get("to") or "-")])
+        st.caption(f"Recorded {last['finished_at']:%Y-%m-%d %H:%M} UTC.")

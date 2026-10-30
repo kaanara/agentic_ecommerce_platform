@@ -18,7 +18,7 @@ from aecom.db import Job, now, session
 
 log = logging.getLogger(__name__)
 
-KINDS = ("backup", "verify", "restore", "doctor")
+KINDS = ("backup", "verify", "restore", "doctor", "update")
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
 _handlers: dict[str, Handler] = {}
 
