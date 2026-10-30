@@ -77,7 +77,7 @@ Not yet in the governance data: who switched the kill switch or the agent pause.
 `set_setting` and only appear once that writes an audit row (safe mode already does).
 
 ## Reports page, API and exports
-- **Dashboard → Reports** (`dashboard/pages/5_Reports.py`, behind the login): pick a kind, see every version with its
+- **Dashboard → Reports** (`dashboard/app_pages/reports.py`, behind the login): pick a kind, see every version with its
   period, author, time and hash, read the text and the flattened data, and download **Markdown** (text plus a
   key/value table of the data, `reports.to_markdown`) or **CSV** (`key,value` rows, `reports.to_csv`). Nested data is
   flattened to dotted keys with list indexes, e.g. `products.0.refund_rate_pct`.

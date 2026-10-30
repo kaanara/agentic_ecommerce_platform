@@ -4,7 +4,6 @@ import streamlit as st
 from _common import require_login
 from aecom import reports
 
-st.set_page_config(page_title="Reports", page_icon="🗂️", layout="wide")
 require_login()
 st.title("🗂️ Reports")
 st.caption("Immutable snapshots: code computes the numbers, agents only write the commentary. A correction is a new "

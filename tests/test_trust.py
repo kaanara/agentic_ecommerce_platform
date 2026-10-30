@@ -307,7 +307,7 @@ def test_governance_controls_include_stage_changes():
 
 
 def test_trust_page_requires_login_first():
-    page = Path(__file__).resolve().parents[1] / "dashboard" / "pages" / "6_Trust.py"
+    page = Path(__file__).resolve().parents[1] / "dashboard" / "app_pages" / "trust.py"
     src = page.read_text()
     for stmt in ast.parse(src).body:
         if isinstance(stmt, ast.Import | ast.ImportFrom):

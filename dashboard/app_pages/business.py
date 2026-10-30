@@ -5,7 +5,6 @@ from _common import colors, require_login, sql
 from aecom import ledger
 from aecom.tools.catalog import get_kpis
 
-st.set_page_config(page_title="Business", page_icon="📊", layout="wide")
 require_login()
 st.title("📊 Business")
 

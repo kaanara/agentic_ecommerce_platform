@@ -4,8 +4,35 @@
     {
       "name": "dashboard",
       "runtimeExecutable": "uv",
-      "runtimeArgs": ["run", "streamlit", "run", "dashboard/Home.py", "--server.headless", "true", "--server.port", "8501"],
+      "runtimeArgs": [
+        "run",
+        "streamlit",
+        "run",
+        "dashboard/Home.py",
+        "--server.headless",
+        "true",
+        "--server.port",
+        "8501"
+      ],
       "port": 8501
+    },
+    {
+      "name": "dashboard-preview",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "DATABASE_URL=sqlite:////tmp/aecom_preview.db",
+        "LLM_MODE=scripted",
+        "uv",
+        "run",
+        "streamlit",
+        "run",
+        "dashboard/Home.py",
+        "--server.headless",
+        "true",
+        "--server.port",
+        "8502"
+      ],
+      "port": 8502
     }
   ]
 }

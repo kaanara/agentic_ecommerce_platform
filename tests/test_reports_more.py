@@ -207,7 +207,7 @@ def test_send_report_emails_markdown_or_only_stores(week, monkeypatch):
 
 
 def test_reports_page_requires_login_first():
-    page = Path(__file__).resolve().parents[1] / "dashboard" / "pages" / "5_Reports.py"
+    page = Path(__file__).resolve().parents[1] / "dashboard" / "app_pages" / "reports.py"
     tree = ast.parse(page.read_text())
     for stmt in tree.body:
         if isinstance(stmt, ast.Import | ast.ImportFrom):

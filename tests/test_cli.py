@@ -125,3 +125,22 @@ def test_registry_revoke_errors_exit_2(capsys):
             cli.main(argv)
         assert e.value.code == 2
         assert msg in capsys.readouterr().err
+
+
+def test_dashboard_reset_password(monkeypatch, capsys):
+    from aecom import cli, dashboard_auth
+
+    answers = iter(["a brand new password", "a brand new password"])
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": next(answers))
+    assert cli.main(["dashboard", "reset-password"]) == 0
+    assert dashboard_auth.verify_password("a brand new password") and not dashboard_auth.disabled()
+    assert "brand new" not in capsys.readouterr().out
+
+
+def test_dashboard_reset_password_mismatch_changes_nothing(monkeypatch):
+    from aecom import cli, dashboard_auth
+
+    answers = iter(["a brand new password", "something else!!"])
+    monkeypatch.setattr("getpass.getpass", lambda prompt="": next(answers))
+    assert cli.main(["dashboard", "reset-password"]) == 1
+    assert not dashboard_auth.verify_password("a brand new password")

@@ -19,7 +19,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "apscheduler>=3.10,<4",
-    "streamlit>=1.38",
+    "streamlit>=1.65",
     "pandas>=2.2",
     "alembic>=1.13",
 ]

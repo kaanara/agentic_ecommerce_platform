@@ -70,7 +70,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sentry-sdk", marker = "extra == 'observability'", specifier = ">=2.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
-    { name = "streamlit", specifier = ">=1.38" },
+    { name = "streamlit", specifier = ">=1.65" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 provides-extras = ["postgres", "observability"]

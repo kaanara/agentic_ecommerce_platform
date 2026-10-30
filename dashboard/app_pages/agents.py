@@ -5,7 +5,6 @@ from _common import AGENT_ORDER, colors, mask_df, require_login, sql
 from aecom import run_detail
 from aecom.company_settings import agent_enabled, set_agent_enabled
 
-st.set_page_config(page_title="Agents", page_icon="🤖", layout="wide")
 require_login()
 st.title("🤖 Agents")
 
@@ -25,7 +24,7 @@ def running_now_panel() -> None:
     df = pd.DataFrame(rows)
     df.insert(0, "state", df["stuck"].map({True: "🔴 stuck", False: "🟢 running"}))
     df["age_min"] = (df["age_s"] / 60).round(1)
-    df["detail"] = "/Run_Detail?run_id=" + df["run_id"]
+    df["detail"] = "/run?run_id=" + df["run_id"]
     st.dataframe(df[["state", "agent_id", "age_min", "steps", "tool_calls", "cost_eur", "task", "run_id", "started_at",
                      "detail"]], hide_index=True, width="stretch",
                  column_config={"detail": st.column_config.LinkColumn("detail", display_text="open")})

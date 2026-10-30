@@ -5,7 +5,6 @@ from _common import mask_df, require_login, sql
 from aecom import run_detail
 from aecom.observability import mask
 
-st.set_page_config(page_title="Run detail", page_icon="🔎", layout="wide")
 require_login()
 st.title("🔎 Run detail")
 st.caption("Everything recorded for one run: agent runs, tool calls, approvals, audit entries, errors, decisions and "
@@ -68,7 +67,7 @@ for _, a in apr.iterrows():
         if txt(a["result"]):
             st.code(txt(a["result"]))
 if (apr["status"] == "pending").any():
-    st.markdown("✅ [Decide pending approvals](/Approvals)")
+    st.markdown("✅ [Decide pending approvals](/approvals)")
 
 st.subheader("Errors")
 err = sql("""SELECT id, ts, component, exc_type, message, traceback FROM ops_errors WHERE run_id = :r ORDER BY id""",

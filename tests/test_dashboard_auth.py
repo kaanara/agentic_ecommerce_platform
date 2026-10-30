@@ -9,7 +9,7 @@ from aecom import dashboard_auth as auth
 from aecom.secrets import secrets
 
 DASHBOARD = Path(__file__).resolve().parents[1] / "dashboard"
-PAGES = [DASHBOARD / "Home.py", *sorted((DASHBOARD / "pages").glob("*.py"))]
+PAGES = [DASHBOARD / "Home.py", *sorted((DASHBOARD / "app_pages").glob("*.py"))]
 
 
 @pytest.fixture

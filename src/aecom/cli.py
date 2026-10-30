@@ -159,6 +159,8 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--host", default=None, help="address to listen on (default: Streamlit's default, all interfaces); "
                                                 "use 127.0.0.1 and reach it through Tailscale or an SSH tunnel")
     s.add_argument("--port", type=int, default=None)
+    s.add_argument("action", nargs="?", choices=["reset-password"],
+                   help="reset-password: set a new dashboard password from this machine and turn the login on")
     s = sub.add_parser("mcp")
     s.add_argument("domain", choices=["store", "marketing", "finance", "registry", "all"])
     s = sub.add_parser("agentmail")
@@ -175,13 +177,31 @@ def main(argv: list[str] | None = None) -> None:
         import uvicorn
 
         return uvicorn.run("aecom.api.app:app", host="127.0.0.1", port=a.port)
+    if a.cmd == "dashboard" and getattr(a, "action", None) == "reset-password":
+        import getpass
+
+        from aecom import dashboard_auth
+        from aecom.bootstrap import init
+
+        init()
+        pw = getpass.getpass("New dashboard password (min 12 characters): ")
+        if pw != getpass.getpass("Repeat: "):
+            print("Passwords do not match; nothing changed.", file=sys.stderr)
+            return 1
+        try:
+            dashboard_auth.reset_password_local(pw)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print("Dashboard password set and the login turned on.")
+        return 0
     if a.cmd == "dashboard":
         cmd = [sys.executable, "-m", "streamlit", "run", str(ROOT / "dashboard" / "Home.py")]
         if a.host:
             cmd += ["--server.address", a.host]
         if a.port:
             cmd += ["--server.port", str(a.port)]
-        sys.exit(subprocess.call(cmd))
+        sys.exit(subprocess.call(cmd, cwd=ROOT))  # cwd: Streamlit reads .streamlit/config.toml (the theme) from there
     if a.cmd == "scheduler":
         from aecom.scheduler import main as sched_main
 

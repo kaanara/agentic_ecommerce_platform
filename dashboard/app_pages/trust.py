@@ -4,7 +4,6 @@ import streamlit as st
 from _common import require_login
 from aecom import trust
 
-st.set_page_config(page_title="Trust", page_icon="🤝", layout="wide")
 require_login()
 st.title("🤝 Trust")
 st.caption("Autonomy is earned per action and lost automatically. A promotion raises only the per-call limits of one "

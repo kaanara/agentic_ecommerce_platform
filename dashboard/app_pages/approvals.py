@@ -6,7 +6,6 @@ from _common import require_login, sql
 from aecom import approvals
 from aecom.bus.events import drain
 
-st.set_page_config(page_title="Approvals", page_icon="✅", layout="wide")
 require_login()
 st.title("✅ Human-in-the-loop approvals")
 st.caption("When you approve, the agent's call runs **exactly** as shown (including any args you edit). "

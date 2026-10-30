@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, NamedTuple
 
 import pandas as pd
 import streamlit as st
@@ -16,24 +16,60 @@ from aecom.bootstrap import init
 from aecom.db import get_engine
 
 # Reference categorical palette (dataviz skill), fixed order — never cycled. Slots 1-3 are safe for any chart form.
+# Keep in step with chartCategoricalColors in .streamlit/config.toml.
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
-AGENT_ORDER = ["ceo", "researcher", "judge", "foreman", "finance", "store_ops", "marketing", "support", "supply"]
+
+
+def _agent_order() -> list[str]:
+    from aecom.persona.loader import agent_ids
+
+    preferred = ["ceo", "researcher", "judge", "foreman", "finance", "store_ops", "marketing", "support", "supply", "sentinel"]
+    ids = list(agent_ids())
+    return [a for a in preferred if a in ids] + [a for a in ids if a not in preferred]
+
+
+AGENT_ORDER = _agent_order()
+
+
+class Kpi(NamedTuple):
+    label: str
+    value: Any
+    delta: str | None = None
+    help: str | None = None
+
+
+def _first_gate_call_this_run() -> bool:
+    """True the first time require_login() runs in a script run. The entrypoint (Home.py) and every page call it, so
+    the second call must stay silent (no duplicate warning, no duplicate widget)."""
+    from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+    ctx = get_script_run_ctx()
+    marker = id(ctx) if ctx is not None else None
+    if marker is not None and st.session_state.get("_gate_run") == marker:
+        return False
+    st.session_state["_gate_run"] = marker
+    return True
 
 
 def require_login() -> None:
-    """Gate every page: call right after st.set_page_config, before any query or button. Fails closed."""
+    """Gate every page: call right after st.set_page_config (entrypoint) or first thing in a page, before any query or
+    button. Safe to call twice per run (entrypoint + page). Fails closed."""
+    first = _first_gate_call_this_run()
     if dashboard_auth.disabled():
-        st.warning("⚠️ Dashboard login is disabled (DASHBOARD_AUTH=off). Anyone who can reach this page can approve "
-                   "actions and use the kill switch. Keep it off your network, or remove DASHBOARD_AUTH=off from .env.")
+        if first:
+            st.warning("Dashboard login is off. Anyone who can reach this page can approve actions and use the kill "
+                       "switch. Chat is disabled while the login is off. Turn it on in Settings > Security.",
+                       icon=":material/lock_open:")
         _boot()
         return
     if not dashboard_auth.is_configured():
         st.error("Dashboard login is not configured, so nothing is shown.")
-        st.markdown(f"Run `uv run python -m aecom.dashboard_auth`, paste the printed `{dashboard_auth.ENV_VAR}=...` "
-                    "line into `.env`, and restart `uv run aecom dashboard`.")
+        st.markdown("Run `uv run aecom dashboard reset-password` on the machine, or set "
+                    f"`{dashboard_auth.ENV_VAR}` in `.env` (create it with `uv run python -m aecom.dashboard_auth`), "
+                    "then reload this page.")
         st.stop()
     if not st.session_state.get("authenticated"):
-        st.title("🔒 Log in")
+        st.title(":material/lock: Log in")
         wait = dashboard_auth.locked_out(st.session_state)
         with st.form("login"):
             password = st.text_input("Password", type="password")
@@ -42,11 +78,20 @@ def require_login() -> None:
             st.warning(f"Too many wrong attempts. Try again in {wait:.0f} s.")
         elif submitted:
             if dashboard_auth.attempt_login(password, st.session_state):
+                dashboard_auth.touch(st.session_state)
                 st.rerun()
             st.error("Wrong password.")
         st.stop()
-    if st.sidebar.button("Log out"):
+    from aecom.config import get_settings
+
+    if dashboard_auth.idle_expired(st.session_state, get_settings().dashboard_idle_hours):
         st.session_state["authenticated"] = False
+        st.session_state["_stepup_until"] = 0.0
+        st.rerun()
+    dashboard_auth.touch(st.session_state)
+    if first and st.sidebar.button("Log out", icon=":material/logout:", key="logout"):
+        st.session_state["authenticated"] = False
+        st.session_state["_stepup_until"] = 0.0
         st.rerun()
     _boot()  # pages may call domain modules (approvals, ledger) before their first sql()
 
@@ -87,3 +132,131 @@ def mask_df(df: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
         if col in out.columns:
             out[col] = out[col].map(_mask_cell)
     return out
+
+
+# --------------------------------------------------------------------------- layout helpers (shared by every page)
+def page_header(title: str, icon: str, subtitle: str | None = None) -> None:
+    """Page title with a Material icon (name without colons, e.g. "dashboard") and an optional caption."""
+    st.title(f":material/{icon}: {title}")
+    if subtitle:
+        st.caption(subtitle)
+
+
+def kpi_row(items: Iterable[Kpi | tuple]) -> None:
+    """A wrapping row of bordered metrics. Items: Kpi(label, value, delta=None, help=None) or plain tuples."""
+    row = st.container(horizontal=True)
+    for item in items:
+        k = item if isinstance(item, Kpi) else Kpi(*item)
+        row.metric(k.label, k.value, k.delta, help=k.help, border=True)
+
+
+def empty_state(icon: str, title: str, hint: str = "") -> None:
+    """A bordered 'nothing here yet' box instead of an empty table."""
+    with st.container(border=True):
+        st.markdown(f"#### :material/{icon}: {title}")
+        if hint:
+            st.caption(hint)
+
+
+_BADGE = {"ok": "green", "approved": "green", "complete": "green", "delivered": "green", "resolved": "green", "active": "green",
+          "pending": "orange", "running": "orange", "queued": "orange", "warn": "orange", "open": "orange", "info": "blue",
+          "rejected": "red", "error": "red", "fail": "red", "failed": "red", "expired": "gray", "disabled": "gray"}
+
+
+def status_badge(status: str, label: str | None = None) -> None:
+    st.badge(label or status, color=_BADGE.get(str(status).lower(), "gray"))
+
+
+def reviewer_name() -> str:
+    """The owner's name for audit trails. One sidebar input (rendered by the navigation) shared by every page."""
+    return str(st.session_state.get("reviewer_name", "")).strip()
+
+
+def agent_spec(agent_id: str) -> dict[str, str]:
+    from aecom.persona.loader import load_spec
+
+    try:
+        ident = load_spec(agent_id).identity
+    except Exception:  # noqa: BLE001 - an unknown id must never break a page
+        ident = {}
+    return {"name": str(ident.get("display_name") or agent_id.replace("_", " ").title()),
+            "emoji": str(ident.get("emoji") or ""), "color": str(ident.get("color") or "")}
+
+
+def agent_avatar(agent_id: str) -> str:
+    return agent_spec(agent_id)["emoji"] or ":material/smart_toy:"
+
+
+def agent_label(agent_id: str) -> str:
+    spec = agent_spec(agent_id)
+    return f"{spec['emoji']} {spec['name']}".strip()
+
+
+def confirm_dialog(title: str, body: str, on_confirm: Callable[[], None], *, confirm_label: str = "Confirm",
+                   type_to_confirm: str | None = None) -> None:
+    """Open a modal. Call it from `if st.button(...):`. `on_confirm` runs only after the owner confirms (and, for
+    dangerous actions, typed ``type_to_confirm``)."""
+
+    @st.dialog(title)
+    def _dialog() -> None:
+        st.markdown(body)
+        ok = True
+        if type_to_confirm:
+            ok = st.text_input(f"Type {type_to_confirm} to confirm") == type_to_confirm
+        row = st.container(horizontal=True)
+        if row.button(confirm_label, type="primary", disabled=not ok):
+            on_confirm()
+            st.rerun()
+        if row.button("Cancel"):
+            st.rerun()
+
+    _dialog()
+
+
+STEP_UP_SECONDS = 300
+
+
+def step_up(reason: str, key: str = "stepup") -> bool:
+    """True when the owner re-entered the dashboard password in the last 5 minutes. Otherwise renders a password box
+    and returns False. Critical settings (secrets, the login itself, policy loosening) require this."""
+    import time
+
+    if dashboard_auth.disabled() or not dashboard_auth.is_configured():
+        st.warning("Turn on the dashboard login (Settings > Security) before changing this.")
+        return False
+    if float(st.session_state.get("_stepup_until", 0.0)) > time.time():
+        return True
+    with st.form(f"{key}_form"):
+        st.caption(reason)
+        password = st.text_input("Dashboard password", type="password", key=f"{key}_pw")
+        go = st.form_submit_button("Confirm password")
+    wait = dashboard_auth.locked_out(st.session_state)
+    if wait > 0:
+        st.warning(f"Too many wrong attempts. Try again in {wait:.0f} s.")
+    elif go:
+        if dashboard_auth.confirm_password(password, st.session_state):
+            st.session_state["_stepup_until"] = time.time() + STEP_UP_SECONDS
+            st.rerun()
+        st.error("Wrong password.")
+    return False
+
+
+def refresh_settings() -> None:
+    """Pick up settings another process changed (config_version); cheap, call once per run from the entrypoint."""
+    from aecom import settings_registry
+
+    settings_registry.refresh_if_changed()
+
+
+# column_config shortcuts, so tables look the same on every page
+def money(label: str) -> Any:
+    return st.column_config.NumberColumn(label, format="€%.2f")
+
+
+def when(label: str) -> Any:
+    return st.column_config.DatetimeColumn(label, format="YYYY-MM-DD HH:mm")
+
+
+def link(label: str, pattern: str) -> Any:
+    """LinkColumn; ``pattern`` is a regex whose first group is shown as text, e.g. r".*run_id=(.*)"."""
+    return st.column_config.LinkColumn(label, display_text=pattern)
