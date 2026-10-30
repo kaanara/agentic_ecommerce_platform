@@ -1,6 +1,7 @@
 **aecom wiki**
 - [Home](Home)
 - [Getting Started](Getting-Started)
+- [Help](Help)
 - [Architecture](Architecture)
 - [Agents](Agents)
 - [Policy and Approvals](Policy-and-Approvals)

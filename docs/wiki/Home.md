@@ -6,6 +6,7 @@
 | If you want to… | Read |
 |---|---|
 | Run it in 2 minutes | [Getting Started](Getting-Started) |
+| Find a command or fix a common problem | [Help](Help) |
 | Understand how the pieces fit | [Architecture](Architecture) |
 | Meet the agents / add one | [Agents](Agents) |
 | Know what agents may or may not do | [Policy and Approvals](Policy-and-Approvals) |
