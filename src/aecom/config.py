@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     backup_target: str | None = None
     # Customer download route (GET /download/{order_id}?token=...): off until the API has a public URL
     download_route_enabled: bool = False
+    # Etsy second sales channel (off by default; needs the Etsy connection under Operations > Connections)
+    etsy_enabled: bool = False
+    etsy_shop_id: str = ""
     # Optional read-only browser (Playwright MCP): per-run budgets enforced by aecom.browser_guard
     browser_max_calls: int = 20
     browser_max_navigations: int = 5

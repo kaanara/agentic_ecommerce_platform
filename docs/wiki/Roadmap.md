@@ -47,7 +47,7 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 |---|---|---|
 | E1 ✅ 2026-10-27 | Provisioning loop | Subscribe to `approval.resolved` (it has no subscriber today); detect when `credential_env` appears; mark the vendor `active`; send the Foreman an integration task |
 | E2 ✅ 2026-10-27 | Vendor MCP first | Foreman proposes and sandboxes the vendor's MCP server; read-only tools granted first |
-| E3 | Engineer agent | Writes adapters and webhooks on a branch and opens a PR; a human reviews and merges; never deploys |
+| E3 ✅ 2026-10-30 (opens PRs only; cannot merge or deploy; see [Engineer Agent](Engineer-Agent)) | Engineer agent | Writes adapters and webhooks on a branch and opens a PR; a human reviews and merges; never deploys |
 | E4 ✅ 2026-10-27 | Any agent can raise an account need | New tool `request_account_need(vendor, why, evidence)` for all agents → goes to the CEO, who decides and calls `request_provisioning`. Today only the CEO can ask, so other agents can only mention a need in their output |
 | E5 ✅ 2026-10-27 | Provisioning task with notification | Status `requested → approved → in_progress → active / rejected`; checklist of the steps; "action needed" message by email or push (B routing) with purpose, cost, steps, the credential name and required scopes; reminder after 3 days; snooze |
 | E6 ✅ 2026-10-27 | Credential verification | When `credential_env` appears: one read-only test call, and a scope check where the platform allows it (warn if broader than requested). Success → vendor `active`, CEO informed, Foreman integration task (E1). Failure → message to the human saying what's wrong |
@@ -58,7 +58,7 @@ See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, 
 |---|---|---|
 | F1 | Credentials | Logins stay with humans in a password manager with 2FA; the app holds only narrowly scoped API keys. `chmod 600 .env`; later a vault behind `SecretsProvider` |
 | F2 ✅ 2026-10-30 (tokens in a separate 0600 file outside the database and backups; connect providers under Operations > Connections) | OAuth token store | Refresh tokens need writable storage; `.env` is read once at startup |
-| F3 | Channels | `StoreAdapter` assumes one store. A second channel (Etsy) needs listing sync and one shared key pool |
+| F3 ✅ 2026-10-30 (Etsy channel built and off by default; tested on recorded-shape fixtures, not a live shop) | Channels | `StoreAdapter` assumes one store. A second channel (Etsy) needs listing sync and one shared key pool |
 | F4 ✅ 2026-10-30 (CSV import for any platform, optional Stripe fetch untested live; fees booked once; month-end report fills its payout section) | Payout reconciliation | Stripe / PayPal payouts and fees into the ledger |
 | F5 ✅ 2026-10-30 (`mcp:<server>/<tool>` rules, server wildcard, unclassified default T3) | Policy rules for MCP tools | e.g. `mcp:stripe/create_refund` with limits; unclassified tools default to T3 |
 | F6 ✅ 2026-10-30 (Etsy, Shopify SEO and EU VAT/OSS checklists shipped as proposed skills; the Etsy page could not be verified live) | Platform skills | Etsy listing rules, Shopify SEO, EU VAT/OSS checklist |
@@ -168,7 +168,7 @@ Today only the Researcher has web access: Anthropic's server-side `web_search` a
 | # | Item | Notes |
 |---|---|---|
 | M1 ✅ 2026-10-26 | Server-side web fetch | Replace `fetch_url` with Anthropic's server-side web fetch tool (confirm the current tool version in Anthropic's docs). It runs on Anthropic's side, so it can't reach the host's network. Keep H5 for any remaining local fetching |
-| M2 | Optional read-only browser | Playwright MCP through the registry, for JavaScript-heavy public pages. Researcher only; isolated container without access to the home or host network; fresh profile with no credentials or cookies; policy allows navigate, read and screenshot, and **denies** click-to-buy, form submit, login and download; output fenced; rate limited |
+| M2 ✅ 2026-10-30 (built and off until a human approves it; see [Browser Access](Browser-Access)) | Optional read-only browser | Playwright MCP through the registry, for JavaScript-heavy public pages. Researcher only; isolated container without access to the home or host network; fresh profile with no credentials or cookies; policy allows navigate, read and screenshot, and **denies** click-to-buy, form submit, login and download; output fenced; rate limited |
 | M3 ✅ 2026-10-28 | Scraping policy | Respect `robots.txt` and site terms, low request rates, prefer official APIs, never collect personal data (GDPR). Written into the Researcher's `POLICY.md` and a skill |
 | M4 ✅ 2026-10-26 | Explicit "no accounts, no logins" rule | Stated on the Policy and Approvals page; T4 deny rules in `policy.yaml` for sign-up, login and form-submit tools from any MCP server; a chaos test where a web page tries to make an agent sign up |
 
