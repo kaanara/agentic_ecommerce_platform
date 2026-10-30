@@ -14,6 +14,7 @@ if not by:
     st.info("Enter your name in the sidebar to use the actions on this page (it is recorded in the audit log).")
 
 TABS = [("Run and maintenance", "_ops_actions", "render_actions_tab"),
+        ("Launch", "_ops_launch", "render_launch_tab"),
         ("Memory review", "_ops_memory", "render_memory_tab"),
         ("Tool grants", "_ops_registry", "render_grants_tab"),
         ("Vendor provisioning", "_ops_provisioning", "render_provisioning_tab"),
