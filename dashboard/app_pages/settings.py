@@ -13,7 +13,7 @@ import yaml
 from _settings_agents import render_agents_tab
 from _settings_backups import render_backups_tab
 from _settings_policy import render_policy_tab
-from _common import confirm_dialog, page_header, require_login, reviewer_name, step_up
+from _common import confirm_dialog, field_error, page_header, require_login, reviewer_name, step_up, validated_text_input
 from aecom import dashboard_auth as auth
 from aecom import settings_registry as reg
 from aecom.integrations.ping import PINGS
@@ -29,12 +29,15 @@ for _key, _field in reg.FIELDS.items():
 
 PLACEHOLDER_TABS: dict[str, str] = {}
 
-TAB_NAMES: list[str] = []
-for _section in reg.SECTIONS:
-    TAB_NAMES.append(_section)
-    if _section == "Security":
-        TAB_NAMES.extend(["Policy", "Agents"])
-TAB_NAMES += ["History", "Export / Import"]
+# N4: the (former 15) top-level tabs, grouped into 5 with the sections nested inside as `st.tabs` - see
+# `aecom.settings_registry.GROUPS` for the grouping (shared with the tests, so both stay in step).
+GROUP_NAMES: list[str] = list(reg.GROUPS.keys())
+
+# Never-blocking format hints for write-only secrets, shown under the input (N6).
+SECRET_HINTS: dict[str, str] = {
+    "anthropic_api_key": "Anthropic keys start with sk-ant-.",
+    "telegram_bot_token": "Telegram bot tokens look like 123456:ABC...",
+}
 
 
 # --------------------------------------------------------------------------- generic field rendering
@@ -173,7 +176,9 @@ def _render_field(key: str, by: str) -> bool:
             st.caption(field.help)
         with st.form(f"secret_form_{key}", clear_on_submit=True):
             new_value = st.text_input("New value (write-only, never shown again)", type="password", key=f"secret_input_{key}")
-            submitted = st.form_submit_button("Save")
+            if key in SECRET_HINTS:
+                field_error(SECRET_HINTS[key])
+            submitted = st.form_submit_button("Save", type="primary")
         if submitted:
             if not new_value:
                 st.warning("Enter a value first.")
@@ -189,7 +194,7 @@ def _render_field(key: str, by: str) -> bool:
             caption += f" Applies on {field.apply}."
         st.caption(caption)
         col_save, col_reset, _ = st.columns([1, 1, 4])
-        save = col_save.form_submit_button("Save")
+        save = col_save.form_submit_button("Save", type="primary")
         reset = col_reset.form_submit_button("Reset to default", disabled=(source == "default"))
     if save:
         _save(key, widget_value, by)
@@ -209,17 +214,27 @@ def _section_tab(section: str, by: str) -> None:
 
 
 # --------------------------------------------------------------------------- Security tab (dashboard_auth only)
+def _new_password_fields(new_key: str, repeat_key: str, repeat_label: str = "Repeat password") -> tuple[str, str, bool]:
+    """New/repeat password inputs with live validation (N6) - kept outside any form so each keystroke updates the
+    message below it. Returns (new, repeat, is_valid)."""
+    new, new_ok = validated_text_input(
+        "New password", key=new_key, type="password",
+        validate=lambda v: None if len(v) >= auth.MIN_PASSWORD_LENGTH else
+        f"Use at least {auth.MIN_PASSWORD_LENGTH} characters (you have {len(v)}).")
+    repeat, repeat_ok = validated_text_input(
+        repeat_label, key=repeat_key, type="password",
+        validate=lambda v: None if v == new else "The two passwords are different. Type the same one twice.")
+    return new, repeat, new_ok and repeat_ok
+
+
 def _security_tab(by: str) -> None:
     st.caption("Only `dashboard_auth` writes the login mode and password hash; no agent tool can reach them.")
     if auth.disabled() or not auth.is_configured():
         st.info("Login is off or has no password: anyone who can reach this page can approve actions and use the "
                 "kill switch. That's acceptable only because the dashboard listens on 127.0.0.1 behind an SSH "
                 "tunnel. With login off, Chat is disabled and channel pairing is refused.", icon=":material/lock_open:")
-        with st.form("set_password_form"):
-            new = st.text_input("New password", type="password", help=f"At least {auth.MIN_PASSWORD_LENGTH} characters.")
-            repeat = st.text_input("Repeat password", type="password")
-            submitted = st.form_submit_button("Set password and turn login on")
-        if submitted:
+        new, repeat, valid = _new_password_fields("set_pw_new", "set_pw_repeat")
+        if st.button("Set password and turn login on", type="primary", disabled=not valid):
             if not by:
                 st.warning("Enter your name in the sidebar first.")
             else:
@@ -232,12 +247,9 @@ def _security_tab(by: str) -> None:
                     st.error(str(exc))
     else:
         st.success("Dashboard login is ON.", icon=":material/lock:")
-        with st.form("change_password_form"):
-            current = st.text_input("Current password", type="password")
-            new = st.text_input("New password", type="password")
-            repeat = st.text_input("Repeat new password", type="password")
-            submitted = st.form_submit_button("Change password")
-        if submitted:
+        current = st.text_input("Current password", type="password", key="change_pw_current")
+        new, repeat, valid = _new_password_fields("change_pw_new", "change_pw_repeat", "Repeat new password")
+        if st.button("Change password", type="primary", disabled=not valid):
             if not by:
                 st.warning("Enter your name in the sidebar first.")
             else:
@@ -318,6 +330,27 @@ def _export_import_tab(by: str) -> None:
 
 
 # --------------------------------------------------------------------------- page
+def _render_tab(name: str, by: str) -> None:
+    """Render one (nested, formerly top-level) tab by name - unchanged dispatch, now called from inside a group."""
+    if name == "Security":
+        _security_tab(by)
+    elif name == "History":
+        _history_tab()
+    elif name == "Export / Import":
+        _export_import_tab(by)
+    elif name == "Policy":
+        render_policy_tab(by)
+    elif name == "Agents":
+        render_agents_tab(by)
+    elif name == "Backups and updates":
+        _section_tab(name, by)
+        render_backups_tab(by)
+    elif name in PLACEHOLDER_TABS:
+        st.caption(PLACEHOLDER_TABS[name])
+    else:
+        _section_tab(name, by)
+
+
 by = reviewer_name()
 if not by:
     st.info("Enter your name in the sidebar to save changes (browsing stays read-only until then).")
@@ -329,24 +362,12 @@ if st.session_state.get("_restart_needed"):
 
 _apply_pending_stepup()
 
-st.text_input("Search settings", key="_settings_search", placeholder="e.g. anthropic, backup, telegram, idle")
+st.text_input("Find a setting", key="_settings_search", placeholder="e.g. anthropic, backup, telegram, idle")
 
-for tab, name in zip(st.tabs(TAB_NAMES), TAB_NAMES):
-    with tab:
-        if name == "Security":
-            _security_tab(by)
-        elif name == "History":
-            _history_tab()
-        elif name == "Export / Import":
-            _export_import_tab(by)
-        elif name == "Policy":
-            render_policy_tab(by)
-        elif name == "Agents":
-            render_agents_tab(by)
-        elif name == "Backups and updates":
-            _section_tab(name, by)
-            render_backups_tab(by)
-        elif name in PLACEHOLDER_TABS:
-            st.caption(PLACEHOLDER_TABS[name])
-        else:
-            _section_tab(name, by)
+for group_tab, group_name in zip(st.tabs(GROUP_NAMES), GROUP_NAMES):
+    with group_tab:
+        names = reg.GROUPS[group_name]
+        for tab, name in zip(st.tabs(names), names):
+            with tab:
+                _render_tab(name, by)
+

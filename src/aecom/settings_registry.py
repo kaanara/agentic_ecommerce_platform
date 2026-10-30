@@ -463,8 +463,7 @@ def set_value(key: str, raw: Any, by: str, *, step_up_ok: bool = False) -> Any:
         if not text or any(c in text for c in "\n\r\x00") or len(text) > 2000:
             raise ValueError(f"{f.label}: enter the value on one line")
         if key == "backup_passphrase" and len(text) < backup_crypto.MIN_PASSPHRASE:
-            raise ValueError(f"{f.label}: use at least {backup_crypto.MIN_PASSPHRASE} characters, or encrypted "
-                             "backups made with it cannot be restored later.")
+            raise ValueError(f"Use at least {backup_crypto.MIN_PASSPHRASE} characters for the backup passphrase.")
         envfile.set_values({f.env: text})
         if f.env in os.environ:  # a process-level variable would otherwise keep winning over the new .env value
             os.environ[f.env] = text

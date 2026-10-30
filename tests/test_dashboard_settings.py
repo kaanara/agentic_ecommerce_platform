@@ -22,9 +22,11 @@ DASHBOARD = Path(__file__).resolve().parents[1] / "dashboard"
 sys.path.insert(0, str(DASHBOARD))  # the page does `from _common import ...`
 HOME = str(DASHBOARD / "Home.py")
 
-TAB_NAMES = ["AI and models", "Budgets and costs", "Store and email", "Alerts and notifications",
-             "Channels", "Chat", "Schedules", "Security", "Policy", "Agents", "Backups and updates", "Autonomy",
-             "Advanced", "History", "Export / Import"]
+# N4: the page now nests the (former 15) top-level tabs inside 5 groups (`reg.GROUPS`), each rendered as its own
+# `st.tabs`. AppTest flattens every `st.tabs` call in the whole page into one list, in document order, so TAB_NAMES
+# follows that same order: a group label immediately followed by its own nested section labels.
+GROUP_NAMES = list(reg.GROUPS.keys())
+TAB_NAMES = [name for group in GROUP_NAMES for name in (group, *reg.GROUPS[group])]
 
 TEST_SECRET = "a long test secret"  # 12+ chars, meets dashboard_auth.MIN_PASSWORD_LENGTH
 
@@ -230,6 +232,8 @@ def test_set_secret_turns_login_on_and_keeps_the_session_signed_in(envp):
     fields = {e.label: e for e in at.text_input if e.label in ("New password", "Repeat password")}
     fields["New password"].set_value("a very long new secret 12345")
     fields["Repeat password"].set_value("a very long new secret 12345")
+    at = at.run()  # live validation needs a rerun before the now-valid button is enabled
+    assert not _button(at, "Set password and turn login on").disabled
     _button(at, "Set password and turn login on").click().run()
     assert not at.exception, _messages(at)
     assert auth.is_configured() and not auth.disabled()  # the auto-rerun already shows the "login is ON" state
@@ -243,6 +247,7 @@ def test_change_secret_needs_the_current_one(envp):
     fields["Current password"].set_value("not the right one")
     fields["New password"].set_value("a brand new dashboard secret")
     fields["Repeat new password"].set_value("a brand new dashboard secret")
+    at = at.run()
     _button(at, "Change password").click().run()
     assert any("does not match" in e.value for e in at.error)
     assert not auth.verify_password("a brand new dashboard secret")

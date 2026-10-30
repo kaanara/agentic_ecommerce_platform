@@ -82,9 +82,13 @@ def _connect_oauth(monkeypatch) -> None:
 def _clear_injected_etsy_settings(fresh_company):
     """`_set_settings` writes straight into the `Settings` singleton's ``__dict__``; undo that after every test
     (not just the ones that call it) so it never leaks into an unrelated test sharing the same process."""
+    defaults = {"etsy_enabled": False, "etsy_shop_id": ""}  # real Settings fields now: restore, never delete
     yield
     for key in ("etsy_enabled", "etsy_shop_id", "etsy_timeout_s"):
-        fresh_company.__dict__.pop(key, None)
+        if key in defaults:
+            fresh_company.__dict__[key] = defaults[key]
+        else:
+            fresh_company.__dict__.pop(key, None)
 
 
 @pytest.fixture
