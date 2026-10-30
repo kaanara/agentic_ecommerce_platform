@@ -53,9 +53,23 @@ class GateResult:
     autonomous: bool = False  # allowed only thanks to a raised stage (the stage-1 rule would have escalated)
 
 
+def _notify_owner(event: dict) -> None:
+    try:
+        from aecom import notify
+
+        notify.route(event)
+    except Exception:  # noqa: BLE001 - a notification problem must never block or fail a gate decision
+        pass
+
+
 @lru_cache
 def load_policy() -> dict[str, Any]:
-    return yaml.safe_load(get_settings().policy_file.read_text())
+    """The active policy: the UI-saved version if one is active (``aecom.policy.versions``), else the file shipped
+    in git. Cached with no args; busted by ``aecom.policy.versions`` whenever a version is saved or activated."""
+    from aecom.policy.versions import active_yaml
+
+    text = active_yaml() or get_settings().policy_file.read_text()
+    return yaml.safe_load(text)
 
 
 def is_forbidden(tool_name: str, policy: dict[str, Any] | None = None) -> bool:
@@ -254,6 +268,7 @@ async def run_gated(agent_id: str, tool_name: str, args: dict[str, Any], execute
                     "This exact request is already pending - do not retry it; continue with the rest of your task "
                     "and mention the pending approval in your final answer.")
 
+        new_approval_id = None
         with session() as s:
             existing = _pending_row(s, key)
             if existing is not None:
@@ -266,6 +281,7 @@ async def run_gated(agent_id: str, tool_name: str, args: dict[str, Any], execute
                     with s.begin_nested():  # R8: a racing identical escalation hits the unique pending index
                         s.add(a)
                         s.flush()
+                    new_approval_id = a.id
                     message = (f"ESCALATED to human approval ({verdict.tier}, id={a.id}): {verdict.reason} "
                                "It will execute exactly as requested if approved. Do not retry it; continue with the rest of "
                                "your task and mention the pending approval in your final answer.")
@@ -274,6 +290,9 @@ async def run_gated(agent_id: str, tool_name: str, args: dict[str, Any], execute
                     if winner is None:
                         raise
                     message = already(winner.id)
+        if new_approval_id:
+            _notify_owner({"kind": "approval", "text": f"{agent_id} needs approval ({verdict.tier}) for {tool_name}",
+                           "urgency": "normal", "approval_id": new_approval_id, "agent_id": agent_id})
         _log_result(call_id, message)
         return message
     try:

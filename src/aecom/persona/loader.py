@@ -51,17 +51,30 @@ def agent_ids() -> list[str]:
     return sorted(p.name for p in root.iterdir() if (p / "IDENTITY.md").exists())
 
 
-@lru_cache
-def load_spec(agent_id: str) -> AgentSpec:
+def _effective_text(agent_id: str, file_name: str, overrides: dict[str, str] | None = None) -> str:
+    """``agents/<agent_id>/<file_name>``, with a UI override (``aecom.persona.overrides``) preferred over the file
+    in git. ``overrides`` lets a not-yet-saved edit be validated before it is persisted (the rest of the files still
+    use whatever is currently effective: an existing override, or the file)."""
+    if overrides is not None and file_name in overrides:
+        return overrides[file_name]
+    from aecom.persona import overrides as persona_overrides
+
+    found = persona_overrides.get_override(agent_id, file_name)
+    if found is not None:
+        return found
+    return (get_settings().agents_dir / agent_id / file_name).read_text()
+
+
+def _build_spec(agent_id: str, overrides: dict[str, str] | None = None) -> AgentSpec:
     folder: Path = get_settings().agents_dir / agent_id
     missing = [f for f in REQUIRED_FILES if not (folder / f).exists()]
     if missing:
         raise FileNotFoundError(f"agent {agent_id} is missing {missing}")
-    identity, _ = split_frontmatter((folder / "IDENTITY.md").read_text())
-    _, soul = split_frontmatter((folder / "SOUL.md").read_text())
-    _, procedures = split_frontmatter((folder / "AGENTS.md").read_text())
-    tools_fm, _ = split_frontmatter((folder / "TOOLS.md").read_text())
-    policy_fm, _ = split_frontmatter((folder / "POLICY.md").read_text())
+    identity, _ = split_frontmatter(_effective_text(agent_id, "IDENTITY.md", overrides))
+    _, soul = split_frontmatter(_effective_text(agent_id, "SOUL.md", overrides))
+    _, procedures = split_frontmatter(_effective_text(agent_id, "AGENTS.md", overrides))
+    tools_fm, _ = split_frontmatter(_effective_text(agent_id, "TOOLS.md", overrides))
+    policy_fm, _ = split_frontmatter(_effective_text(agent_id, "POLICY.md", overrides))
     if identity.get("id") != agent_id:
         raise ValueError(f"IDENTITY.md id '{identity.get('id')}' does not match folder '{agent_id}'")
     if identity.get("model_tier") not in ("opus", "sonnet", "haiku"):
@@ -81,3 +94,26 @@ def load_spec(agent_id: str) -> AgentSpec:
         budget_eur_per_day=policy_fm.get("budget_eur_per_day"),
         identity=identity,
     )
+
+
+@lru_cache
+def load_spec(agent_id: str) -> AgentSpec:
+    return _build_spec(agent_id)
+
+
+def preview_spec(agent_id: str, overrides: dict[str, str]) -> AgentSpec:
+    """Build a spec from proposed override content, without persisting or caching it - used by
+    ``aecom.persona.overrides.save_override`` to validate an edit before it is saved."""
+    return _build_spec(agent_id, overrides)
+
+
+def company_doc_text(file_name: str) -> str:
+    """A ``company/`` document (e.g. ``GOALS.md``), with a UI override (scope ``"company"``) preferred over the
+    file in git. Empty string if neither exists."""
+    from aecom.persona import overrides as persona_overrides
+
+    override = persona_overrides.get_override("company", file_name)
+    if override is not None:
+        return override
+    path = get_settings().company_dir / file_name
+    return path.read_text() if path.exists() else ""
