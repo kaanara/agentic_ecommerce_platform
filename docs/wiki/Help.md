@@ -28,6 +28,9 @@ Quick answers for running aecom. Everything below is run from the project folder
 | Check invariants under faults | `uv run aecom chaos all` |
 | Update the Pi | `scripts/update.sh --check`, then `scripts/update.sh` |
 | Change a setting or secret | Dashboard > Settings (secrets are written to `.env` only) |
+| Run the company, sync the store, review memories, manage tool grants or vendor sign-ups | Dashboard > Operations (see [Dashboards](Dashboards)) |
+| Turn backups on or off, set when they run, encrypt them | Dashboard > Settings > Backups and updates (see [Backups](Backups)) |
+| Change the dashboard password | Dashboard > Settings > Security |
 
 ## Common problems
 

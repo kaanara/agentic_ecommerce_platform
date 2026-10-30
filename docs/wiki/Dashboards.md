@@ -68,6 +68,16 @@ Direct conversation with any available agent. Messages and attachments are store
 - `/health` endpoint status (reachable, last tick, open P1s).
 - Safe mode timeline: when it was on and why.
 
+## Operations
+**Govern > Operations** has what used to be CLI-only. Enter your name in the sidebar first; every action is recorded in the audit log.
+- **Run and maintenance:** start a company run from a directive (`aecom run`), sync the store catalog (`aecom store sync`), reconcile stuck paid orders (`aecom reconcile`), run the monitors now (`aecom monitors run`) and poll the inbox (`aecom agentmail poll`). These are queued as jobs and run by the scheduler within about 30 seconds; refresh to see the result. A warning shows when `LLM_MODE=anthropic`, because a company run then spends real money.
+- **Memory review:** approve or reject shared agent memories (`aecom memory`); only approved ones are recalled by agents. Provenance and taint are shown.
+- **Tool grants:** see each agent's tool allowlist and revoke a tool (`aecom registry revoke`), behind a confirmation.
+- **Vendor provisioning:** the checklist for each vendor waiting on you: mark steps done, snooze, and confirm that it works (`aecom provisioning`). Credentials are never shown.
+- **Incident reports:** preview an incident's issue text, write the issue file, draft a P1 postmortem (`aecom incidents export|postmortem`). Creating the issue on GitHub needs a configured token, your password again and typing the incident id.
+
+Still CLI-only, on purpose: `aecom scenario`, `aecom simulate`, `aecom chaos` (developer tools that create test data) and `aecom init` (run on every update).
+
 ## Settings
 - **Security**: toggle dashboard login on/off, set password.
 - **AI and models**: Anthropic API key, model ids, max steps per run, token prices, web search config.

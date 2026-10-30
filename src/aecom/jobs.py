@@ -1,8 +1,9 @@
-"""UI-requested background jobs (backup now, verify, restore, doctor).
+"""UI-requested background jobs (backup now, verify, restore, doctor, and the Operations tab actions).
 
 The dashboard only *enqueues* a row in ops_jobs; the scheduler process picks it up with ``run_pending`` on its tick and
 runs the handler registered for the job kind, so heavy I/O never runs inside the Streamlit process. The handlers for
-backup/verify/restore are registered by ``aecom.backup`` (wave 2); ``doctor`` is registered here.
+backup/verify/restore are registered by ``aecom.backup`` (wave 2); ``doctor`` is registered here; ``run``,
+``sync_store``, ``reconcile``, ``monitors`` and ``agentmail_poll`` are registered by ``aecom.ops_actions``.
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ from aecom.db import Job, now, session
 
 log = logging.getLogger(__name__)
 
-KINDS = ("backup", "verify", "restore", "doctor", "update")
+KINDS = ("backup", "verify", "restore", "doctor", "update",
+         "run", "sync_store", "reconcile", "monitors", "agentmail_poll")
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
 _handlers: dict[str, Handler] = {}
 

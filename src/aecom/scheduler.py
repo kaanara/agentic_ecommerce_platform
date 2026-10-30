@@ -14,6 +14,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 
 import aecom.backup  # noqa: F401  (registers backup/verify job handlers and event subscribers)
 import aecom.handlers  # noqa: F401  (registers event subscribers)
+import aecom.ops_actions  # noqa: F401  (registers the dashboard-requested job handlers: run, sync_store, reconcile, ...)
 from aecom.bootstrap import init
 from aecom import schedule_spec
 from aecom.bus.events import drain, publish

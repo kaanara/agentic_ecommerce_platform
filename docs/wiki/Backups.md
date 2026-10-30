@@ -18,7 +18,8 @@ PostgreSQL is not handled by this command (it raises an error pointing to `pg_du
 ## Dashboard interface
 
 **[Settings](Settings) > Backups and updates**:
-- List of recent backups with their timestamp, size, schema revision, git sha, verification status (✅/—), and off-device copy status (✅/❌/—).
+- **Automatic backups** form at the top: a switch to turn scheduled backups on or off, how often (every few hours, every day or every week), the time of day and weekday, and whether to verify each backup after it is made. No cron string needed; it saves to the `backup_enabled`, `backup_schedule` and `backup_verify_after` settings and the scheduler picks the change up within about 30 seconds.
+- List of recent backups with their timestamp, size, schema revision, git sha, encryption (✅/—), verification status (✅/—), and off-device copy status (✅/❌/—).
 - Next scheduled run (computed from `backup_schedule` setting).
 - Free disk space where backups are stored.
 - **Back up now**: creates a backup on demand (published to the event bus; the scheduler runs it and writes the result to the jobs table).
@@ -74,6 +75,16 @@ A backup on the same SD card is not a backup. Set `BACKUP_TARGET` in `.env` or [
   `rclone sync /home/pi/aecom/data/backups remote:aecom-backups`
 
 If the copy fails the local backup is kept, the error is recorded (see `aecom errors`) and `create` exits 3. A stale backup alert (P1 if over 3 days, P2 if over 26 h) fires if an off-device target is configured and the last copy failed.
+
+## Encryption at rest
+
+Set the secret `BACKUP_PASSPHRASE` (Settings > Backups and updates, or `.env`; at least 12 characters) and every **new** backup stores its database files encrypted as `<name>.enc` (AES-256-GCM, key derived from the passphrase with scrypt); the plain copy is deleted, and the manifest says `"encrypted": true`. Verify and restore decrypt automatically with the same passphrase. A wrong or missing passphrase is refused with a clear message, and restore unpacks and checks everything before it touches the live database.
+
+- **The passphrase is not in any backup**, so keep it in a password manager. A lost passphrase means the encrypted backups cannot be restored.
+- Backups made before you set it stay plain; changing the passphrase later does not re-encrypt old backups.
+- If the passphrase is set but shorter than 12 characters, `aecom backup` fails instead of writing a plain backup.
+- The whole file is encrypted in memory, which is fine for the database sizes this project targets.
+- This protects copies at rest, including the off-device copy. It does not replace a trusted target.
 
 ## Privacy
 
