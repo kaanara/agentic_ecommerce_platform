@@ -10,7 +10,7 @@
 # only start after .env has been filled in. It never reads or prints .env, and never creates accounts.
 set -euo pipefail
 
-DRY=0; YES=0; REPO=""; BRANCH="feat/agentic-ecommerce-poc"; APP_DIR="$HOME/agentic_ecommerce_platform"
+DRY=0; YES=0; REPO=""; BRANCH="main"; APP_DIR="$HOME/agentic_ecommerce_platform"
 FIREWALL=0; ENABLE=0; SUDOERS=0
 UNITS=(aecom-scheduler.service aecom-api.service aecom-dashboard.service)
 SERVICES=(aecom-scheduler aecom-api aecom-dashboard)
@@ -22,7 +22,7 @@ usage: pi-bootstrap.sh [options]
   --yes                do not ask for confirmation (still skips opt-in steps unless their flag is given)
   --app-dir DIR        where the project lives or should be cloned (default: ~/agentic_ecommerce_platform)
   --repo URL           clone this repository into --app-dir when it is not there yet
-  --branch NAME        branch to clone (default: feat/agentic-ecommerce-poc)
+  --branch NAME        branch to clone (default: main)
   --allow-update-sudo  let this user start/stop exactly the three aecom services without a password (for update.sh)
   --firewall           ufw: deny incoming, allow outgoing, allow ssh (CAN LOCK YOU OUT if ssh is on another port)
   --enable-services    enable and start the scheduler, API and dashboard (after .env is filled in!)
