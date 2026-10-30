@@ -26,13 +26,14 @@ def _campaign(budget: float, status: str = "draft", spent: float = 0.0, created_
 def _book(campaign_id: str, amount: float, when: datetime | None = None) -> None:
     """Book ad spend to the ledger (as the simulator does), optionally back-dated."""
     from aecom import ledger
-    from aecom.db import LedgerEntry
+    from aecom.db import LedgerEntry, ledger_rewrites_allowed
 
     txn = ledger.record_expense("marketing_expense", amount, "ad spend", campaign_id)
     if when:
-        with session() as s:
+        with session() as s, ledger_rewrites_allowed():
             for e in s.scalars(select(LedgerEntry).where(LedgerEntry.txn_id == txn)):
                 e.created_at = when
+            s.flush()
 
 
 def _launch(campaign_id: str, budget: float) -> str:

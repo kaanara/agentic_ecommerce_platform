@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from aecom import ledger
 from aecom.bus.events import drain, publish
-from aecom.db import Campaign, Customer, LedgerEntry, Order, Product, now, session
+from aecom.db import Campaign, Customer, LedgerEntry, Order, Product, ledger_rewrites_allowed, now, session
 from aecom.store.adapter import get_store
 
 COUNTRIES = ["DE", "DE", "DE", "FR", "NL", "AT", "IT", "ES", "PL", "SE", "US", "GB"]
@@ -35,8 +35,10 @@ def _backdate(order_id: str, ts: Any) -> None:
         o.created_at = ts
         if o.withdrawal_consent_at is not None:  # consent is given at checkout, i.e. at order time
             o.withdrawal_consent_at = ts
-        for e in s.scalars(select(LedgerEntry).where(LedgerEntry.ref == order_id)):
-            e.created_at = ts
+        with ledger_rewrites_allowed():  # demo data is backdated; real ledger rows are append-only (J11)
+            for e in s.scalars(select(LedgerEntry).where(LedgerEntry.ref == order_id)):
+                e.created_at = ts
+            s.flush()
 
 
 def _order(rng: random.Random, sku: str, email: str | None, campaign_id: str | None, ts: Any) -> dict[str, Any] | None:
@@ -77,9 +79,10 @@ def simulate_day(day_offset: int = 0, seed: int | None = None, support_emails: b
                 stats["orders"] += 1
         if spend > 0:
             txn = ledger.record_expense("marketing_expense", spend, f"ad spend {channel}", cid)
-            with session() as s:
+            with session() as s, ledger_rewrites_allowed():
                 for e in s.scalars(select(LedgerEntry).where(LedgerEntry.txn_id == txn)):
                     e.created_at = ts
+                s.flush()
             stats["ad_spend"] += spend
         with session() as s:
             c = s.get(Campaign, cid)

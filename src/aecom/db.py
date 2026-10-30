@@ -11,6 +11,7 @@ import json
 import logging
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any, Iterator
 
@@ -78,6 +79,38 @@ class Decision(Base):
     decided_by: Mapped[str] = mapped_column(String, default="ceo")
     status: Mapped[str] = mapped_column(String, default="accepted")  # proposed | accepted | superseded
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class Period(Base):
+    """An accounting month (``YYYY-MM``). Once closed, nothing may be posted into it (J8) and its ledger fingerprint is
+    stored so later tampering is detectable (J11)."""
+
+    __tablename__ = "ops_periods"
+    period: Mapped[str] = mapped_column(String, primary_key=True)
+    status: Mapped[str] = mapped_column(String, default="open")  # open | closed
+    closed_by: Mapped[str] = mapped_column(String, default="")
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ledger_hash: Mapped[str] = mapped_column(String, default="")  # sha256 over the month's ledger lines at close
+    ledger_lines: Mapped[int] = mapped_column(Integer, default=0)
+    report_id: Mapped[str | None] = mapped_column(String, nullable=True)  # the month-end report (J9)
+    note: Mapped[str] = mapped_column(Text, default="")
+    reopened_by: Mapped[str] = mapped_column(String, default="")
+    reopened_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class DecisionReview(Base):
+    """A quarterly look back at a decision record (J14): did it deliver what it promised?"""
+
+    __tablename__ = "ops_decision_reviews"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    decision_id: Mapped[str] = mapped_column(String, index=True)
+    quarter: Mapped[str] = mapped_column(String)  # 2026-Q4
+    outcome: Mapped[str] = mapped_column(String)  # delivered | partly | not_delivered | superseded
+    note: Mapped[str] = mapped_column(Text, default="")
+    reviewed_by: Mapped[str] = mapped_column(String, default="")
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    __table_args__ = (UniqueConstraint("decision_id", "quarter", name="uq_decision_review"),)
 
 
 class Vendor(Base):
@@ -735,8 +768,25 @@ def session() -> Iterator[Session]:
         s.close()
 
 
+_ledger_rewrites: ContextVar[bool] = ContextVar("ledger_rewrites", default=False)
+
+
+@contextmanager
+def ledger_rewrites_allowed() -> Iterator[None]:
+    """Let ledger rows be edited or deleted inside the block. Only the market simulator uses this (demo data is
+    backdated); real bookkeeping is append-only (J11): a correction is a new, balancing entry."""
+    token = _ledger_rewrites.set(True)
+    try:
+        yield
+    finally:
+        _ledger_rewrites.reset(token)
+
+
 @event.listens_for(Session, "before_flush")
 def _audit_is_append_only(sess: Session, _ctx: Any, _instances: Any) -> None:
     for obj in list(sess.dirty) + list(sess.deleted):
         if isinstance(obj, AuditLog):
             raise PermissionError("ops_audit_log is append-only")
+        if isinstance(obj, LedgerEntry) and not _ledger_rewrites.get():
+            if obj in sess.deleted or sess.is_modified(obj, include_collections=False):
+                raise PermissionError("ledger_entries is append-only: post a correcting entry instead of editing")

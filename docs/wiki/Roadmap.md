@@ -206,15 +206,17 @@ Non-blocking findings from the Haiku reviews of Wave 0, to fold into later waves
 | M-trigger | **Migration trigger** | Cumulative net revenue reaches `MIGRATION_REVENUE_EUR` (default 25 ≈ USD 27, configurable) | A P3 incident reminds the owner to review hosting (cloud) and the accounting tool; the owner decides, nothing moves automatically |
 
 ### N. Dashboard UX (2026-10-30)
-Findings and fixes come from a design critique of the dashboard (visual hierarchy, flows, messages). Streamlit rules stay: no custom CSS, theme only through `.streamlit/config.toml`.
+From a design critique of the dashboard (design review 26/40, measured evidence from real pages, a forms and messages audit). Streamlit rules stay: no custom CSS, theme only through `.streamlit/config.toml`.
 | # | Item | Notes |
 |---|---|---|
-| N1 | Visual hierarchy and typography scale | One clear heading scale, consistent spacing between sections, secondary text sized and weighted so it never competes with the primary content |
-| N2 | Color contrast | Every text and badge combination reaches WCAG AA (4.5:1 body, 3:1 large text and controls) in light and dark; fix failing theme colours |
-| N3 | One obvious primary action per view | Primary button styling used once per view, in a predictable place; destructive actions stay secondary and behind a confirmation |
-| N4 | Flow friction | Remove dead ends and extra steps: the "enter your name first" requirement on every button, long forms, steps that need a second visit |
-| N5 | Friendly error messages | Specific, constructive messages that say what went wrong and what to do next, in one shared style |
-| N6 | Inline validation | Feedback under the field while typing (length, ranges, formats, matching values), with the submit button off until valid |
+| N1 | Visual hierarchy and typography | Set `headingFontSizes` in the theme for a clear title/section/sub-section step (measured: 8 irregular font sizes). Fix heading order: pages jump from h1 to h3/h4 and Settings uses h2 only mid-page. Use `st.container(gap=...)` and dividers for consistent spacing |
+| N2 | Color contrast | Measured text contrast passes AA on all 5 sampled pages (worst 6.09:1). Remaining: verify `st.caption` in light mode (estimated about 4.2:1) and never put a safety-critical message only in a caption |
+| N3 | One obvious primary action | Approvals shows 10 primary buttons at once: show the amount or effect in one line first, put the raw JSON arguments in a collapsed section, keep Approve primary and Reject secondary, and confirm before approving a spend. Make Save primary on Settings fields. Use one badge style for risk and severity |
+| N4 | Flow friction | Settings has 15 tabs: group into about 5 (Money and AI, Channels and chat, Security and backups, Schedules and policy, Advanced) and make the search box prominent. Replace the 19 "Enter your name in the sidebar first" warnings: ask for the name where the action is, disable buttons with a hint, remember it for the session. Add a "Secure your dashboard" card on Overview when the login is off. Put the step-up password prompt next to the field it protects. Show the result of Approve/Reject after the page refreshes |
+| N5 | Friendly error messages | Rewrite the 15 worst messages (for example "Wrong password.", "Invalid JSON: ...", the restore failure that mentions `sudo`) to say what happened and what to do, with technical detail in a collapsed section. One shared helper for the style |
+| N6 | Inline validation | Live messages under the field for the password (12+ characters, must match), numbers (range), schedules, URLs, secret shapes (`sk-ant-`, Telegram token), backup passphrase (12+, currently not enforced), chat attachments (type and 5 MB), the typed restore name, and the policy YAML (line number). Submit stays disabled until valid. Helpers `field_error`, `field_ok`, `validated_text_input`, `need_name` in `dashboard/_common.py` |
+| N7 | Help in the app | A small "?" on each page that defines terms such as tier, safe mode, step-up and kill switch in one sentence each |
+| N8 | Streamlit limits to accept | Navigation links and the collapse button are under 44 px tall (Streamlit's own chrome). Not fixable without custom CSS: noted, not planned |
 
 ## Next
 1. **Live validation:** run every scenario against real Claude and record the outcomes and costs. Calibrate `PRICE_*`.

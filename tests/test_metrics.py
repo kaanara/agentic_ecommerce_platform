@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 
 from aecom import ledger, metrics
-from aecom.db import LedgerEntry, session
+from aecom.db import LedgerEntry, ledger_rewrites_allowed, session
 from aecom.money import vat_split
 from aecom.simulator import _backdate
 from aecom.store.adapter import get_store, vat_included
@@ -13,9 +13,10 @@ TODAY = date(2026, 10, 15)
 
 
 def _at(txn: str, ts: datetime) -> None:
-    with session() as s:
+    with session() as s, ledger_rewrites_allowed():
         for e in s.scalars(select(LedgerEntry).where(LedgerEntry.txn_id == txn)):
             e.created_at = ts
+        s.flush()
 
 
 def _order(email: str, country: str, ts: datetime, campaign_id: str | None = None) -> str:
