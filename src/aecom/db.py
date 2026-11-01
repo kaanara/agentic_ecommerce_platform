@@ -806,6 +806,16 @@ def ledger_rewrites_allowed() -> Iterator[None]:
         _ledger_rewrites.reset(token)
 
 
+@event.listens_for(Session, "do_orm_execute")
+def _ledger_no_bulk_rewrites(state: Any) -> None:
+    """Bulk ``update()``/``delete()`` through a Session skip the flush hook below, so check them here too."""
+    if not (state.is_update or state.is_delete) or _ledger_rewrites.get():
+        return
+    table = getattr(state.statement, "table", None)
+    if getattr(table, "name", None) == "ledger_entries":
+        raise PermissionError("ledger_entries is append-only: post a correcting entry instead of editing")
+
+
 @event.listens_for(Session, "before_flush")
 def _audit_is_append_only(sess: Session, _ctx: Any, _instances: Any) -> None:
     for obj in list(sess.dirty) + list(sess.deleted):

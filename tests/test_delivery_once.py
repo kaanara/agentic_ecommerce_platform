@@ -174,3 +174,22 @@ def test_partially_refunded_unemailed_order_gets_its_access_email_exactly_once_d
     assert len(emails_to(EMAIL)) == 1
     assert store.get_order(order["id"])["status"] == "partially_refunded"
     assert any(i["monitor"] == STUCK_EMAIL_MONITOR for i in incidents.list_incidents())
+
+
+def test_only_one_of_two_racing_claims_may_send(fresh_company):
+    import threading
+
+    from aecom.store.adapter import get_store
+
+    store, start, results = get_store(), threading.Barrier(2), []
+    store.begin_email_send("ord_race")
+    store.fail_email_send("ord_race")  # the marker row exists but is cleared: the case the review reproduced
+
+    def claim():
+        start.wait()
+        results.append(store.begin_email_send("ord_race"))
+
+    threads = [threading.Thread(target=claim) for _ in range(2)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert sorted(results) == [False, True]

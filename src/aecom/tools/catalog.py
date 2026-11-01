@@ -143,7 +143,7 @@ def deliver_order(order_id: str) -> dict:
         # could double-send. A durable marker (set *before* calling AgentMail) guards that gap: if a previous
         # attempt left it 'sending', we cannot tell whether the customer already has it, so we never guess -
         # surface it and wait for a human (see MockStore.flag_stuck_email_send / clear_stuck_email_send).
-        if store.email_guard_state(order_id) == EMAIL_SEND_SENDING:
+        if store.email_guard_state(order_id) == EMAIL_SEND_SENDING or store.begin_email_send(order_id) is False:
             store.flag_stuck_email_send(order_id)
             blocked = dict(result)
             blocked["email_sent"] = False
@@ -151,7 +151,6 @@ def deliver_order(order_id: str) -> dict:
                                                  "completion before a crash; a human must verify and clear it "
                                                  "(see the stuck_email_delivery incident) before it is retried")
             return _redact_access(blocked)
-        store.begin_email_send(order_id)
         secret = result.get("license_key") or result.get("download_url")
         try:
             AgentMail().send(order.get("customer_email", ""), f"Your purchase {result.get('sku', '')}",

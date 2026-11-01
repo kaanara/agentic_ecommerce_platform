@@ -265,11 +265,30 @@ class MockStore:
         crash in the caller's process independently of the order row."""
         return get_setting(_email_guard_key(order_id, purpose)) or None
 
-    def begin_email_send(self, order_id: str, purpose: str = ACCESS_EMAIL_PURPOSE) -> None:
-        """Record intent to call AgentMail *before* doing so. If the process crashes before the matching
+    def begin_email_send(self, order_id: str, purpose: str = ACCESS_EMAIL_PURPOSE) -> bool:
+        """Claim the right to call AgentMail, *before* doing so, as one atomic step: True for exactly one caller,
+        False when another send is already in flight or stuck. If the process crashes before the matching
         `mark_email_sent` (or `fail_email_send`), this marker is the only durable evidence that an attempt was
         made - AgentMail's send API has no idempotency key to fall back on."""
-        set_setting(_email_guard_key(order_id, purpose), EMAIL_SEND_SENDING)
+        from sqlalchemy import update
+        from sqlalchemy.exc import IntegrityError
+
+        from aecom.db import Setting
+
+        key = _email_guard_key(order_id, purpose)
+        try:
+            with session() as s:
+                claimed = s.execute(update(Setting).where(Setting.key == key, Setting.value != EMAIL_SEND_SENDING)
+                                    .values(value=EMAIL_SEND_SENDING)).rowcount
+                if claimed:
+                    return True
+                if s.get(Setting, key) is not None:
+                    return False  # the row exists and already says 'sending'
+                s.add(Setting(key=key, value=EMAIL_SEND_SENDING))
+                s.flush()
+                return True
+        except IntegrityError:
+            return False  # another caller inserted the marker first
 
     def fail_email_send(self, order_id: str, purpose: str = ACCESS_EMAIL_PURPOSE) -> None:
         """A definite failure: the send call itself raised, so nothing reached the customer and it is safe to

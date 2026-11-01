@@ -426,3 +426,53 @@ def test_reads_are_fenced_and_scoped_to_the_workspace():
     assert "no changes yet" in call("eng_diff")
     call("eng_write_file", path="tests/test_diffme.py", content=PLACEHOLDER_TEST)
     assert "test_diffme" in call("eng_diff")
+
+
+# --------------------------------------------------------------------------- review findings (P0)
+def test_a_symlink_to_a_denied_file_inside_the_workspace_is_refused():
+    ws = workspace.ensure_workspace()
+    (ws / "src" / "aecom").mkdir(parents=True, exist_ok=True)
+    (ws / "src" / "aecom" / "db.py").write_text("# real db module\n")
+    link = ws / "src" / "aecom" / "store" / "evil_link.py"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(ws / "src" / "aecom" / "db.py")
+    with pytest.raises(workspace.WorkspaceError, match="symlink"):
+        workspace.write_file(ws, "src/aecom/store/evil_link.py", "overwritten = True\n")
+    assert (ws / "src" / "aecom" / "db.py").read_text() == "# real db module\n"
+
+
+def test_a_symlinked_parent_folder_is_refused():
+    ws = workspace.ensure_workspace()
+    (ws / "src" / "aecom" / "policy").mkdir(parents=True, exist_ok=True)
+    link = ws / "src" / "aecom" / "store" / "sneaky"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(ws / "src" / "aecom" / "policy", target_is_directory=True)
+    with pytest.raises(workspace.WorkspaceError, match="symlink"):
+        workspace.write_file(ws, "src/aecom/store/sneaky/x.py", "x = 1\n")
+
+
+@pytest.mark.parametrize("snippet", [
+    "open('/home/pi/agentic_ecommerce_platform/.env').read()", "import os\nprint(os.environ)", "x = 'data/oauth_tokens.json'",
+    "import subprocess", "p = '~/.ssh/id_rsa'", "from aecom.secrets import secrets",
+])
+def test_test_code_that_reaches_for_secrets_or_the_environment_is_refused(snippet):
+    ws = workspace.ensure_workspace()
+    with pytest.raises(workspace.WorkspaceError, match="off limits"):
+        workspace.write_file(ws, "tests/test_probe.py", snippet + "\n")
+
+
+def test_the_test_run_env_has_its_own_python_env_and_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIRTUAL_ENV", "/live/app/.venv")
+    monkeypatch.setenv("HOME", "/Users/owner")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-shouldnotleak123456")
+    env = workspace._env_for_tests(tmp_path)
+    assert "VIRTUAL_ENV" not in env and "ANTHROPIC_API_KEY" not in env
+    assert env["HOME"].startswith(str(tmp_path)) and env["UV_PROJECT_ENVIRONMENT"].startswith(str(tmp_path))
+
+
+def test_test_output_is_redacted_before_it_reaches_the_agent(monkeypatch):
+    ws = workspace.ensure_workspace()
+    fake = type("R", (), {"returncode": 1, "stdout": f"see {workspace.ROOT}/x sk-ant-abcdefghijklmnopqrstuvwxyz", "stderr": ""})()
+    monkeypatch.setattr(workspace, "_invoke_pytest", lambda *a, **k: fake)
+    out = workspace.run_tests(ws, ["tests/test_x.py"])
+    assert str(workspace.ROOT) not in out["stdout"] and "sk-ant-abcdefghijklmnopqrstuvwxyz" not in out["stdout"]

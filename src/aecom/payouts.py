@@ -35,11 +35,12 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import urllib.parse
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from aecom import ledger
 from aecom.audit import audit
@@ -91,6 +92,38 @@ def _row(p: Payout) -> dict[str, Any]:
     }
 
 
+_US_THOUSANDS = re.compile(r"^-?\d{1,3}(,\d{3})+(\.\d+)?$")
+_EU_THOUSANDS = re.compile(r"^-?\d{1,3}(\.\d{3})+(,\d+)?$")
+
+
+def _normalise_decimal(text: str, original: Any, what: str) -> str:
+    """Turn ``1,234.56`` (US) or ``1.234,56`` (EU) or ``123,45`` into a plain ``1234.56`` string. A lone comma
+    followed by three digits (``1,234``) could be either, so it is refused instead of guessed: a wrong guess
+    would be off by a factor of 1000."""
+    if "," not in text:
+        if text.count(".") > 1:
+            if _EU_THOUSANDS.match(text):
+                return text.replace(".", "")
+            raise ValueError(f"{what}: {original!r} is not a number")
+        return text
+    if "." in text:
+        if _US_THOUSANDS.match(text):
+            return text.replace(",", "")
+        if _EU_THOUSANDS.match(text):
+            return text.replace(".", "").replace(",", ".")
+        raise ValueError(f"{what}: {original!r} is not a number")
+    if text.count(",") == 1:
+        head, tail = text.rsplit(",", 1)
+        if len(tail) == 3 and head.lstrip("-").isdigit() and len(head.lstrip("-")) <= 3:
+            raise ValueError(f"{what}: {original!r} is ambiguous (1,234 can mean 1234 or 1.234). "
+                             "Write it with two decimals, like 1234.00 or 1.234,00.")
+        if tail.isdigit() and 1 <= len(tail) <= 2:
+            return f"{head}.{tail}"
+    if _US_THOUSANDS.match(text):
+        return text.replace(",", "")
+    raise ValueError(f"{what}: {original!r} is not a number")
+
+
 def _parse_amount(value: Any, what: str) -> float:
     """A money figure from a CSV cell or an API response: accepts plain numbers, ``1,234.56``, ``€1234.56`` and
     ``(12.00)`` (accounting negative). Raises ``ValueError`` naming ``what`` (the caller passes the row/column)."""
@@ -99,13 +132,13 @@ def _parse_amount(value: Any, what: str) -> float:
     if isinstance(value, (int, float)):
         return float(value)
     text = str(value).strip()
-    for junk in ("EUR", "eur", "\u20ac", "$", "USD", "usd", ","):
+    for junk in ("EUR", "eur", "\u20ac", "$", "USD", "usd", " ", "\u00a0"):
         text = text.replace(junk, "")
-    text = text.strip()
     if text.startswith("(") and text.endswith(")"):
         text = "-" + text[1:-1]
     if not text:
         return 0.0
+    text = _normalise_decimal(text, value, what)
     try:
         return float(text)
     except ValueError:
@@ -275,10 +308,15 @@ def reconcile(payout_id: str, by: str = "") -> dict[str, Any]:
         diff_c = (gross_c - fees_c - refunds_c) - net_c
         status = "matched" if diff_c == 0 else "mismatch"
         if payout.fee_txn is None and fees_c:
-            payout.fee_txn = ledger.post(
-                [("vendor_expense", payout.fees_eur, 0), ("cash", 0, payout.fees_eur)],
-                f"platform fees {payout.provider} {payout.external_id}", payout.id, session=s)
-            newly_booked = True
+            # claim the booking with one conditional UPDATE: a second reconcile running at the same moment matches
+            # no row (it waits for our transaction), so the fees can never be posted twice
+            claimed = s.execute(update(Payout).where(Payout.id == payout.id, Payout.fee_txn.is_(None))
+                                .values(fee_txn="claiming")).rowcount
+            if claimed:
+                payout.fee_txn = ledger.post(
+                    [("vendor_expense", payout.fees_eur, 0), ("cash", 0, payout.fees_eur)],
+                    f"platform fees {payout.provider} {payout.external_id}", payout.id, session=s)
+                newly_booked = True
         payout.status = status
         payout.difference_eur = diff_c / 100
         payout.matched_orders = sorted({o.id for o in orders} | {r.order_id for r in refunds})

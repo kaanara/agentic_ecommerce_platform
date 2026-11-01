@@ -248,7 +248,19 @@ def _extf_header(period: str, year: int) -> list[str]:
 
 
 def _money(amount: Decimal) -> str:
-    return str(amount.quantize(Decimal("0.01"))).replace(".", ",").replace("-", "")
+    """DATEV amounts are unsigned (the Soll/Haben flag carries the direction). A negative value would be a bug
+    upstream: refuse it instead of silently flipping its sign."""
+    q = amount.quantize(Decimal("0.01"))
+    if q < 0:
+        raise ValueError(f"negative ledger amount {q} cannot be exported; fix the entry first")
+    return str(q).replace(".", ",")
+
+
+def _safe_cell(value: Any) -> str:
+    """Text that ends up in a spreadsheet cell: a value starting with = + - @ (or a tab/CR) would run as a formula
+    when the accountant opens the file, so it gets a leading apostrophe; line breaks become spaces."""
+    text = " ".join(str(value if value is not None else "").split("\n")).replace("\r", " ")
+    return "'" + text if text[:1] in ("=", "+", "-", "@", "\t") else text
 
 
 def _row(values: dict[int, str]) -> list[str]:
@@ -293,8 +305,8 @@ def _datev_rows(txns: dict[str, list[LedgerEntry]], amap: dict[str, str], overri
                 idx["Gegenkonto (ohne BU-Schluessel)"]: gegenkonto,
                 idx["BU-Schluessel"]: "",  # VAT is booked as its own manual account line, not DATEV automatic tax
                 idx["Belegdatum"]: belegdatum,
-                idx["Belegfeld 1"]: (receipt or ref or "")[:36],
-                idx["Buchungstext"]: memo[:60],
+                idx["Belegfeld 1"]: _safe_cell(receipt or ref or "")[:36],
+                idx["Buchungstext"]: _safe_cell(memo)[:60],
             }))
     if defaults_used:
         warnings.append("default SKR03 account numbers used for: " + ", ".join(sorted(defaults_used)) +
@@ -349,8 +361,8 @@ def export_month(period: str, fmt: str = "csv", *, by: str, account_map: dict[st
                     if e.account in EXPENSE_ACCOUNTS and not e.ref:
                         warnings.append(f"missing receipt: txn {txn_id} ({e.memo})")
                     csv_rows.append([e.created_at.strftime("%Y-%m-%d"), txn_id, e.account, f"{e.debit:.2f}",
-                                     f"{e.credit:.2f}", e.memo, e.ref or "", e.country or "",
-                                     e.vat_rate if e.vat_rate is not None else "", receipt or ""])
+                                     f"{e.credit:.2f}", _safe_cell(e.memo), _safe_cell(e.ref), e.country or "",
+                                     e.vat_rate if e.vat_rate is not None else "", _safe_cell(receipt)])
             content = _write_csv(csv_rows)
             filename, encoding = f"general_journal_{period}.csv", "utf-8"
 

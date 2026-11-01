@@ -442,3 +442,42 @@ def test_tab_reconcile_all_pending(store):
     assert not at.exception, _messages(at)
     statuses = {p["external_id"]: p["status"] for p in payouts.list_payouts()}
     assert statuses["ls_all_1"] == "matched" and statuses["ls_all_2"] == "mismatch"
+
+
+@pytest.mark.parametrize(("text", "value"), [
+    ("123,45", 123.45), ("1,234.56", 1234.56), ("1.234,56", 1234.56), ("1.234.567,89", 1234567.89),
+    ("(12,50)", -12.5), ("-0,99", -0.99), ("\u20ac 1 234,50", 1234.5), ("100", 100.0), ("12.5", 12.5),
+    ("1,234,567.00", 1234567.0),
+])
+def test_amounts_in_us_and_european_formats_are_read_correctly(text, value):
+    assert payouts._parse_amount(text, "row 1") == value
+
+
+@pytest.mark.parametrize("text", ["1,234", "12,3456", "1.2,3.4", "abc"])
+def test_ambiguous_or_broken_amounts_are_refused_not_guessed(text):
+    with pytest.raises(ValueError, match="row 1"):
+        payouts._parse_amount(text, "row 1")
+
+
+def test_two_reconciles_at_the_same_moment_book_the_fees_once(store):
+    import threading
+
+    _mirrored_order(store, "a@example.com")
+    payout = payouts.ingest(payouts.LEMONSQUEEZY,
+                            _record(external_id="ls_race", gross_eur=100.0, fees_eur=4.0, net_eur=96.0), "Ada")
+    errors, start = [], threading.Barrier(2)
+
+    def go():
+        try:
+            start.wait()
+            payouts.reconcile(payout["id"], "Ada")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=go) for _ in range(2)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert not errors
+    with session() as s:
+        n = s.scalar(select(func.count()).select_from(LedgerEntry).where(LedgerEntry.ref == payout["id"]))
+    assert n == 2  # one debit and one credit line, not four

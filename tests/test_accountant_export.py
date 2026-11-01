@@ -290,3 +290,27 @@ def test_dashboard_tab_prepares_and_offers_a_download():
     assert "row" in markdown
     assert any("not closed" in w.value for w in at.warning)
     assert any("not tax advice" in c.value for c in at.caption)
+
+
+@pytest.mark.parametrize("text", ["=HYPERLINK(\"http://x\",\"y\")", "+1+1", "-2+3", "@SUM(A1)", "\tcmd"])
+def test_cells_that_would_run_as_formulas_are_neutralised(text):
+    from aecom.accountant_export import _safe_cell
+
+    assert _safe_cell(text).startswith("'")
+
+
+def test_ordinary_text_is_untouched_and_line_breaks_become_spaces():
+    from aecom.accountant_export import _safe_cell
+
+    assert _safe_cell("platform fees lemonsqueezy ls_1") == "platform fees lemonsqueezy ls_1"
+    assert _safe_cell("two\nlines\r") == "two lines "
+
+
+def test_a_negative_amount_is_refused_not_exported_with_its_sign_dropped():
+    from decimal import Decimal
+
+    from aecom.accountant_export import _money
+
+    assert _money(Decimal("12.5")) == "12,50"
+    with pytest.raises(ValueError, match="negative"):
+        _money(Decimal("-1"))

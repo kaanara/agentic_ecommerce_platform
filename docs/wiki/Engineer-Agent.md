@@ -103,3 +103,7 @@ human: review and merge the PR on GitHub, then the existing deploy path (`script
 
 See also: [Agents](Agents), [Policy and Approvals](Policy-and-Approvals), [Incident Response](Incident-Response)
 (K8: the issue → PR hand-off this agent is the other half of).
+
+## Known limit: tests are not sandboxed
+
+`eng_run_tests` runs the nested test suite as the same operating-system user as the app. It gets its own Python environment inside the workspace, a workspace-local `HOME`, a scrubbed environment and redacted output, and `eng_write_file` refuses code that mentions secret files, the process environment, subprocesses or raw sockets. That is defence in depth, not a sandbox: a determined piece of test code could still read files by an unusual route. Keep the agent switched off (`engineer_pr_daily_cap` = 0, no `GITHUB_TOKEN`) until it runs under a separate low-privilege user or in a container with no access to the app folder. Paths that go through a symlink are always refused.

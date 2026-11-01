@@ -403,3 +403,20 @@ def test_periods_tab_reopen_shows_the_stepup_form_once_login_is_configured():
     assert not at.exception, _messages(at)
     assert at.text_input(key="_period_reopen_stepup_pw")
     assert not any(b.key == "_period_reopen_btn" for b in at.button)  # not offered before step-up
+
+
+def test_bulk_update_and_delete_of_ledger_rows_through_a_session_are_refused(fresh_company):
+    from sqlalchemy import delete, update
+
+    from aecom import ledger
+    from aecom.db import LedgerEntry, ledger_rewrites_allowed, session
+
+    ledger.record_expense("vendor_expense", 5, "test expense")
+    with session() as s:
+        with pytest.raises(PermissionError, match="append-only"):
+            s.execute(update(LedgerEntry).values(debit=999))
+    with session() as s:
+        with pytest.raises(PermissionError, match="append-only"):
+            s.execute(delete(LedgerEntry))
+    with session() as s, ledger_rewrites_allowed():  # the simulator's escape hatch still works
+        s.execute(update(LedgerEntry).values(memo="demo"))

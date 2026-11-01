@@ -192,17 +192,22 @@ def normalize_path(raw: str) -> str:
 
 
 def resolve_in_workspace(ws: Path, raw: str) -> Path:
-    """``raw``, confined to ``ws`` after following symlinks; raises if it would resolve outside the workspace or
-    is itself a symlink (so a write never follows one out, and a read never discloses one's target)."""
+    """``raw``, confined to ``ws``; raises if any part of the path (the file or a parent folder) is a symlink, or if
+    it would resolve outside the workspace. The symlink test runs on the UNRESOLVED path: ``resolve()`` follows
+    links first, so testing afterwards could never fire (a link inside an allowed folder pointing at a denied
+    file would pass as that denied file's real path)."""
     rel = normalize_path(raw)
     root = ws.resolve()
+    probe = root
+    for part in Path(rel).parts:
+        probe = probe / part
+        if probe.is_symlink():
+            raise WorkspaceError(f"path '{raw}' goes through a symlink ('{part}'); refusing to follow it")
     candidate = (root / rel).resolve()
     try:
         candidate.relative_to(root)
     except ValueError:
         raise WorkspaceError(f"path '{raw}' resolves outside the workspace") from None
-    if candidate.is_symlink():
-        raise WorkspaceError(f"path '{raw}' is a symlink; refusing to follow it")
     return candidate
 
 
@@ -259,13 +264,28 @@ def search(ws: Path, query: str) -> list[str]:
 
 # --------------------------------------------------------------------------------------------------- write + commit
 
+# Code that reaches for the owner's secret files or the process environment has no place in an adapter or a test:
+# the nested test run is the same OS user as the app, so this is defence in depth, not a sandbox (see Engineer-Agent.md).
+_FORBIDDEN_CONTENT = re.compile(
+    r"(?i)(\.env\b|oauth_tokens|\.ssh\b|id_rsa|id_ed25519|os\.environ|os\.getenv|getenv\(|subprocess|"
+    r"\bsocket\b|/etc/passwd|aecom\.secrets|\bsecrets\.get\b|data/aecom\.db|data/backups)")
+
+
+def _forbidden_content(content: str) -> str | None:
+    if (m := _FORBIDDEN_CONTENT.search(content)):
+        return f"it mentions '{m.group(0)}' (secret files, the environment, processes and raw sockets are off limits)"
+    return None
+
+
 def write_file(ws: Path, rel_raw: str, content: str) -> dict:
     rel = normalize_path(rel_raw)
     if not is_write_allowed(rel):
         reason = denied_path_reason(rel) or "not on the Engineer's write allowlist"
         raise WorkspaceError(f"refusing to write '{rel}': {reason}")
+    if reason := _forbidden_content(content):
+        raise WorkspaceError(f"refusing to write '{rel}': {reason}")
+    target = resolve_in_workspace(ws, rel)  # validate the path before any branch or file is created
     branch = ensure_branch(ws)
-    target = resolve_in_workspace(ws, rel)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
     _git(ws, "add", "--", rel)
@@ -348,10 +368,21 @@ def target_repo(ws: Path) -> str:
 def _env_for_tests(ws: Path) -> dict[str, str]:
     """A minimal, built-from-scratch environment: nothing inherited from the parent process is kept except a
     short allowlist needed to run `uv` at all - no *_KEY/*_TOKEN/*_SECRET/*_DSN, no ANTHROPIC_*, nothing of the
-    kind ever reaches the child. A scripted LLM and a throwaway DB keep the nested suite fully offline."""
-    keep = ("PATH", "HOME", "LANG", "LC_ALL", "UV_CACHE_DIR", "VIRTUAL_ENV", "TMPDIR", "SystemRoot")
+    kind ever reaches the child. A scripted LLM and a throwaway DB keep the nested suite fully offline.
+
+    The child must not share the app's Python environment (``VIRTUAL_ENV`` would load the real installed package,
+    so ``aecom.config.ROOT`` would be the live checkout, not this clone) nor the owner's real ``HOME`` (ssh keys,
+    credentials): it gets its own project environment inside the workspace and a workspace-local HOME. Only the uv
+    download cache is shared, read from the parent's real location."""
+    keep = ("PATH", "LANG", "LC_ALL", "TMPDIR", "SystemRoot")
     env = {k: os.environ[k] for k in keep if k in os.environ}
     (ws / "data").mkdir(parents=True, exist_ok=True)
+    home = ws / ".engineer_home"
+    home.mkdir(exist_ok=True)
+    real_home = Path(os.environ.get("HOME", "~")).expanduser()
+    env["UV_CACHE_DIR"] = os.environ.get("UV_CACHE_DIR") or str(real_home / ".cache" / "uv")
+    env["HOME"] = str(home)
+    env["UV_PROJECT_ENVIRONMENT"] = str(ws / ".venv")
     env["LLM_MODE"] = "scripted"
     env["DATABASE_URL"] = f"sqlite:///{ws / 'data' / 'engineer_test.db'}"
     env["MCP_AUTOLOAD"] = "false"
@@ -361,6 +392,13 @@ def _env_for_tests(ws: Path) -> dict[str, str]:
 def _invoke_pytest(cmd: list[str], cwd: Path, env: dict[str, str], timeout: float) -> subprocess.CompletedProcess:
     """The actual subprocess call - a seam tests replace (a real nested ``uv run`` needs a synced venv)."""
     return subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout, check=False)
+
+
+def _redact(text: str) -> str:
+    """Test output goes back to the agent: mask anything secret-shaped and the real checkout's path."""
+    from aecom.observability import mask
+
+    return mask(text.replace(str(ROOT), "<app>"))
 
 
 def run_tests(ws: Path, selection: list[str], timeout: float = TEST_TIMEOUT_DEFAULT,
@@ -382,7 +420,7 @@ def run_tests(ws: Path, selection: list[str], timeout: float = TEST_TIMEOUT_DEFA
     record = {"tree_hash": tree, "passed": passed, "selection": selection, "at": now().isoformat()}
     set_setting(_TEST_RESULT_KEY, json.dumps(record))
     return {"passed": passed, "returncode": r.returncode, "tree_hash": tree, "selection": selection,
-           "stdout": (r.stdout or "")[-output_cap:], "stderr": (r.stderr or "")[-output_cap:]}
+           "stdout": _redact((r.stdout or "")[-output_cap:]), "stderr": _redact((r.stderr or "")[-output_cap:])}
 
 
 def last_test_pass() -> dict | None:
