@@ -173,6 +173,16 @@ def _redact_access(result: dict) -> dict:
     return out
 
 
+@tool("whop", side_effect=True)
+def whop_request(operation: str, args: dict | None = None) -> str:
+    """Call one allowlisted Whop operation (only with STORE_ADAPTER=whop). `operation` is a name such as
+    "products.list" or "promo_codes.create"; `args` is one flat dict: path parameters (id), then query or body fields.
+    Each operation has its own approval tier; publishing, archiving and account preferences wait for a human."""
+    from aecom.store import whop_ops
+
+    return whop_ops.execute(operation, args)
+
+
 @tool("store", side_effect=True)
 def refund_order(order_id: str, amount_eur: float, reason: str) -> dict:
     """Refund (part of) an order; revokes its licence key."""

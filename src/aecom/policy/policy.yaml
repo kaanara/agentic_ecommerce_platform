@@ -276,6 +276,53 @@ rules:
     tier: T3
     reason: "Any other aecom-store tool (create/activate/update_price, ...) needs a human until classified."
 
+  # Whop shop operations (aecom.store.whop_ops, the whop_request tool; only offered with STORE_ADAPTER=whop).
+  # "api:whop/<operation>". Reads T0; drafts, text, stock and checkout links T1; promo codes T2 (amount_off above the
+  # limit needs a human); publishing, archiving, deleting and account preferences T3; anything added to the table
+  # without a rule here lands on the T3 catch-all at the end.
+  api:whop/accounts.me: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/accounts.preferences: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/products.list: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/products.get: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/variants.list: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/variants.get: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/payments.list: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/refunds.list: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/refunds.get: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/promo_codes.list: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/promo_codes.get: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/checkout_configurations.list: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/checkout_configurations.get: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/memberships.list: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/memberships.get: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/payments.get: {tier: T0, agents: [store_ops, marketing, finance, ceo]}
+  api:whop/products.update: {tier: T1, agents: [store_ops]}
+  api:whop/variants.create: {tier: T1, agents: [store_ops]}
+  api:whop/variants.update: {tier: T1, agents: [store_ops]}
+  api:whop/checkout_configurations.create: {tier: T1, agents: [store_ops, marketing]}
+  api:whop/promo_codes.activate: {tier: T1, agents: [store_ops, marketing]}
+  api:whop/promo_codes.deactivate: {tier: T1, agents: [store_ops, marketing]}
+  api:whop/promo_codes.create:
+    tier: T2
+    agents: [store_ops, marketing]
+    limits: {amount_off: 30}
+    reason: "Discounts above 30% (or 30 in the store currency) need a human."
+  api:whop/products.publish:
+    tier: T3
+    agents: [store_ops]
+    reason: "Publishing makes a product public and purchasable."
+  api:whop/products.unpublish: {tier: T3, agents: [store_ops], reason: "Hiding a product stops sales."}
+  api:whop/products.archive: {tier: T3, agents: [store_ops], reason: "Archiving removes a product from sale."}
+  api:whop/variants.archive: {tier: T3, agents: [store_ops], reason: "Archiving removes a price option from sale."}
+  api:whop/promo_codes.delete: {tier: T3, agents: [store_ops, marketing], reason: "Deleting a promo code cannot be undone."}
+  api:whop/accounts.update_preferences:
+    tier: T3
+    agents: [store_ops]
+    reason: "Store preferences change what every buyer sees and how failed renewals behave."
+  api:whop/*:
+    tier: T3
+    reason: "Any other Whop operation needs a human until it is classified."
+
   # M2: optional read-only browser (Playwright MCP, off until a human approves it). Budgets are enforced by
   # aecom.browser_guard; everything that could act on a page or leave the sandbox is denied.
   mcp:playwright/browser_navigate:

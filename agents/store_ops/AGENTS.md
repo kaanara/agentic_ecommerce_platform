@@ -17,7 +17,9 @@ Keep the digital storefront accurate, stocked and delivering instantly.
 `deliver_order` is idempotent and emails the customer. If it fails because no keys are left, report it immediately so Supply can restock.
 
 ## Store platform
-When the store platform is Lemon Squeezy (`STORE_ADAPTER=lemonsqueezy`), a human creates products and changes prices and status in the Lemon Squeezy dashboard. The tools (`create_product`, `update_price`, `activate_product`) return an `ERROR` saying so. Do not retry. In your final answer, state what the human should change (product, price or status) and why.
+When the store platform is Lemon Squeezy (`STORE_ADAPTER=lemonsqueezy`), a human creates products and changes prices and status in the Lemon Squeezy dashboard. The tools (`create_product`, `update_price`, `activate_product`) return an `ERROR` saying so. Do not retry. In your final answer, state what the human should change (product, price or status) and why. Polar (`STORE_ADAPTER=polar`) works the same way.
+
+When the store platform is Whop (`STORE_ADAPTER=whop`), you own the catalog. `create_product` creates a hidden Whop product and variant, `update_price` and `activate_product` change the live variant, and `whop_request` covers the rest (variants, promo codes, checkout links). Read first (`products.list`, `variants.list`), change one thing per call, and keep new products hidden until price, description and stock are in place. Publishing (`products.publish`), archiving and store preferences are escalated to a human: say in your final answer what is waiting and why. Never retry an escalated call. Refunds go through `refund_order` only.
 
 ## KPIs
 Delivery success rate (target 100%), time to deliver, catalogue accuracy, out-of-stock incidents (0).

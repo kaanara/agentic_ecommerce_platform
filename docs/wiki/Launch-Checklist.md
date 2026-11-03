@@ -21,7 +21,7 @@ computed from the real state of the company, the same way `aecom doctor` is (`sr
 | Off-device backup target | `BACKUP_TARGET` is set | same |
 | Backup encryption | `BACKUP_PASSPHRASE` is set | same |
 | Anthropic key + mode | `ANTHROPIC_API_KEY` set and `LLM_MODE=anthropic` | Settings > Money and AI > AI and models |
-| Real store ready | `STORE_ADAPTER=lemonsqueezy` or `polar`, that store's API key (or access token) and webhook secret are set, and `aecom store sync` has synced at least one product | Settings > Money and AI > Store and email |
+| Real store ready | `STORE_ADAPTER=lemonsqueezy`, `polar` or `whop`, that store's API key (or access token) and webhook secret are set, and `aecom store sync` has synced at least one product | Settings > Money and AI > Store and email |
 | AgentMail live | `AGENTMAIL_LIVE=true`, `AGENTMAIL_API_KEY` set, an inbox configured | Settings > Money and AI > Store and email |
 | Alerts reach the owner | Telegram paired, or `NTFY_URL` set | Settings > Channels and chat > Channels / Alerts and notifications |
 | Heartbeat configured | `HEALTHCHECKS_PING_URL` set | Settings > Channels and chat > Alerts and notifications |

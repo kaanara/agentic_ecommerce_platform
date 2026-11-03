@@ -46,6 +46,10 @@ def _execute(tool_name: str, agent_id: str, args: dict[str, Any]) -> Any:
     try:
         if tool_name in CATALOG:
             return CATALOG[tool_name].fn(**args)
+        if tool_name.startswith("api:whop/"):  # a parked whop_request operation (aecom.store.whop_ops)
+            from aecom.store import whop_ops
+
+            return whop_ops.execute(tool_name.removeprefix("api:whop/"), args)
         if tool_name.startswith("mcp:"):
             from aecom.registry.mcp_manager import call_mcp_tool
 

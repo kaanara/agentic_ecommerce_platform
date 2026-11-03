@@ -143,6 +143,19 @@ def test_store_ready_for_polar_needs_its_own_keys(monkeypatch):
     assert by_id(launch.checks())["store_ready"].status == launch.OK
 
 
+def test_store_ready_for_whop_needs_its_own_keys(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "store_adapter", "whop")
+    fake = {"POLAR_ACCESS_TOKEN": "k", "POLAR_WEBHOOK_SECRET": "s"}  # another store's keys do not count
+    monkeypatch.setattr(secrets, "get", lambda name: fake.get(name))
+    with session() as s:
+        s.add(Product(sku="WH-1", title="t", price_eur=10.0, external_id="plan_1"))
+    c = by_id(launch.checks())["store_ready"]
+    assert c.status == launch.TODO and "WHOP_API_KEY not set" in c.detail
+    fake.update(WHOP_API_KEY="t", WHOP_WEBHOOK_SECRET="w")
+    assert by_id(launch.checks())["store_ready"].status == launch.OK
+
+
 def test_agentmail_live_needs_key_and_inbox(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "agentmail_live", False)

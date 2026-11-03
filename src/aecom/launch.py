@@ -191,7 +191,7 @@ def _check_store_ready() -> Check:
     if is_ls and has_key and has_secret and not synced:
         missing.append("no synced store products yet: run `aecom store sync`")
     detail = f"{adapter} configured, keys set, catalog synced" if ok else "; ".join(missing)
-    return _c("store_ready", "Store adapter is the real store (Lemon Squeezy or Polar), with keys and a synced catalog",
+    return _c("store_ready", "Store adapter is the real store (Lemon Squeezy, Polar or Whop), with keys and a synced catalog",
               OK if ok else TODO, detail, "Settings > Money and AI > Store and email")
 
 

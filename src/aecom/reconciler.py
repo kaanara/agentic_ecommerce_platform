@@ -27,8 +27,8 @@ def reconcile(older_than: timedelta = timedelta(minutes=15)) -> dict[str, int]:
 
     Delivered orders whose email was never sent are requeued the same way (deliver_order is idempotent and only
     resends the email); they are counted as ``requeued_email``, a key present only when there are some.
-    With a real store (Lemon Squeezy or Polar), its ``reconcile_recent`` runs over the last ``PROVIDER_WINDOW`` and its
-    counts are added with an ``ls_`` / ``polar_`` prefix; a failure there is recorded (``ls_errors``), never raised.
+    With a real store (Lemon Squeezy, Polar, Whop), its ``reconcile_recent`` runs over the last ``PROVIDER_WINDOW`` and its
+    counts are added with an ``ls_`` / ``polar_`` / ``whop_`` prefix; a failure there is recorded (``ls_errors``), never raised.
     Idempotent: a requeued event stays pending until drained, so the next run skips that order.
     """
     cutoff = now() - older_than

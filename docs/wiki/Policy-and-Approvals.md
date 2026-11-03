@@ -65,6 +65,11 @@ always needs a human). An unclassified tool whose name looks destructive or fina
 and the escalation is audited. A `T4` MCP rule denies, exactly like a built-in one. A sandboxed server is still at
 least `defaults.sandboxed_tool_tier` regardless of its rule (sandboxed servers stay read-only).
 
+**Whop operations** (`whop_request`, `STORE_ADAPTER=whop`) reach the gate as `api:whop/<operation>` and are resolved
+the same way (exact rule > `api:whop/*` > unclassified). The shipped rules are in `policy.yaml`; the table of tiers
+is in [Integrations](Integrations#whop-agents-run-the-shop). An approved call runs through `approvals.approve` exactly
+as a parked built-in tool does.
+
 Live examples (the only server this repo seeds, `src/aecom/bootstrap.py`):
 ```yaml
 rules:

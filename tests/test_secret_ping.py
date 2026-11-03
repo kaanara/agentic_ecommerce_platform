@@ -73,7 +73,7 @@ def test_pings_mapping_matches_the_registrys_secret_fields():
 
     secret_keys = {key for key, field in reg.FIELDS.items() if field.kind == "secret"}
     assert set(ping.PINGS) == {"anthropic_api_key", "agentmail_api_key", "lemonsqueezy_api_key", "polar_access_token",
-                               "ntfy_url", "ntfy_token", "healthchecks_ping_url", "telegram_bot_token"}
+                               "whop_api_key", "ntfy_url", "ntfy_token", "healthchecks_ping_url", "telegram_bot_token"}
     assert set(ping.PINGS) <= secret_keys  # every mapped key is a real secret
     assert "lemonsqueezy_webhook_secret" not in ping.PINGS  # webhook HMAC secrets have no sensible outbound ping
     assert "agentmail_webhook_secret" not in ping.PINGS
@@ -143,6 +143,16 @@ def test_polar_ping_uses_the_configured_base_url(http, configured):
     assert ok is True and "polar-test-secret" not in message
     assert http.calls[0]["url"] == "https://sandbox-api.polar.sh/v1/organizations/"
     assert http.calls[0]["headers"]["Authorization"] == "Bearer polar-test-secret"
+
+
+def test_whop_ping_calls_accounts_me_on_the_configured_base_url(http, configured):
+    configured["WHOP_API_KEY"] = "whop-test-secret"
+    get_settings().whop_base_url = "https://sandbox-api.whop.com/api/v1"
+    http.response = httpx.Response(200, json={"id": "biz_1"})
+    ok, message = ping.ping_whop_api_key()
+    assert ok is True and "whop-test-secret" not in message
+    assert http.calls[0]["url"] == "https://sandbox-api.whop.com/api/v1/accounts/me"
+    assert http.calls[0]["headers"]["Authorization"] == "Bearer whop-test-secret"
 
 
 def test_ntfy_ping_polls_the_topic_with_the_token_when_set(http, configured):

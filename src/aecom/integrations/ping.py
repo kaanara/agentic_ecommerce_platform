@@ -105,6 +105,16 @@ def ping_polar_access_token() -> tuple[bool, str]:
     return _ping("Polar", call, token)
 
 
+def ping_whop_api_key() -> tuple[bool, str]:
+    """GET ``/accounts/me``: the store account the key belongs to."""
+    key = secrets.get("WHOP_API_KEY")
+    if not key:
+        return False, "Whop API key is not set."
+    base = get_settings().whop_base_url.rstrip("/")
+    call = lambda: _get(f"{base}/accounts/me", {"Authorization": f"Bearer {key}"})
+    return _ping("Whop", call, key)
+
+
 def ping_ntfy_url() -> tuple[bool, str]:
     """GET ``<topic>?poll=1&since=5m``: ntfy's non-destructive read of recent messages - proves the topic URL (and,
     if set, the access token) actually work without publishing a test notification. Shared by both ntfy secrets
@@ -156,6 +166,7 @@ PINGS: dict[str, Callable[[], tuple[bool, str]]] = {
     "agentmail_api_key": ping_agentmail_api_key,
     "lemonsqueezy_api_key": ping_lemonsqueezy_api_key,
     "polar_access_token": ping_polar_access_token,
+    "whop_api_key": ping_whop_api_key,
     "ntfy_url": ping_ntfy_url,
     "ntfy_token": ping_ntfy_url,
     "healthchecks_ping_url": ping_healthchecks_ping_url,

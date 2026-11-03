@@ -7,6 +7,8 @@ Not behind the bearer token (providers can't send it). Instead every route check
   (https://docs.lemonsqueezy.com/help/webhooks/signing-requests).
 * ``POST /webhooks/polar``: Standard Webhooks headers ``webhook-id`` / ``webhook-timestamp`` / ``webhook-signature``
   under ``POLAR_WEBHOOK_SECRET`` (see ``aecom.store.polar.verify_signature``), 5-minute timestamp tolerance.
+* ``POST /webhooks/whop``: the same Standard Webhooks scheme under ``WHOP_WEBHOOK_SECRET`` (``ws_...``); a succeeded
+  refund event makes the route fetch the payment first (``aecom.store.whop``).
 * ``POST /webhooks/agentmail``: Svix headers ``svix-id`` / ``svix-timestamp`` / ``svix-signature``, base64
   HMAC-SHA256 of ``{id}.{timestamp}.{body}`` under the base64 part of the ``whsec_`` secret
   ``AGENTMAIL_WEBHOOK_SECRET``, 5-minute timestamp tolerance (https://docs.agentmail.to/webhook-verification,
@@ -54,7 +56,7 @@ from aecom.db import AuditLog, Order, Product, WebhookReceipt, now, session
 from aecom.observability import record_error
 from aecom.secrets import secrets
 from aecom.store import lemonsqueezy as ls
-from aecom.store import polar
+from aecom.store import polar, whop
 from aecom.store.adapter import get_store
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -147,6 +149,50 @@ async def polar_webhook(request: Request, bg: BackgroundTasks) -> dict[str, Any]
     raw = await request.body()
     h = request.headers
     result = await run_in_threadpool(_polar, raw, h.get("webhook-id"), h.get("webhook-timestamp"),
+                                     h.get("webhook-signature"))
+    if not result["duplicate"]:
+        bg.add_task(drain)
+    return result
+
+
+# --------------------------------------------------------------------------- Whop (Standard Webhooks)
+def _whop_payment(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """For a succeeded refund event: the current Payment, fetched BEFORE the database transaction (no network call
+    inside it). A fetch failure raises, so the route answers 500 and Whop retries."""
+    payment_id = whop.refund_payment_id(payload)
+    return whop.WhopStore().get_payment(payment_id) if payment_id else None
+
+
+def _whop(raw: bytes, msg_id: str | None, timestamp: str | None, signature: str | None) -> dict[str, Any]:
+    secret = secrets.get("WHOP_WEBHOOK_SECRET")
+    if not secret:
+        raise HTTPException(503, "WHOP_WEBHOOK_SECRET not configured")
+    if not whop.verify_signature(raw, msg_id, timestamp, signature, secret=secret):
+        raise HTTPException(401, "invalid, expired or missing webhook signature")
+    payload = _json(raw)
+    event = str(payload.get("type") or "")
+    try:
+        payment = _whop_payment(payload)
+        with session() as s:  # receipt and mirror commit together: a failure records neither, so the retry is processed
+            s.add(WebhookReceipt(provider=whop.PROVIDER, event_key=str(msg_id), topic=event))
+            try:
+                s.flush()
+            except IntegrityError:
+                s.rollback()
+                return {"duplicate": True, "event": event}
+            result = whop.dispatch(payload, payment=payment, session=s)
+    except Exception as exc:
+        record_error("webhook.whop", exc, context={"event": event, "webhook_id": msg_id})
+        raise HTTPException(500, "processing failed; retry") from exc
+    return {"duplicate": False, **result}
+
+
+@router.post("/whop")
+async def whop_webhook(request: Request, bg: BackgroundTasks) -> dict[str, Any]:
+    """Whop payment.succeeded / refund.created / refund.updated -> local mirror (other events acknowledged)."""
+    raw = await request.body()
+    h = request.headers
+    result = await run_in_threadpool(_whop, raw, h.get("webhook-id"), h.get("webhook-timestamp"),
                                      h.get("webhook-signature"))
     if not result["duplicate"]:
         bg.add_task(drain)

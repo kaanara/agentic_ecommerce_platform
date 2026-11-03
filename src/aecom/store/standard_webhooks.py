@@ -1,11 +1,11 @@
-"""Standard Webhooks signature check (https://www.standardwebhooks.com), shared by the webhook routes.
+"""Standard Webhooks signature check (https://www.standardwebhooks.com), shared by the Polar and Whop routes.
 
 Headers ``webhook-id`` / ``webhook-timestamp`` / ``webhook-signature``. The signature is any ``v1,<base64>`` entry of
 the space-separated header, equal to the base64 HMAC-SHA256 of ``{id}.{timestamp}.{raw body}``. The timestamp must be
 within ``TOLERANCE_S`` of now (replay protection).
 
 Providers disagree on how the secret becomes the HMAC key, so both forms are tried: the whole secret string as UTF-8
-(Polar secrets created before 2026-09-08) and the base64
+(Polar secrets created before 2026-09-08, and Whop's ``ws_...`` secrets as its SDK passes them on) and the base64
 part after a ``whsec_`` prefix (the Standard Webhooks spec). Stdlib only, no SDK.
 """
 
@@ -22,7 +22,7 @@ TOLERANCE_S = 5 * 60
 
 def keys(secret: str) -> list[bytes]:
     out = [secret.encode()]
-    for prefix in ("whsec_",):
+    for prefix in ("whsec_", "ws_"):
         if secret.startswith(prefix):
             try:
                 out.append(base64.b64decode(secret.removeprefix(prefix), validate=True))

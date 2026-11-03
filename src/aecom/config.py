@@ -85,6 +85,13 @@ class Settings(BaseSettings):
     polar_organization_id: str | None = None
     polar_currency: str = "EUR"  # the ledger currency; orders in another currency are refused, not converted
     polar_timeout_s: float = 20.0
+    # Whop (STORE_ADAPTER=whop). The API key and webhook secret are read via aecom.secrets.
+    # Sandbox: https://sandbox-api.whop.com/api/v1
+    whop_base_url: str = "https://api.whop.com/api/v1"
+    whop_account_id: str | None = None  # biz_... id of the store
+    whop_currency: str = "EUR"  # orders in another currency are refused, not converted
+    whop_api_version: str = "2026-11-02-1"  # sent as Api-Version-Date: pins request/response shapes
+    whop_timeout_s: float = 20.0
     # Where automatic restocks get licence keys: "mock" mints fake keys (demo only), "none" = manual keys only
     license_key_source: str = "mock"
     # I13: download links of the built-in store, {download_base_url}/{order_id}/{token}, valid for N days

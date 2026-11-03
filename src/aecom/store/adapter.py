@@ -76,6 +76,7 @@ class StoreAdapter(Protocol):
 REAL_STORES: dict[str, tuple[str, str]] = {
     "lemonsqueezy": ("LEMONSQUEEZY_API_KEY", "LEMONSQUEEZY_WEBHOOK_SECRET"),
     "polar": ("POLAR_ACCESS_TOKEN", "POLAR_WEBHOOK_SECRET"),
+    "whop": ("WHOP_API_KEY", "WHOP_WEBHOOK_SECRET"),
 }
 
 
@@ -95,6 +96,10 @@ def get_store() -> StoreAdapter:
         from aecom.store.polar import PolarStore
 
         return PolarStore()
+    if name == "whop":
+        from aecom.store.whop import WhopStore
+
+        return WhopStore()
     raise NotImplementedError(
         f"Store adapter '{name}' is not implemented yet. The CEO's platform decision record lists the "
         "provisioning steps; add aecom/store/<platform>.py implementing StoreAdapter."

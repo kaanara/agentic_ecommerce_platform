@@ -36,7 +36,7 @@ def run_sync_store_job(_params: dict[str, Any]) -> dict[str, Any]:
 
     store = get_store()
     if not hasattr(store, "sync_catalog"):
-        raise RuntimeError(f"store adapter {store.name!r} has no catalog to sync (only STORE_ADAPTER=lemonsqueezy or polar does)")
+        raise RuntimeError(f"store adapter {store.name!r} has no catalog to sync (only STORE_ADAPTER=lemonsqueezy, polar or whop does)")
     return store.sync_catalog()
 
 

@@ -25,8 +25,8 @@ everything else about it - exactly as it was; nothing partial is ever committed.
                                                        # docstring - the live call itself is untested, see
                                                        # docs/wiki/Payouts.md)
 
-Covered orders today are Lemon Squeezy and Polar mirrors (``Order.external_id`` set; ``aecom.store.lemonsqueezy``,
-``aecom.store.polar``). A payout ingested for another provider still reconciles, it just
+Covered orders today are Lemon Squeezy, Polar and Whop mirrors (``Order.external_id`` set; ``aecom.store.lemonsqueezy``,
+``aecom.store.polar``, ``aecom.store.whop``). A payout ingested for another provider still reconciles, it just
 finds no local orders to match against (a mismatch, unless its fees also happen to be zero) until that provider's
 orders are mirrored here too.
 """
@@ -53,8 +53,9 @@ LEMONSQUEEZY = "lemonsqueezy"
 STRIPE = "stripe"
 PAYPAL = "paypal"
 POLAR = "polar"
-PROVIDERS = (LEMONSQUEEZY, POLAR, STRIPE, PAYPAL)
-MIRRORED_PROVIDERS = (LEMONSQUEEZY, POLAR)  # providers whose orders this app actually mirrors locally (see module doc)
+WHOP = "whop"
+PROVIDERS = (LEMONSQUEEZY, POLAR, WHOP, STRIPE, PAYPAL)
+MIRRORED_PROVIDERS = (LEMONSQUEEZY, POLAR, WHOP)  # providers whose orders this app actually mirrors locally (see module doc)
 
 STALE_AFTER_DAYS = 14  # aecom.monitors.payout_unmatched: pending/mismatch older than this is a P3
 

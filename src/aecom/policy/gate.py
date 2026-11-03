@@ -81,7 +81,7 @@ def is_forbidden(tool_name: str, policy: dict[str, Any] | None = None) -> bool:
     so a server called e.g. ``login_service`` does not deny its read tools; builtin names are matched whole."""
     patterns = (policy or load_policy())["defaults"].get("forbidden_patterns") or []
     name = tool_name.lower()
-    if name.startswith("mcp:"):
+    if name.startswith(("mcp:", "api:")):
         name = name.rsplit("/", 1)[-1]
     return any(fnmatch.fnmatchcase(name, p.lower()) for p in patterns)
 
@@ -97,7 +97,7 @@ MCP_DESTRUCTIVE_NAME_HINTS = ("create_refund", "delete", "send", "pay", "transfe
 def looks_destructive(tool_name: str) -> bool:
     """True if the bare tool part of ``tool_name`` (after the last ``/`` for ``mcp:<server>/<tool>``) contains one of
     ``MCP_DESTRUCTIVE_NAME_HINTS`` as a substring, case-insensitive."""
-    name = tool_name.rsplit("/", 1)[-1].lower() if tool_name.startswith("mcp:") else tool_name.lower()
+    name = tool_name.rsplit("/", 1)[-1].lower() if tool_name.startswith(("mcp:", "api:")) else tool_name.lower()
     return any(hint in name for hint in MCP_DESTRUCTIVE_NAME_HINTS)
 
 
@@ -115,9 +115,10 @@ def resolve_rule(tool_name: str, policy: dict[str, Any], *, side_effect: bool) -
     rules = policy["rules"]
     if tool_name in rules:
         return rules[tool_name]
-    if tool_name.startswith("mcp:"):
-        server = tool_name[len("mcp:"):].split("/", 1)[0]
-        wildcard = rules.get(f"mcp:{server}/*")
+    if tool_name.startswith(("mcp:", "api:")):  # api:<server>/<operation> (store.whop_ops) is classified like an MCP tool
+        scheme = tool_name.split(":", 1)[0]
+        server = tool_name[len(scheme) + 1:].split("/", 1)[0]
+        wildcard = rules.get(f"{scheme}:{server}/*")
         if wildcard is not None:
             return wildcard
         destructive = looks_destructive(tool_name)

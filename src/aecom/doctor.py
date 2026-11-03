@@ -219,7 +219,7 @@ def check_backup() -> Check:
 
 
 def check_catalog_sync() -> Check:
-    """With a real store (Lemon Squeezy or Polar), the local catalog must have been synced at least once (R16)."""
+    """With a real store (Lemon Squeezy, Polar, Whop), the local catalog must have been synced at least once (R16)."""
     from sqlalchemy import func, select
 
     from aecom.db import Product, session

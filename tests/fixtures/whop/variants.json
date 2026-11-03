@@ -1,0 +1,64 @@
+{
+ "data": [
+  {
+   "id": "plan_101",
+   "title": "Lifetime",
+   "visibility": "visible",
+   "billing_type": "one_time",
+   "initial_price": 49.0,
+   "renewal_price": null,
+   "currency": "eur",
+   "sku": "LIC-FOCUSFLOW",
+   "product": {
+    "id": "prod_101",
+    "title": "x"
+   }
+  },
+  {
+   "id": "plan_201",
+   "title": "Self-paced",
+   "visibility": "visible",
+   "billing_type": "one_time",
+   "initial_price": 29.0,
+   "renewal_price": null,
+   "currency": "eur",
+   "sku": null,
+   "product": {
+    "id": "prod_201",
+    "title": "x"
+   }
+  },
+  {
+   "id": "plan_301",
+   "title": "Monthly",
+   "visibility": "visible",
+   "billing_type": "renewal",
+   "initial_price": 0,
+   "renewal_price": 9.0,
+   "currency": "eur",
+   "sku": null,
+   "product": {
+    "id": "prod_301",
+    "title": "x"
+   }
+  },
+  {
+   "id": "plan_401",
+   "title": "Draft",
+   "visibility": "hidden",
+   "billing_type": "one_time",
+   "initial_price": 49.0,
+   "renewal_price": null,
+   "currency": "eur",
+   "sku": null,
+   "product": {
+    "id": "prod_401",
+    "title": "x"
+   }
+  }
+ ],
+ "page_info": {
+  "end_cursor": null,
+  "has_next_page": false
+ }
+}

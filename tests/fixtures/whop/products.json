@@ -1,0 +1,36 @@
+{
+ "data": [
+  {
+   "id": "prod_101",
+   "title": "FocusFlow Pro",
+   "description": "d",
+   "visibility": "visible",
+   "variants": []
+  },
+  {
+   "id": "prod_201",
+   "title": "AI Automation Course",
+   "description": "d",
+   "visibility": "visible",
+   "variants": []
+  },
+  {
+   "id": "prod_301",
+   "title": "Team plan",
+   "description": "d",
+   "visibility": "visible",
+   "variants": []
+  },
+  {
+   "id": "prod_401",
+   "title": "Hidden draft",
+   "description": "d",
+   "visibility": "hidden",
+   "variants": []
+  }
+ ],
+ "page_info": {
+  "end_cursor": null,
+  "has_next_page": false
+ }
+}

@@ -18,6 +18,7 @@ Agents **never** create accounts, accept terms, enter payment details or handle 
    |---|---|---|
    | `lemonsqueezy` | `GET https://api.lemonsqueezy.com/v1/users/me` | Bearer key |
    | `polar` | `GET <POLAR_BASE_URL>/organizations/` | Bearer organization access token |
+   | `whop` | `GET <WHOP_BASE_URL>/accounts/me` | Bearer account API key |
    | `agentmail` | `GET /v0/inboxes/<AGENTMAIL_ORG_INBOX>` | then probes `GET /v0/api-keys`: if that succeeds the key is org-wide → warning "key has organization-wide access; create an inbox-scoped key" |
    | `anthropic` | `GET https://api.anthropic.com/v1/models` | `x-api-key` + `anthropic-version` |
    | anything else | none | presence only, with a warning that it wasn't verified |
@@ -64,6 +65,7 @@ Tools read credentials at call time via `SecretsProvider` (`src/aecom/secrets.py
 | `mock` | ✅ Built in and DB-backed. Publishes `order.paid` / `inventory.*` events, and the app delivers and emails. |
 | `lemonsqueezy` | ✅ `src/aecom/store/lemonsqueezy.py`. Lemon Squeezy is the system of record (Roadmap L1). The app mirrors orders, refunds and licence keys. |
 | `polar` | ✅ `src/aecom/store/polar.py`. Alternative to Lemon Squeezy, also a merchant of record and the system of record. Orders and refunds are mirrored the same way; licence keys are not mirrored (v1). Fixtures are doc-derived, not yet checked against a live sandbox. |
+| `whop` | ✅ `src/aecom/store/whop.py`. Third real store, and the only one where **agents manage the catalog** (products, prices, visibility, promo codes, checkout links, buyer-facing preferences) through the API, gated by `policy.yaml`. Payments and refunds are mirrored like the others. Fixtures are spec-derived, not yet checked against a live sandbox. |
 | Paddle / Shopify / Gumroad | ⏳ Add `store/<platform>.py` and register it in `get_store()`. |
 
 ### Download links
@@ -104,6 +106,25 @@ Set `STORE_ADAPTER=polar` instead of `lemonsqueezy` (one store at a time). It re
 - **Switching:** a human creates the organization and products in Polar, an organization access token (`products:read`, `orders:read`, `refunds:write`) and a webhook for `order.paid, order.refunded` at `POST /webhooks/polar`. Set `STORE_ADAPTER=polar`, `POLAR_ACCESS_TOKEN`, `POLAR_ORGANIZATION_ID`, `POLAR_WEBHOOK_SECRET`, run `aecom store sync`. For the sandbox set `POLAR_BASE_URL=https://sandbox-api.polar.sh/v1` and use sandbox credentials. The ledger books `POLAR_CURRENCY` (default EUR); other currencies are refused.
 - **Not done:** licence keys (a Polar benefit, delivered by Polar), subscriptions, Polar's MCP server (OAuth only), chaos injectors. Payload shapes and open points: `tests/fixtures/polar/README.md`.
 
+### Whop (agents run the shop)
+Set `STORE_ADAPTER=whop` (one store at a time). Payments and refunds are mirrored through the same helpers as Lemon Squeezy and Polar, but the catalog is **writable by agents**.
+- **Mirrors:** `payment.succeeded` → `mirror_payment` (`amount_eur` = `total`, `vat_eur` = `tax_amount`; money objects are decimal strings in major units). `refund.created` / `refund.updated` (status `succeeded`) → the route first fetches the payment (`GET /payments/{id}`, outside the database transaction) and `mirror_refund` books the cumulative `refunded_amount` difference. Checkout metadata uses the same keys as the other stores (`country`, `campaign_id`, `marketing_consent`, `withdrawal_consent_*`). `reconcile_recent` repairs lost webhooks from `GET /payments`.
+- **Catalog tools:** `create_product` makes a hidden Whop product and variant; `update_price` and `activate_product` change the live variant (`update_price` keeps the 20% limit); `refund_order` calls `POST /payments/{id}/refund`. Licence keys come from Whop memberships (`add_license_keys` is refused).
+- **`whop_request`:** one generic tool for everything else, only offered with `STORE_ADAPTER=whop`. `whop_request(operation, args)` accepts a fixed list in `src/aecom/store/whop_ops.py` (the OpenAPI paths are checked by a test). Each operation is policy-gated as `api:whop/<operation>`:
+
+  | Tier | Operations |
+  |---|---|
+  | T0 (read) | `accounts.me`, `accounts.preferences`, `products.list/get`, `variants.list/get`, `payments.list/get`, `refunds.list/get`, `promo_codes.list/get`, `checkout_configurations.list/get`, `memberships.list/get` |
+  | T1 | `products.update` (text, labels, images), `variants.create` (always hidden), `variants.update` (no price fields), `checkout_configurations.create`, `promo_codes.activate/deactivate` |
+  | T2 | `promo_codes.create` (above 30 % or 30 in the store currency waits for a human) |
+  | T3 (human approves) | `products.publish/unpublish/archive`, `variants.archive`, `promo_codes.delete`, `accounts.update_preferences` (only `customer_tracking`, `feedback_options`, `review_request_emails`, `subscription_failure_behavior`) |
+
+  Not exposed at all: payment refund/void/capture (use `refund_order`), webhooks, API keys, payouts, transfers, cards, ledgers, ads, account deletion or transfer, payout and settlement preferences. `api:whop/*` is a T3 catch-all for any operation added without a rule. The kill switch, safe mode and agent pause stop Whop writes like any other tool. Buyer email addresses are masked in what agents see.
+- **Idempotency:** every POST/PATCH/DELETE carries an `Idempotency-Key` derived from the request, so a retried call does not create a second product.
+- **Switching:** a human creates the Whop account, an account API key with the permissions listed in `.env.example` (shown once), and a webhook for `payment.succeeded, refund.created, refund.updated` at `POST /webhooks/whop`. Set `STORE_ADAPTER=whop`, `WHOP_API_KEY`, `WHOP_ACCOUNT_ID`, `WHOP_WEBHOOK_SECRET`, run `aecom store sync`. Sandbox: `WHOP_BASE_URL=https://sandbox-api.whop.com/api/v1`. The ledger books `WHOP_CURRENCY` (default EUR).
+- **Why not Whop's MCP or CLI:** the MCP server only supports browser sign-in (no API key), so the headless Pi cannot use it; the CLI has no sandbox (every command runs in production) and needs Node on the Pi. Both could be used by a person in a dev session.
+- **To confirm before launch:** whether Whop is the merchant of record for EU VAT (the owner must check; the ledger books Whop's `tax_amount` either way), and that `refunded_amount` includes tax. See `tests/fixtures/whop/README.md`.
+
 ## Webhooks
 `src/aecom/api/webhooks.py`. These routes are **not** behind the API bearer token, because providers can't send it. Instead each one verifies the provider's signature over the raw body and **fails closed**: no secret configured → 503, bad or missing signature → 401, and nothing is written. Every delivery is recorded once in `ops_webhook_receipts` (unique `provider, event_key`), so a provider's retry or duplicate returns 200 `{"duplicate": true}` without side effects.
 
@@ -120,6 +141,11 @@ Set `STORE_ADAPTER=polar` instead of `lemonsqueezy` (one store at a time). It re
 - **Configure:** a human creates the webhook endpoint in the Polar dashboard (Settings > Webhooks) with the tunnel URL and the events `order.paid, order.refunded`, and copies the secret into `.env` as `POLAR_WEBHOOK_SECRET`.
 - **Signature** (Standard Webhooks, [docs](https://polar.sh/docs/integrate/webhooks/delivery)): headers `webhook-id`, `webhook-timestamp`, `webhook-signature` (`v1,<base64>`), base64 HMAC-SHA256 of `{id}.{timestamp}.{raw body}`. Secrets created before 2026-09-08 use the whole `whsec_…` string as key, newer ones the base64 part after `whsec_`; both are tried. Timestamps more than 5 minutes off are rejected.
 - **Idempotency:** the receipt key is `webhook-id`. A mirror failure stores the error (`webhook.polar`), drops the receipt and returns 500, so Polar retries (up to 10 times; the endpoint is disabled after 10 consecutive failures).
+
+### Whop: `POST /webhooks/whop`
+- **Configure:** a human creates the webhook in the Whop dashboard (Developer > Webhooks) with the tunnel URL and the events `payment.succeeded, refund.created, refund.updated`, and copies the `ws_...` secret into `.env` as `WHOP_WEBHOOK_SECRET` (shown once).
+- **Signature:** Standard Webhooks, same as Polar (`webhook-id`, `webhook-timestamp`, `webhook-signature`, 5-minute tolerance; both key forms are tried). Shared code: `aecom.store.standard_webhooks`.
+- **Idempotency:** the receipt key is `webhook-id`. Whop retries up to 12 times over about 71 hours and disables the endpoint after 72 hours of failures. A failed mirror, or a failed payment fetch for a refund event, returns 500 so Whop retries.
 
 ### AgentMail: `POST /webhooks/agentmail`
 - **Configure:** a human creates a `message.received` webhook in the AgentMail console with the tunnel URL and copies its `whsec_...` secret into `.env` as `AGENTMAIL_WEBHOOK_SECRET`.
