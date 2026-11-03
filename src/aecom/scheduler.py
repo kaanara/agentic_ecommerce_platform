@@ -45,7 +45,10 @@ def sync_store_catalog() -> None:
     Licence-key recovery only considers products of kind 'license', which only a sync sets (R16). Never raises."""
     from aecom.config import get_settings
 
-    if get_settings().store_adapter != "lemonsqueezy" or not secrets.has("LEMONSQUEEZY_API_KEY"):
+    from aecom.store.adapter import REAL_STORES
+
+    key = REAL_STORES.get(get_settings().store_adapter, (None,))[0]
+    if key is None or not secrets.has(key):
         return
     try:
         from aecom.store.adapter import get_store

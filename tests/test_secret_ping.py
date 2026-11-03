@@ -72,8 +72,8 @@ def test_pings_mapping_matches_the_registrys_secret_fields():
     from aecom import settings_registry as reg
 
     secret_keys = {key for key, field in reg.FIELDS.items() if field.kind == "secret"}
-    assert set(ping.PINGS) == {"anthropic_api_key", "agentmail_api_key", "lemonsqueezy_api_key", "ntfy_url",
-                               "ntfy_token", "healthchecks_ping_url", "telegram_bot_token"}
+    assert set(ping.PINGS) == {"anthropic_api_key", "agentmail_api_key", "lemonsqueezy_api_key", "polar_access_token",
+                               "ntfy_url", "ntfy_token", "healthchecks_ping_url", "telegram_bot_token"}
     assert set(ping.PINGS) <= secret_keys  # every mapped key is a real secret
     assert "lemonsqueezy_webhook_secret" not in ping.PINGS  # webhook HMAC secrets have no sensible outbound ping
     assert "agentmail_webhook_secret" not in ping.PINGS
@@ -133,6 +133,16 @@ def test_lemonsqueezy_ping_succeeds_and_uses_the_configured_base_url(http, confi
     call = http.calls[0]
     assert call["url"] == "https://api.lemonsqueezy.com/v1/users/me"
     assert call["headers"]["Authorization"] == f"Bearer {LEMONSQUEEZY_KEY}"
+
+
+def test_polar_ping_uses_the_configured_base_url(http, configured):
+    configured["POLAR_ACCESS_TOKEN"] = "polar-test-secret"
+    get_settings().polar_base_url = "https://sandbox-api.polar.sh/v1"
+    http.response = httpx.Response(200, json={"items": []})
+    ok, message = ping.ping_polar_access_token()
+    assert ok is True and "polar-test-secret" not in message
+    assert http.calls[0]["url"] == "https://sandbox-api.polar.sh/v1/organizations/"
+    assert http.calls[0]["headers"]["Authorization"] == "Bearer polar-test-secret"
 
 
 def test_ntfy_ping_polls_the_topic_with_the_token_when_set(http, configured):

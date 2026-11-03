@@ -71,6 +71,14 @@ class StoreAdapter(Protocol):
     def list_orders(self, limit: int = 50) -> list[dict[str, Any]]: ...
 
 
+# Real stores (a platform is the system of record): adapter name -> (API credential, webhook signing secret).
+# Launch check, doctor, scheduler and reconciler read this table instead of naming each store.
+REAL_STORES: dict[str, tuple[str, str]] = {
+    "lemonsqueezy": ("LEMONSQUEEZY_API_KEY", "LEMONSQUEEZY_WEBHOOK_SECRET"),
+    "polar": ("POLAR_ACCESS_TOKEN", "POLAR_WEBHOOK_SECRET"),
+}
+
+
 def get_store() -> StoreAdapter:
     from aecom.config import get_settings
 
@@ -83,6 +91,10 @@ def get_store() -> StoreAdapter:
         from aecom.store.lemonsqueezy import LemonSqueezyStore
 
         return LemonSqueezyStore()
+    if name == "polar":
+        from aecom.store.polar import PolarStore
+
+        return PolarStore()
     raise NotImplementedError(
         f"Store adapter '{name}' is not implemented yet. The CEO's platform decision record lists the "
         "provisioning steps; add aecom/store/<platform>.py implementing StoreAdapter."

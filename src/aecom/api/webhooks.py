@@ -5,6 +5,8 @@ Not behind the bearer token (providers can't send it). Instead every route check
 
 * ``POST /webhooks/lemonsqueezy``: ``X-Signature`` = hex HMAC-SHA256 of the body under ``LEMONSQUEEZY_WEBHOOK_SECRET``
   (https://docs.lemonsqueezy.com/help/webhooks/signing-requests).
+* ``POST /webhooks/polar``: Standard Webhooks headers ``webhook-id`` / ``webhook-timestamp`` / ``webhook-signature``
+  under ``POLAR_WEBHOOK_SECRET`` (see ``aecom.store.polar.verify_signature``), 5-minute timestamp tolerance.
 * ``POST /webhooks/agentmail``: Svix headers ``svix-id`` / ``svix-timestamp`` / ``svix-signature``, base64
   HMAC-SHA256 of ``{id}.{timestamp}.{body}`` under the base64 part of the ``whsec_`` secret
   ``AGENTMAIL_WEBHOOK_SECRET``, 5-minute timestamp tolerance (https://docs.agentmail.to/webhook-verification,
@@ -52,6 +54,7 @@ from aecom.db import AuditLog, Order, Product, WebhookReceipt, now, session
 from aecom.observability import record_error
 from aecom.secrets import secrets
 from aecom.store import lemonsqueezy as ls
+from aecom.store import polar
 from aecom.store.adapter import get_store
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -109,6 +112,42 @@ async def lemonsqueezy_webhook(request: Request, bg: BackgroundTasks) -> dict[st
     raw = await request.body()
     result = await run_in_threadpool(_lemonsqueezy, raw, request.headers.get("x-signature"),
                                      request.headers.get("x-event-name"))
+    if not result["duplicate"]:
+        bg.add_task(drain)
+    return result
+
+
+# --------------------------------------------------------------------------- Polar (Standard Webhooks)
+def _polar(raw: bytes, msg_id: str | None, timestamp: str | None, signature: str | None) -> dict[str, Any]:
+    secret = secrets.get("POLAR_WEBHOOK_SECRET")
+    if not secret:
+        raise HTTPException(503, "POLAR_WEBHOOK_SECRET not configured")
+    if not polar.verify_signature(raw, msg_id, timestamp, signature, secret=secret):
+        raise HTTPException(401, "invalid, expired or missing webhook signature")
+    payload = _json(raw)
+    event = str(payload.get("type") or "")
+    try:
+        with session() as s:  # receipt and mirror commit together: a failure records neither, so the retry is processed
+            s.add(WebhookReceipt(provider=polar.PROVIDER, event_key=str(msg_id), topic=event))
+            try:
+                s.flush()
+            except IntegrityError:
+                s.rollback()
+                return {"duplicate": True, "event": event}
+            result = polar.dispatch(payload, session=s)
+    except Exception as exc:
+        record_error("webhook.polar", exc, context={"event": event, "webhook_id": msg_id})
+        raise HTTPException(500, "processing failed; retry") from exc
+    return {"duplicate": False, **result}
+
+
+@router.post("/polar")
+async def polar_webhook(request: Request, bg: BackgroundTasks) -> dict[str, Any]:
+    """Polar order.paid / order.refunded -> local mirror (other events acknowledged)."""
+    raw = await request.body()
+    h = request.headers
+    result = await run_in_threadpool(_polar, raw, h.get("webhook-id"), h.get("webhook-timestamp"),
+                                     h.get("webhook-signature"))
     if not result["duplicate"]:
         bg.add_task(drain)
     return result

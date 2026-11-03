@@ -1,0 +1,8 @@
+{
+ "id": "ref-1",
+ "status": "succeeded",
+ "amount": 1000,
+ "tax_amount": 210,
+ "order_id": "7c1f0a52-0000-4000-8000-000000005001",
+ "currency": "eur"
+}

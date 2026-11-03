@@ -130,6 +130,19 @@ def test_store_ready_needs_adapter_keys_and_a_synced_catalog(monkeypatch):
     assert by_id(launch.checks())["store_ready"].status == launch.OK
 
 
+def test_store_ready_for_polar_needs_its_own_keys(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "store_adapter", "polar")
+    fake = {"LEMONSQUEEZY_API_KEY": "k", "LEMONSQUEEZY_WEBHOOK_SECRET": "s"}  # the other store's keys do not count
+    monkeypatch.setattr(secrets, "get", lambda name: fake.get(name))
+    with session() as s:
+        s.add(Product(sku="PL-1", title="t", price_eur=10.0, external_id="p-1"))
+    c = by_id(launch.checks())["store_ready"]
+    assert c.status == launch.TODO and "POLAR_ACCESS_TOKEN not set" in c.detail
+    fake.update(POLAR_ACCESS_TOKEN="t", POLAR_WEBHOOK_SECRET="w")
+    assert by_id(launch.checks())["store_ready"].status == launch.OK
+
+
 def test_agentmail_live_needs_key_and_inbox(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "agentmail_live", False)

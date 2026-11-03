@@ -219,12 +219,14 @@ def check_backup() -> Check:
 
 
 def check_catalog_sync() -> Check:
-    """With Lemon Squeezy as the store, the local catalog must have been synced at least once (R16)."""
+    """With a real store (Lemon Squeezy or Polar), the local catalog must have been synced at least once (R16)."""
     from sqlalchemy import func, select
 
     from aecom.db import Product, session
 
-    if get_settings().store_adapter != "lemonsqueezy":
+    from aecom.store.adapter import REAL_STORES
+
+    if get_settings().store_adapter not in REAL_STORES:
         return _c("catalog_sync", OK, f"not applicable (store adapter: {get_settings().store_adapter})")
     with session() as s:
         n = s.scalar(select(func.count(Product.id)).where(Product.external_id.is_not(None), Product.kind != "download")) or 0

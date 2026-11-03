@@ -27,8 +27,8 @@ def reconcile(older_than: timedelta = timedelta(minutes=15)) -> dict[str, int]:
 
     Delivered orders whose email was never sent are requeued the same way (deliver_order is idempotent and only
     resends the email); they are counted as ``requeued_email``, a key present only when there are some.
-    With the Lemon Squeezy store, ``LemonSqueezyStore.reconcile_recent`` runs over the last ``PROVIDER_WINDOW`` and its
-    counts are added with an ``ls_`` prefix; a failure there is recorded (``ls_errors``), never raised.
+    With a real store (Lemon Squeezy or Polar), its ``reconcile_recent`` runs over the last ``PROVIDER_WINDOW`` and its
+    counts are added with an ``ls_`` / ``polar_`` prefix; a failure there is recorded (``ls_errors``), never raised.
     Idempotent: a requeued event stays pending until drained, so the next run skips that order.
     """
     cutoff = now() - older_than
@@ -58,20 +58,24 @@ def reconcile(older_than: timedelta = timedelta(minutes=15)) -> dict[str, int]:
                                    source="reconciler")
             audit("system", "reconcile", "info", {"order_id": order_id, "event_id": event_id, "reason": kind})
             counts[kind] = counts.get(kind, 0) + 1
-    if get_settings().store_adapter == "lemonsqueezy":
+    from aecom.store.adapter import REAL_STORES
+
+    if get_settings().store_adapter in REAL_STORES:
         counts.update(_reconcile_provider())
     return counts
 
 
 def _reconcile_provider() -> dict[str, int]:
     from aecom.observability import record_error
-    from aecom.store.lemonsqueezy import LemonSqueezyStore
+    from aecom.store.adapter import get_store
 
+    provider = get_settings().store_adapter
+    prefix = "ls" if provider == "lemonsqueezy" else provider  # counts keep their ls_ names for Lemon Squeezy
     try:
-        found = LemonSqueezyStore().reconcile_recent(now() - PROVIDER_WINDOW)
+        found = get_store().reconcile_recent(now() - PROVIDER_WINDOW)
     except Exception as exc:
-        record_error("reconciler.lemonsqueezy", exc)
-        return {"ls_errors": 1}
+        record_error(f"reconciler.{provider}", exc)
+        return {f"{prefix}_errors": 1}
     if found["mirrored"] or found["refunds"]:
-        audit("system", "reconcile", "info", {"provider": "lemonsqueezy", **found})
-    return {f"ls_{k}": v for k, v in found.items()}
+        audit("system", "reconcile", "info", {"provider": provider, **found})
+    return {f"{prefix}_{k}": v for k, v in found.items()}

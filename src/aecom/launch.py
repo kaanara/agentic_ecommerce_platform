@@ -171,23 +171,27 @@ def _check_store_ready() -> Check:
     from aecom.secrets import secrets
 
     settings = get_settings()
-    is_ls = settings.store_adapter == "lemonsqueezy"
-    has_key = bool(secrets.get("LEMONSQUEEZY_API_KEY"))
-    has_secret = bool(secrets.get("LEMONSQUEEZY_WEBHOOK_SECRET"))
+    from aecom.store.adapter import REAL_STORES
+
+    adapter = settings.store_adapter
+    is_ls = adapter in REAL_STORES
+    key_name, secret_name = REAL_STORES.get(adapter, REAL_STORES["lemonsqueezy"])
+    has_key = bool(secrets.get(key_name))
+    has_secret = bool(secrets.get(secret_name))
     with session() as s:
         synced = (s.scalar(select(func.count(Product.id)).where(Product.external_id.is_not(None))) or 0) > 0
     ok = is_ls and has_key and has_secret and synced
     missing = []
     if not is_ls:
-        missing.append(f"STORE_ADAPTER={settings.store_adapter!r}, not 'lemonsqueezy'")
+        missing.append(f"STORE_ADAPTER={settings.store_adapter!r}, not one of {', '.join(REAL_STORES)}")
     if is_ls and not has_key:
-        missing.append("LEMONSQUEEZY_API_KEY not set")
+        missing.append(f"{key_name} not set")
     if is_ls and not has_secret:
-        missing.append("LEMONSQUEEZY_WEBHOOK_SECRET not set")
+        missing.append(f"{secret_name} not set")
     if is_ls and has_key and has_secret and not synced:
         missing.append("no synced store products yet: run `aecom store sync`")
-    detail = "lemonsqueezy configured, keys set, catalog synced" if ok else "; ".join(missing)
-    return _c("store_ready", "Store adapter is the real store (Lemon Squeezy), with keys and a synced catalog",
+    detail = f"{adapter} configured, keys set, catalog synced" if ok else "; ".join(missing)
+    return _c("store_ready", "Store adapter is the real store (Lemon Squeezy or Polar), with keys and a synced catalog",
               OK if ok else TODO, detail, "Settings > Money and AI > Store and email")
 
 

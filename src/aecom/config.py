@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     lemonsqueezy_store_id: str | None = None
     lemonsqueezy_currency: str = "EUR"  # the store currency; orders in another currency are refused, not converted
     lemonsqueezy_timeout_s: float = 20.0
+    # Polar (STORE_ADAPTER=polar). The access token and webhook secret are read via aecom.secrets.
+    # Sandbox: https://sandbox-api.polar.sh/v1
+    polar_base_url: str = "https://api.polar.sh/v1"
+    polar_organization_id: str | None = None
+    polar_currency: str = "EUR"  # the ledger currency; orders in another currency are refused, not converted
+    polar_timeout_s: float = 20.0
     # Where automatic restocks get licence keys: "mock" mints fake keys (demo only), "none" = manual keys only
     license_key_source: str = "mock"
     # I13: download links of the built-in store, {download_base_url}/{order_id}/{token}, valid for N days

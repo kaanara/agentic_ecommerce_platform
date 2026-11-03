@@ -1,0 +1,92 @@
+{
+ "items": [
+  {
+   "id": "p-101",
+   "name": "FocusFlow Pro",
+   "description": "d",
+   "organization_id": "org-1",
+   "is_archived": false,
+   "is_recurring": false,
+   "visibility": "public",
+   "benefits": [
+    {
+     "type": "license_keys"
+    }
+   ],
+   "prices": [
+    {
+     "id": "x",
+     "amount_type": "fixed",
+     "price_amount": 4900,
+     "price_currency": "eur",
+     "is_archived": false
+    }
+   ]
+  },
+  {
+   "id": "p-201",
+   "name": "AI Automation Course",
+   "description": "d",
+   "organization_id": "org-1",
+   "is_archived": false,
+   "is_recurring": false,
+   "visibility": "public",
+   "benefits": [
+    {
+     "type": "downloadables"
+    }
+   ],
+   "prices": [
+    {
+     "id": "pr-p-201",
+     "amount_type": "fixed",
+     "price_amount": 2900,
+     "price_currency": "eur",
+     "is_archived": false
+    }
+   ]
+  },
+  {
+   "id": "p-301",
+   "name": "Team plan",
+   "description": "d",
+   "organization_id": "org-1",
+   "is_archived": false,
+   "is_recurring": true,
+   "visibility": "public",
+   "benefits": [],
+   "prices": [
+    {
+     "id": "pr-p-301",
+     "amount_type": "fixed",
+     "price_amount": 2900,
+     "price_currency": "eur",
+     "is_archived": false
+    }
+   ]
+  },
+  {
+   "id": "p-401",
+   "name": "Hidden draft",
+   "description": "d",
+   "organization_id": "org-1",
+   "is_archived": false,
+   "is_recurring": false,
+   "visibility": "draft",
+   "benefits": [],
+   "prices": [
+    {
+     "id": "pr-p-401",
+     "amount_type": "fixed",
+     "price_amount": 2900,
+     "price_currency": "eur",
+     "is_archived": false
+    }
+   ]
+  }
+ ],
+ "pagination": {
+  "total_count": 4,
+  "max_page": 1
+ }
+}

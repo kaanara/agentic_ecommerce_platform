@@ -282,6 +282,12 @@ def verify_lemonsqueezy(vendor: dict[str, Any], credential: str) -> Verdict:
     return (True, None, []) if r.status_code == 200 else (False, _http_error(r, "Lemon Squeezy /v1/users/me"), [])
 
 
+def verify_polar(vendor: dict[str, Any], credential: str) -> Verdict:
+    base = get_settings().polar_base_url.rstrip("/")
+    r = _http_get(f"{base}/organizations/", {"Authorization": f"Bearer {credential}"})
+    return (True, None, []) if r.status_code == 200 else (False, _http_error(r, "Polar /v1/organizations/"), [])
+
+
 def verify_agentmail(vendor: dict[str, Any], credential: str) -> Verdict:
     settings, headers = get_settings(), {"Authorization": f"Bearer {credential}"}
     base, inbox = settings.agentmail_base_url.rstrip("/"), settings.agentmail_org_inbox
@@ -306,6 +312,7 @@ def verify_anthropic(vendor: dict[str, Any], credential: str) -> Verdict:
 # keyed by vendor name or category, normalised (lower-case, letters and digits only); each does ONE read-only call
 VERIFIERS: dict[str, Callable[[dict[str, Any], str], Verdict]] = {
     "lemonsqueezy": verify_lemonsqueezy,
+    "polar": verify_polar,
     "agentmail": verify_agentmail,
     "anthropic": verify_anthropic,
 }

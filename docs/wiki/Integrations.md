@@ -17,6 +17,7 @@ Agents **never** create accounts, accept terms, enter payment details or handle 
    | Vendor | Call | Notes |
    |---|---|---|
    | `lemonsqueezy` | `GET https://api.lemonsqueezy.com/v1/users/me` | Bearer key |
+   | `polar` | `GET <POLAR_BASE_URL>/organizations/` | Bearer organization access token |
    | `agentmail` | `GET /v0/inboxes/<AGENTMAIL_ORG_INBOX>` | then probes `GET /v0/api-keys`: if that succeeds the key is org-wide → warning "key has organization-wide access; create an inbox-scoped key" |
    | `anthropic` | `GET https://api.anthropic.com/v1/models` | `x-api-key` + `anthropic-version` |
    | anything else | none | presence only, with a warning that it wasn't verified |
@@ -62,6 +63,7 @@ Tools read credentials at call time via `SecretsProvider` (`src/aecom/secrets.py
 |---|---|
 | `mock` | ✅ Built in and DB-backed. Publishes `order.paid` / `inventory.*` events, and the app delivers and emails. |
 | `lemonsqueezy` | ✅ `src/aecom/store/lemonsqueezy.py`. Lemon Squeezy is the system of record (Roadmap L1). The app mirrors orders, refunds and licence keys. |
+| `polar` | ✅ `src/aecom/store/polar.py`. Alternative to Lemon Squeezy, also a merchant of record and the system of record. Orders and refunds are mirrored the same way; licence keys are not mirrored (v1). Fixtures are doc-derived, not yet checked against a live sandbox. |
 | Paddle / Shopify / Gumroad | ⏳ Add `store/<platform>.py` and register it in `get_store()`. |
 
 ### Download links
@@ -93,6 +95,15 @@ The simulator and `create_order` scenarios need `STORE_ADAPTER=mock`. Payload sh
 
 **VAT:** prices are VAT-inclusive. With `mock`, `vat_included(gross, country)` uses the customer's country rate (EU OSS). With a merchant of record, the MoR charges and files the VAT. The ledger still tracks `vat_payable` with the MoR's own amounts, per country and rate.
 
+### Polar (merchant of record, alternative to Lemon Squeezy)
+Set `STORE_ADAPTER=polar` instead of `lemonsqueezy` (one store at a time). It reuses the Lemon Squeezy mirror helpers, so orders, refunds, the ledger lines and the invariants behave the same.
+- **Mirrors:** `order.paid` → `mirror_order` (`amount_eur` = `total_amount`, `vat_eur` = `tax_amount`, rate = tax / net; country from the billing address). `order.refunded` → `mirror_refund` (cumulative `refunded_amount + refunded_tax_amount`; only the unmirrored part is booked). Other events are acknowledged and ignored. Checkout metadata uses the same keys as Lemon Squeezy custom data (`country`, `campaign_id`, `marketing_consent`, `withdrawal_consent_at`, `withdrawal_consent_version`).
+- **Catalog:** `sync_catalog()` reads `GET /v1/products/` (one local product per Polar product, SKU `PL-<id>`). Kind is `license` when a licence-key benefit is attached, `subscription` when recurring, else `download`. Writes raise `NotImplementedError`; products live in the Polar dashboard.
+- **Refunds:** `refund_order` calls `POST /v1/refunds/` with the net part of the gross, then re-reads the order and mirrors it. "Already refunded" (403) is not an error.
+- **Recovery:** `reconcile_recent` compares `GET /v1/orders/` with the mirror (counts are prefixed `polar_` in the reconciler result).
+- **Switching:** a human creates the organization and products in Polar, an organization access token (`products:read`, `orders:read`, `refunds:write`) and a webhook for `order.paid, order.refunded` at `POST /webhooks/polar`. Set `STORE_ADAPTER=polar`, `POLAR_ACCESS_TOKEN`, `POLAR_ORGANIZATION_ID`, `POLAR_WEBHOOK_SECRET`, run `aecom store sync`. For the sandbox set `POLAR_BASE_URL=https://sandbox-api.polar.sh/v1` and use sandbox credentials. The ledger books `POLAR_CURRENCY` (default EUR); other currencies are refused.
+- **Not done:** licence keys (a Polar benefit, delivered by Polar), subscriptions, Polar's MCP server (OAuth only), chaos injectors. Payload shapes and open points: `tests/fixtures/polar/README.md`.
+
 ## Webhooks
 `src/aecom/api/webhooks.py`. These routes are **not** behind the API bearer token, because providers can't send it. Instead each one verifies the provider's signature over the raw body and **fails closed**: no secret configured → 503, bad or missing signature → 401, and nothing is written. Every delivery is recorded once in `ops_webhook_receipts` (unique `provider, event_key`), so a provider's retry or duplicate returns 200 `{"duplicate": true}` without side effects.
 
@@ -104,6 +115,11 @@ The simulator and `create_order` scenarios need `STORE_ADAPTER=mock`. Payload sh
 - **Routing** by `meta.event_name` (or the `X-Event-Name` header): `order_created` (paid) → `mirror_order`, `order_refunded` → `mirror_refund`, `license_key_created` / `license_key_updated` → `mirror_license_key`. Other events are acknowledged with 200 and recorded as ignored.
 - **Idempotency:** the receipt key is `meta.event_id` if present, otherwise the SHA-256 of the raw body (Lemon Squeezy retries send the identical body). The mirrors are idempotent on the Lemon Squeezy ids too.
 - **Errors:** if mirroring fails, the error is stored (`record_error`, component `webhook.lemonsqueezy`), the receipt is removed again and the route returns 500, so Lemon Squeezy retries. A licence key that arrives before its order is retried this way.
+
+### Polar: `POST /webhooks/polar`
+- **Configure:** a human creates the webhook endpoint in the Polar dashboard (Settings > Webhooks) with the tunnel URL and the events `order.paid, order.refunded`, and copies the secret into `.env` as `POLAR_WEBHOOK_SECRET`.
+- **Signature** (Standard Webhooks, [docs](https://polar.sh/docs/integrate/webhooks/delivery)): headers `webhook-id`, `webhook-timestamp`, `webhook-signature` (`v1,<base64>`), base64 HMAC-SHA256 of `{id}.{timestamp}.{raw body}`. Secrets created before 2026-09-08 use the whole `whsec_…` string as key, newer ones the base64 part after `whsec_`; both are tried. Timestamps more than 5 minutes off are rejected.
+- **Idempotency:** the receipt key is `webhook-id`. A mirror failure stores the error (`webhook.polar`), drops the receipt and returns 500, so Polar retries (up to 10 times; the endpoint is disabled after 10 consecutive failures).
 
 ### AgentMail: `POST /webhooks/agentmail`
 - **Configure:** a human creates a `message.received` webhook in the AgentMail console with the tunnel URL and copies its `whsec_...` secret into `.env` as `AGENTMAIL_WEBHOOK_SECRET`.

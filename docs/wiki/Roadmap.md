@@ -20,6 +20,7 @@ Target setup: runs 24/7 on a Raspberry Pi 4 (64-bit OS), dashboards opened from 
 | A3 ✅ 2026-10-25 | Fix stuck `running` runs | The `except` path in `graph/agents.py` must set the `ops_agent_runs` row to `error` |
 | A4 ✅ 2026-10-26 | Split the kill switch | *Pause agents* vs. *stop selling*. Today the kill switch also stops deliveries |
 | A5 ✅ 2026-10-27 (offline fixtures; live test-mode run pending) | Lemon Squeezy as store (MoR) | Checkout, payment, VAT and key delivery keep working when the Pi is off; webhooks retry |
+| A6 ✅ 2026-11-03 (offline fixtures; sandbox run pending) | Polar as an alternative store (MoR) | `STORE_ADAPTER=polar`: same mirror, reconcile, payouts and launch check as A5; no licence-key mirroring yet |
 
 ### B. Monitoring and alerting
 See [Monitoring and Alerting](Monitoring-and-Alerting): deterministic monitors, P1/P2/P3 routing (push + email + digest), external heartbeat, `ops_incidents` + Health page, a real `/health`, then a read-only Sentinel agent for diagnosis.

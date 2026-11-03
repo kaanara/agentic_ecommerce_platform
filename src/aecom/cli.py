@@ -473,7 +473,7 @@ def main(argv: list[str] | None = None) -> None:
 
         store = get_store()
         if not hasattr(store, "sync_catalog"):
-            sys.exit(f"store adapter {store.name!r} has no catalog to sync (only STORE_ADAPTER=lemonsqueezy does)")
+            sys.exit(f"store adapter {store.name!r} has no catalog to sync (only STORE_ADAPTER=lemonsqueezy or polar does)")
         _print(store.sync_catalog())
     elif a.cmd == "backup":
         from aecom import backup
@@ -501,7 +501,7 @@ def main(argv: list[str] | None = None) -> None:
                 _print(payouts.list_payouts())
             elif a.action == "import":
                 if not a.target:
-                    sys.exit("usage: aecom payouts import FILE.csv --provider lemonsqueezy|stripe|paypal --by NAME")
+                    sys.exit("usage: aecom payouts import FILE.csv --provider lemonsqueezy|polar|stripe|paypal --by NAME")
                 _print(payouts.import_csv(a.provider, Path(a.target).read_text(encoding="utf-8-sig"), by=a.by))
             elif a.action == "fetch-stripe":
                 _print(payouts.fetch_stripe(a.target or "1970-01-01", by=a.by))
