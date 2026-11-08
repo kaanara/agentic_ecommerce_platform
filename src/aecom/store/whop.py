@@ -60,6 +60,13 @@ VISIBILITY = {"active": "visible", "draft": "hidden", "archived": "archived"}
 class WhopError(RuntimeError):
     """A Whop API error, with Whop's own message (agents see it as the tool result)."""
 
+    def __init__(self, message: str, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+        # A bad id or bad input from the caller: the agent sees it and can recover, so it is not an unexpected
+        # (ops_errors) failure. Auth/scope (401/403), rate limits and 5xx stay unexpected: a human must act.
+        self.expected = status in (400, 404, 409, 422)
+
 
 def _now() -> float:
     return time.time()
@@ -268,7 +275,8 @@ class WhopStore:
         if r.status_code >= 400:
             err = (data.get("error") or {}) if isinstance(data, dict) else {}
             msg = err.get("message") if isinstance(err, dict) else str(err)
-            raise WhopError(f"Whop {method} {path} answered HTTP {r.status_code}: {msg or r.reason_phrase}")
+            raise WhopError(f"Whop {method} {path} answered HTTP {r.status_code}: {msg or r.reason_phrase}",
+                            status=r.status_code)
         return data
 
     def pages(self, path: str, params: dict[str, Any], stop_before: datetime | None = None,
@@ -307,7 +315,13 @@ class WhopStore:
                   "description": product.get("description") or v.get("description") or "",
                   "status": "active" if visible else ("archived" if archived else "draft")}
         if row is None:
-            s.add(Product(sku=v.get("sku") or f"WH-{v['id']}", external_id=str(v["id"]), **fields))
+            sku = v.get("sku") or f"WH-{v['id']}"
+            if s.scalars(select(Product).where(Product.sku == sku)).first() is not None:
+                # Two Whop variants carry the same SKU (e.g. a duplicate listing). SKUs are unique locally, so the
+                # first one keeps it and this one is imported under its variant id; sync_catalog reports it.
+                self.__dict__.setdefault("_duplicate_skus", []).append({"sku": sku, "variant_id": str(v["id"]), "imported_as": f"WH-{v['id']}"})
+                sku = f"WH-{v['id']}"
+            s.add(Product(sku=sku, external_id=str(v["id"]), **fields))
             return True
         for k, val in fields.items():
             setattr(row, k, val)
@@ -324,6 +338,7 @@ class WhopStore:
             pid = (v.get("product") or {}).get("id")
             per_product[pid] = per_product.get(pid, 0) + 1
         created = updated = 0
+        self._duplicate_skus: list[dict[str, str]] = []
         with session() as s:
             for v in variants:
                 pid = (v.get("product") or {}).get("id")
@@ -332,7 +347,8 @@ class WhopStore:
                     created += 1
                 else:
                     updated += 1
-        return {"products": len(products), "variants": len(variants), "created": created, "updated": updated}
+        return {"products": len(products), "variants": len(variants), "created": created, "updated": updated,
+                "duplicate_skus": self._duplicate_skus}
 
     def resync_variant(self, variant_id: str) -> None:
         """Refresh one variant (and its product) into the local mirror after a write."""

@@ -6,6 +6,7 @@ terminal "submit_*" tools and per-step audit are visible and easy to change.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 from collections.abc import Callable
@@ -14,6 +15,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from pydantic import ValidationError
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
 from sqlalchemy import func, select
@@ -107,6 +109,52 @@ def _book_ai_costs_safe(run_id: str, agent_id: str) -> None:
         book_ai_costs()
     except Exception as exc:
         record_error("agent", exc, run_id=run_id, context={"agent_id": agent_id, "step": "book_ai_costs"})
+
+
+def reap_stuck_runs(older_than: Any = None) -> list[str]:
+    """Close ``running`` AgentRun rows older than the doctor's stuck-run limit and return their ids.
+
+    A restart (SIGTERM) or a hard kill leaves the row of the run it interrupted as ``running`` forever, which the
+    doctor and the ``no_run_stuck_running`` invariant then flag. A run that is genuinely hung but alive is closed
+    too; if it ever finishes, its own final write overwrites this status.
+    """
+    from aecom.doctor import STUCK_RUN_AFTER
+
+    cutoff = now() - (older_than or STUCK_RUN_AFTER)
+    reaped: list[tuple[str, str, str]] = []
+    with session() as s:
+        for row in s.scalars(select(AgentRun).where(AgentRun.status == "running", AgentRun.started_at < cutoff)):
+            row.status = "error"
+            row.output = "ERROR: run abandoned: the process stopped while it was running."
+            row.ended_at = now()
+            reaped.append((row.id, row.run_id, row.agent_id))
+    for row_id, run_id, agent_id in reaped:
+        audit("system", "run_reaped", "ok", {"agent_run": row_id, "agent_id": agent_id}, run_id)
+    return [r[0] for r in reaped]
+
+
+def _dump_payload_skeleton(model: Any, messages: list[BaseMessage], run_id: str, agent_id: str) -> None:
+    """Debug aid: write block types/ids/callers (no content) of the request the API rejected to data/debug/."""
+    try:
+        from pathlib import Path
+
+        payload = model._get_request_payload(messages)
+        skel = [{"role": m["role"], "blocks": [
+            {k: b.get(k) for k in ("type", "id", "tool_use_id", "name", "caller") if b.get(k) is not None}
+            for b in (m["content"] if isinstance(m["content"], list) else [{"type": "str"}])]}
+            for m in payload["messages"]]
+        raw = [[{k: b.get(k) for k in ("type", "id", "tool_use_id", "name", "caller") if b.get(k) is not None}
+                for b in m.content if isinstance(b, dict)] for m in messages
+               if isinstance(m, AIMessage) and isinstance(m.content, list)]
+        out = Path("data/debug"); out.mkdir(parents=True, exist_ok=True)
+        (out / f"orphan_{run_id}_{agent_id}.json").write_text(json.dumps({"sent": skel, "ai_raw": raw}, indent=1))
+    except Exception:  # noqa: BLE001 - debug only
+        pass
+
+
+def _is_orphan_server_tool_error(exc: Exception) -> bool:
+    msg = str(exc)
+    return "was found without a corresponding" in msg and "_tool_result" in msg
 
 
 def _step_decision(content: str) -> str:
@@ -204,6 +252,7 @@ async def _run_core(agent_id: str, task: str, *, context: str = "", run_id: str 
             if depth == 0:
                 tools = [*tools, _build_consult_tool(agent_id, run_id, depth)]
         by_name = {t.name: t for t in tools}
+        terminal_tools = [t for t in tools if t.metadata.get("terminal")]
         model = get_model(spec.model_tier, agent_id)
 
         def bind(server_tools: list[str], searches_left: int) -> Any:
@@ -237,6 +286,18 @@ async def _run_core(agent_id: str, task: str, *, context: str = "", run_id: str 
                 elif min(left, settings.web_search_max_uses) != min(bound_left, settings.web_search_max_uses):
                     bound_left = left
                     bound = bind(server_tools, left)
+            # Running out of steps must still yield a result (a Researcher once spent all 12 steps and returned
+            # nothing, blocking every task that depended on it): two steps before the end tell the agent to finish,
+            # and on the last step only the terminal tool(s) are bound. Forced tool_choice is rejected by the newer
+            # models, so this is an instruction plus a restricted tool set.
+            if terminal_tools:
+                wrap_at = max(2, settings.agent_max_steps - 2)
+                if steps == wrap_at and isinstance(messages[-1], ToolMessage):  # never after a paused server turn
+                    messages.append(HumanMessage(content=(
+                        f"Only a couple of steps are left. Call {terminal_tools[0].name} now with what you have, "
+                        "and mark anything you could not confirm as a gap.")))
+                if steps == settings.agent_max_steps and steps > wrap_at:
+                    bound = model.bind_tools(terminal_tools)
             if on_event is not None:  # streaming: model.astream (scripted mode's default astream yields one chunk)
                 ai = None
                 async for chunk in bound.astream(messages):
@@ -246,7 +307,12 @@ async def _run_core(agent_id: str, task: str, *, context: str = "", run_id: str 
                     ai = chunk if ai is None else ai + chunk
                 ai = ai if ai is not None else AIMessage(content="")
             else:
-                ai = await bound.ainvoke(messages)
+                try:
+                    ai = await bound.ainvoke(messages)
+                except Exception as exc:
+                    if _is_orphan_server_tool_error(exc):  # keep the evidence: block skeleton of the rejected request
+                        _dump_payload_skeleton(model, messages, run_id, agent_id)
+                    raise
             usage = ai.usage_metadata or {}
             tin += usage.get("input_tokens", 0)
             tout += usage.get("output_tokens", 0)
@@ -254,6 +320,10 @@ async def _run_core(agent_id: str, task: str, *, context: str = "", run_id: str 
             result.web_searches += searches
             result.web_fetches += fetches
             messages.append(ai)
+            if (ai.response_metadata or {}).get("stop_reason") == "pause_turn":
+                # server-side tool (code_execution) paused: resend the assistant turn unchanged so the API resumes it
+                step_log.append({"role": "assistant", "content": _text(ai), "tool_steps": []})
+                continue
             if not ai.tool_calls:
                 result.output, result.status = _text(ai), "ok"
                 step_log.append({"role": "assistant", "content": result.output, "tool_steps": []})
@@ -264,7 +334,10 @@ async def _run_core(agent_id: str, task: str, *, context: str = "", run_id: str 
                 tool = by_name.get(call["name"])
                 if on_event is not None:
                     on_event({"type": "tool_start", "agent_id": agent_id, "name": call["name"], "args": call["args"]})
-                content = (await tool.ainvoke(call["args"])) if tool else f"ERROR: tool {call['name']} is not available to you."
+                try:
+                    content = (await tool.ainvoke(call["args"])) if tool else f"ERROR: tool {call['name']} is not available to you."
+                except ValidationError as exc:  # malformed args from the model: let it retry instead of ending the run
+                    content = f"ERROR: invalid arguments for {call['name']}: {exc}"[:2000]
                 result.tool_calls += 1
                 decision = _step_decision(content)
                 step: dict[str, Any] = {"name": call["name"], "args": call["args"], "decision": decision,
@@ -302,9 +375,13 @@ async def _run_core(agent_id: str, task: str, *, context: str = "", run_id: str 
             row.input_tokens, row.output_tokens, row.cost_eur, row.ended_at = tin, tout, result.cost_eur, now()
         _book_ai_costs_safe(run_id, agent_id)
         return result
-    except Exception as exc:
-        error = mask(f"{type(exc).__name__}: {exc}")
-        record_error("agent", exc, run_id=run_id, context={"agent_id": agent_id, "task": task[:200]})
+    except (Exception, asyncio.CancelledError, KeyboardInterrupt) as exc:
+        # An interrupt (Ctrl-C, task cancel) must close the row too, or the run shows as 'running' until the reaper
+        # finds it; it is then re-raised below rather than turned into a result.
+        interrupted = isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt))
+        error = mask(f"{type(exc).__name__}: {exc}" if not interrupted else "interrupted before the run finished")
+        if not interrupted:
+            record_error("agent", exc, run_id=run_id, context={"agent_id": agent_id, "task": task[:200]})
         audit(agent_id, "agent_run", "error", {"error": error, "task": task[:200]}, run_id)
         if row_id is not None:  # close the run row, otherwise it shows as 'running' forever
             with session() as s:
@@ -319,6 +396,8 @@ async def _run_core(agent_id: str, task: str, *, context: str = "", run_id: str 
                     except Exception as cost_exc:
                         record_error("agent", cost_exc, run_id=run_id, context={"agent_id": agent_id, "step": "crash_cost"})
             _book_ai_costs_safe(run_id, agent_id)
+        if interrupted:
+            raise
         return AgentResult(agent_id, f"ERROR: {error}", status="error")
     finally:
         current_agent.reset(t_agent)

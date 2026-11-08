@@ -14,3 +14,9 @@ docs/decisions/*.md
 
 # Incident issue drafts and other generated reports (contain incident data)
 reports/
+
+# Local env backups and editor swap files (contain credentials)
+.env.bak
+.env.save
+.env.save.1
+..env.swp

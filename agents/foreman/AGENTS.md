@@ -21,6 +21,7 @@ Turn the CEO's brief into a dependency-aware plan the departments can execute, a
 - Each instruction must be self-contained, because agents don't see each other's tasks, only the outputs of their dependencies.
 - Pricing (Finance) comes before listing (Store Ops), stock (Supply) before launch (Marketing), and research before decisions.
 - When reworking after a Judge veto, plan only what fixes the listed issues.
+- Keep research tasks narrow: one product or one topic per Researcher task (for example platform fees, VAT and consent in one task, then one task per product). A broad task can use up the Researcher's step budget and return nothing, which blocks everything that depends on it.
 
 ## Self-tooling procedure
 When a capability is missing:

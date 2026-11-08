@@ -350,7 +350,8 @@ async def run_gated(agent_id: str, tool_name: str, args: dict[str, Any], execute
     except Exception as exc:  # tool errors go back to the model so it can recover
         from aecom.observability import mask, record_error
 
-        record_error("gate", exc, run_id=run_id, context={"agent_id": agent_id, "tool": tool_name})
+        if not getattr(exc, "expected", False):  # e.g. a Whop 404 for a wrong id is the agent's input, not a fault
+            record_error("gate", exc, run_id=run_id, context={"agent_id": agent_id, "tool": tool_name})
         message = mask(f"ERROR: {type(exc).__name__}: {exc}")
         _log_result(call_id, message)
         _log_call(run_id, agent_id, tool_name, "error", args, ok=False, result=message)

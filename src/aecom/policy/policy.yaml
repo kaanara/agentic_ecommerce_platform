@@ -96,6 +96,7 @@ rules:
   list_okrs: {tier: T0}
   list_decisions: {tier: T0}
   list_vendors: {tier: T0}
+  get_company_setup: {tier: T0}
   list_campaigns: {tier: T0}
   list_registry: {tier: T0}
   recall_memory: {tier: T0}

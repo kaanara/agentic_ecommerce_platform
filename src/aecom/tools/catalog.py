@@ -353,6 +353,24 @@ def record_expense(account: str, amount_eur: float, memo: str) -> dict:
     return {"txn_id": ledger.record_expense(account, amount_eur, memo)}
 
 
+@tool("store")
+def get_company_setup() -> dict:
+    """Store platform and readiness, product counts by status, and monthly marketing/vendor budgets."""
+    from aecom.company_settings import get_setting
+    from aecom.launch import _check_store_ready
+
+    ready = _check_store_ready()
+    counts: dict[str, int] = {}
+    for p in get_store().list_products():
+        counts[p["status"]] = counts.get(p["status"], 0) + 1
+    out: dict[str, Any] = {"store_adapter": get_settings().store_adapter, "store_status": ready.status,
+                           "store_detail": ready.detail, "products_by_status": counts}
+    for key in ("marketing_budget_month_eur", "vendor_budget_month_eur"):
+        val = get_setting(key)
+        out[key] = float(val) if val not in (None, "") else None
+    return out
+
+
 # =========================================================================== supply / vendors
 @tool("supply")
 def list_vendors() -> list[dict]:

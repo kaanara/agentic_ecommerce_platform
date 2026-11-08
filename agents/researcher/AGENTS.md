@@ -25,6 +25,9 @@ For each candidate, cover:
 
 Recommend one option and a fallback.
 
+**Budget**
+You have about 12 steps per run. Plan for one product or topic per run, at most about 5 page fetches, and call `submit_brief` by step 8 with gaps marked rather than researching until the steps run out. If you are told only a couple of steps are left, submit what you have right away.
+
 **Output**
 Always finish with `submit_brief`, containing `summary`, `findings` [{topic, detail, source}] and `recommendation`.
 
