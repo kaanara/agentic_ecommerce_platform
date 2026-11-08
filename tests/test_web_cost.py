@@ -106,7 +106,8 @@ def test_run_total_never_exceeds_cap(monkeypatch, live):
     stub = GreedyModel([])
     res, (searches, _, _) = run_with(monkeypatch, stub)
     assert res.status == "max_steps" and res.web_searches == searches == 12
-    assert stub.search_uses == [5, 2, None]
+    # 5 and 2 searches allowed, then the cap drops web_search; the last step rebinds with the terminal tool only
+    assert stub.search_uses == [5, 2, None, None]
 
 
 def test_scripted_mode_counts_zero(monkeypatch):

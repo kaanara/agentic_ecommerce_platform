@@ -93,7 +93,7 @@ def lines(order_id: str) -> list[tuple]:
 
 # --------------------------------------------------------------------------- catalog
 def test_sync_catalog_maps_variants(api):
-    assert api.sync_catalog() == {"products": 4, "variants": 4, "created": 4, "updated": 0}
+    assert api.sync_catalog() == {"products": 4, "variants": 4, "created": 4, "updated": 0, "duplicate_skus": []}
     by_sku = {p["sku"]: p for p in api.list_products()}
     lic = by_sku["LIC-FOCUSFLOW"]  # the variant's own sku is kept
     assert (lic["title"], lic["price_eur"], lic["status"]) == ("FocusFlow Pro", 49.0, "active")
@@ -146,9 +146,22 @@ def test_writes_on_a_non_whop_sku_are_refused(api):
         api.create_order("a@b.c", "LOCAL-1")
 
 
+def test_sync_catalog_survives_two_variants_with_one_sku(api, monkeypatch):
+    data = fixture("variants")
+    data["data"][1]["sku"] = "LIC-FOCUSFLOW"  # a duplicate listing reuses the SKU of plan_101
+    real = api.pages
+    monkeypatch.setattr(api, "pages", lambda path, *a, **k: data["data"] if path == "/variants" else real(path, *a, **k))
+    r = api.sync_catalog()
+    assert r["created"] == 4
+    assert r["duplicate_skus"] == [{"sku": "LIC-FOCUSFLOW", "variant_id": "plan_201", "imported_as": "WH-plan_201"}]
+    skus = {p["sku"] for p in api.list_products()}
+    assert {"LIC-FOCUSFLOW", "WH-plan_201"} <= skus
+
+
 def test_api_error_carries_whops_message(api):
-    with pytest.raises(whop.WhopError, match="HTTP 404: not found"):
+    with pytest.raises(whop.WhopError, match="HTTP 404: not found") as exc:
         api.request("GET", "/nothing")
+    assert exc.value.status == 404 and exc.value.expected  # an agent's wrong id is not an ops error
 
 
 # --------------------------------------------------------------------------- mirroring

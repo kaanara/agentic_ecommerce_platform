@@ -154,7 +154,7 @@ def _send_ntfy(text: str, urgency: str) -> bool:
     headers = {"Title": "aecom".encode("ascii", "replace").decode(),
               "Priority": "high" if urgency == "high" else "default"}
     if token := secrets.get("NTFY_TOKEN"):
-        headers["Authorization"] = "******"
+        headers["Authorization"] = f"Bearer {token}"
     try:
         r = httpx.post(url, content=mask(text).encode(), headers=headers, timeout=TIMEOUT)
         r.raise_for_status()

@@ -62,6 +62,19 @@ def sync_store_catalog() -> None:
         log.warning("catalog sync failed: %s", exc)
 
 
+def reap_stuck_runs_job() -> None:
+    """Close agent runs left 'running' by a restart or a kill (the doctor flags them after 30 min). Never raises."""
+    try:
+        from aecom.graph.agents import reap_stuck_runs
+
+        if ids := reap_stuck_runs():
+            log.warning("reaped %d abandoned agent run(s): %s", len(ids), ", ".join(ids))
+    except Exception as exc:  # noqa: BLE001 - housekeeping must not stop the scheduler
+        from aecom.observability import record_error
+
+        record_error("scheduler", exc, context={"job": "reap_stuck_runs"})
+
+
 def poll_email() -> None:
     from aecom.integrations.agentmail import poll_inbox
 
@@ -182,6 +195,7 @@ def _schedule_jobs(sched: BlockingScheduler, demo: bool) -> None:
     add(sched, reconcile_orders, s.schedule_reconcile, "reconcile", "15m")
     add(sched, monitors, s.schedule_monitors, "monitors", "5m")
     add(sched, provisioning_check, s.schedule_provisioning, "provisioning", "15m")
+    add(sched, reap_stuck_runs_job, "5m", "reap_stuck_runs", "5m")
     add(sched, expire_approvals, s.schedule_expire_approvals, "expire_approvals", "30m")
     add(sched, sync_store_catalog, s.schedule_sync_store_catalog, "sync_store_catalog", "6h")
     add(sched, backup_job, s.backup_schedule, "backup", "cron:15 3 * * *")

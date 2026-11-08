@@ -68,6 +68,40 @@ class ScriptedChatModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(message=msg)])
 
 
+def _block_key(block: dict) -> tuple[str, str] | None:
+    btype = block.get("type")
+    if btype == "server_tool_use":
+        return btype, block.get("id") or ""
+    if isinstance(btype, str) and btype.endswith("_tool_result") and btype != "tool_result":
+        return btype, block.get("tool_use_id") or ""
+    return None
+
+
+def restore_server_tool_callers(messages: list[BaseMessage], payload: dict) -> dict:
+    """Put back the ``caller`` field langchain-anthropic strips from server-tool blocks when it resends history.
+
+    With dynamic filtering (web_search/web_fetch _20260209) Claude runs searches from inside ``code_execution``; those
+    blocks carry ``caller: {type: code_execution_..., tool_id: <code_execution id>}``. Without it the API reads the
+    nested searches as direct calls and rejects the request: "`code_execution` tool use ... without a corresponding
+    `code_execution_tool_result` block" (seen whenever one code run made several searches).
+    """
+    callers: dict[tuple[str, str], Any] = {}
+    for m in messages:
+        if isinstance(m, AIMessage) and isinstance(m.content, list):
+            for b in m.content:
+                if isinstance(b, dict) and b.get("caller") and (key := _block_key(b)):
+                    callers[key] = b["caller"]
+    if not callers:
+        return payload
+    for m in payload.get("messages", []):
+        if m.get("role") != "assistant" or not isinstance(m.get("content"), list):
+            continue
+        for b in m["content"]:
+            if isinstance(b, dict) and "caller" not in b and (key := _block_key(b)) in callers:
+                b["caller"] = callers[key]
+    return payload
+
+
 def get_model(tier: str, agent_id: str) -> BaseChatModel:
     settings = get_settings()
     if settings.llm_mode == "scripted":
@@ -78,8 +112,13 @@ def get_model(tier: str, agent_id: str) -> BaseChatModel:
     key = secrets.get("ANTHROPIC_API_KEY")
     if not key:
         raise RuntimeError("ANTHROPIC_API_KEY missing — set it in .env or run with LLM_MODE=scripted")
-    return ChatAnthropic(model=settings.model_for_tier(tier), api_key=key, max_tokens=4096, max_retries=3,
-                         timeout=120)
+    class _ChatAnthropic(ChatAnthropic):
+        def _get_request_payload(self, input_: Any, *, stop: list[str] | None = None, **kwargs: Any) -> dict:
+            payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+            return restore_server_tool_callers(self._convert_input(input_).to_messages(), payload)
+
+    return _ChatAnthropic(model=settings.model_for_tier(tier), api_key=key, max_tokens=16000, max_retries=3,
+                          timeout=300)
 
 
 def _domain_filter(allowed: list[str], blocked: list[str]) -> dict[str, list[str]]:

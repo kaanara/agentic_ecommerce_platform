@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from langchain_core.tools import BaseTool, StructuredTool
+from pydantic import BaseModel, Field
 
 from aecom.config import get_settings
 from aecom.context import current_agent
@@ -16,6 +17,14 @@ from aecom.policy.gate import run_gated
 from aecom.store import whop_ops
 
 TOOL_NAME = "whop_request"
+
+
+class WhopRequestInput(BaseModel):
+    # Explicit schema: inferring one from the function signature turns a parameter named ``args`` into ``v__args``
+    # (typed as an array), so every call failed with "unexpected keyword argument 'v__args'".
+    operation: str = Field(description="One of the allowlisted Whop operation names.")
+    args: dict[str, Any] | None = Field(default=None, description="Flat dict: path parameters (id), then query or "
+                                                                  "body fields.")
 
 
 def enabled() -> bool:
@@ -50,4 +59,5 @@ def build_whop_tool(agent_id: str, context: str = "") -> BaseTool:
             return f"ERROR: {exc}"
 
     return StructuredTool.from_function(coroutine=whop_request, name=TOOL_NAME, description=description,
+                                        args_schema=WhopRequestInput,
                                         metadata={"terminal": False, "side_effect": True})
